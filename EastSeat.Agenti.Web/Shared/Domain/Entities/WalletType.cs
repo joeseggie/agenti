@@ -14,8 +14,8 @@ public class WalletType
     public bool IsSystem { get; set; }
     public bool IsActive { get; set; } = true;
     public bool SupportsDenominations { get; set; }
-    public DateTime CreatedAt { get; set; }
-    public DateTime? UpdatedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? UpdatedAt { get; set; }
 
     // Navigation properties
     public ICollection<Wallet> Wallets { get; set; } = new List<Wallet>();

@@ -9,9 +9,9 @@ public class CashCount
     public long CashSessionId { get; set; }
     public bool IsOpening { get; set; }
     public decimal TotalAmount { get; set; }
-    public DateTime CreatedAt { get; set; }
-    public DateTime? SubmittedAt { get; set; }
-    public DateTime? ApprovedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? SubmittedAt { get; set; }
+    public DateTimeOffset? ApprovedAt { get; set; }
 
     // Navigation properties
     public CashSession? CashSession { get; set; }

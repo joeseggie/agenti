@@ -1,7 +1,153 @@
 ﻿@page "/"
+@using EastSeat.Agenti.Web.Features.Dashboard
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize]
+@inject IDashboardService DashboardService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@rendermode InteractiveServer
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Dashboard - Agenti</PageTitle>
 
-<h1>Hello, world!</h1>
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudGrid>
+        <MudItem xs="12">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-4">
+                <MudText Typo="Typo.h4">📊 Dashboard</MudText>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Refresh"
+                    OnClick="@LoadDashboard" Disabled="@_loading">
+                    @(_loading ? "Loading..." : "Refresh")
+                </MudButton>
+            </MudStack>
+        </MudItem>
+    </MudGrid>
 
-Welcome to your new app.
+    @if (_loading)
+    {
+        <MudGrid>
+            <MudItem xs="12" Class="d-flex justify-center">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    }
+    else if (_dashboard is null || !_dashboard.HasWallets)
+    {
+        <MudGrid>
+            <MudItem xs="12">
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-4">
+                    <MudText Typo="Typo.body1">
+                        <strong>No wallets configured for this agent.</strong>
+                    </MudText>
+                    <MudText Typo="Typo.body2" Class="mt-2">
+                        Wallet configuration will be available in a future update.
+                    </MudText>
+                </MudAlert>
+            </MudItem>
+        </MudGrid>
+    }
+    else
+    {
+        <!-- Wallet Balance Cards -->
+        <MudGrid>
+            @foreach (var wallet in _dashboard.Wallets)
+            {
+                <MudItem xs="12" sm="6" md="4">
+                    <MudCard Elevation="2" Class="wallet-card">
+                        <MudCardContent>
+                            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
+                                <MudText Typo="Typo.h6">@wallet.WalletTypeIcon @wallet.WalletTypeName</MudText>
+                                @if (wallet.SupportsDenominations)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                                        Denominations</MudChip>
+                                }
+                            </MudStack>
+                            <MudText Typo="Typo.body2" Color="Color.Dark" Class="mt-1">@wallet.WalletName</MudText>
+                            <MudText Typo="Typo.h5" Color="Color.Primary" Class="mt-3">
+                                @wallet.Currency @wallet.Balance.ToString("N0")
+                            </MudText>
+                        </MudCardContent>
+                    </MudCard>
+                </MudItem>
+            }
+        </MudGrid>
+
+        <!-- Total Balance Summary -->
+        <MudGrid Class="mt-4">
+            <MudItem xs="12" md="6">
+                <MudCard Elevation="3" Class="total-balance-card">
+                    <MudCardContent>
+                        <MudText Typo="Typo.h6">💰 Total Balance</MudText>
+                        <MudText Typo="Typo.h4" Color="Color.Primary" Class="mt-2">
+                            @_dashboard.Currency @_dashboard.TotalBalance.ToString("N0")
+                        </MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+
+            <!-- Session Status -->
+            <MudItem xs="12" md="6">
+                <MudCard Elevation="3" Class="session-status-card">
+                    <MudCardContent>
+                        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                            <MudText Typo="Typo.h6">Session Status</MudText>
+                            <MudChip T="string" Color="@GetSessionStatusColor()" Variant="Variant.Filled">
+                                @_dashboard.SessionStatus.StatusDisplay
+                            </MudChip>
+                        </MudStack>
+                        @if (_dashboard.SessionStatus.HasActiveSession)
+                        {
+                            <MudText Typo="Typo.body2" Class="mt-2">
+                                Started: @_dashboard.SessionStatus.OpenedAt?.ToLocalTime().ToString("MMM d, yyyy 'at' h:mm tt")
+                            </MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Default" Class="mt-2">
+                                No active session for today. Start a cash count to open a session.
+                            </MudText>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+    }
+</MudContainer>
+
+@code {
+    private DashboardViewModel? _dashboard;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDashboard();
+    }
+
+    private async Task LoadDashboard()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
+            _dashboard = await DashboardService.GetDashboardAsync(userId);
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private Color GetSessionStatusColor() => _dashboard?.SessionStatus.Status switch
+    {
+        EastSeat.Agenti.Shared.Domain.Enums.CashSessionStatus.Open => Color.Success,
+        EastSeat.Agenti.Shared.Domain.Enums.CashSessionStatus.Closed => Color.Default,
+        EastSeat.Agenti.Shared.Domain.Enums.CashSessionStatus.Blocked => Color.Error,
+        EastSeat.Agenti.Shared.Domain.Enums.CashSessionStatus.Pending => Color.Warning,
+        EastSeat.Agenti.Shared.Domain.Enums.CashSessionStatus.DiscrepancyUnderReview => Color.Warning,
+        EastSeat.Agenti.Shared.Domain.Enums.CashSessionStatus.Completed => Color.Info,
+        _ => Color.Info
+    };
+}

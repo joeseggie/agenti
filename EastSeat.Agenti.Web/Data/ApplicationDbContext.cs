@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using EastSeat.Agenti.Shared.Domain.Entities;
+using EastSeat.Agenti.Shared.Domain.Enums;
 
 namespace EastSeat.Agenti.Web.Data;
 
@@ -11,6 +12,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     : IdentityDbContext<ApplicationUser>(options)
 {
     // Domain entities
+    public DbSet<Agent> Agents { get; set; }
     public DbSet<WalletType> WalletTypes { get; set; }
     public DbSet<Wallet> Wallets { get; set; }
     public DbSet<CashSession> CashSessions { get; set; }
@@ -23,6 +25,30 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        // Configure Agent
+        builder.Entity<Agent>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.UserId).IsRequired().HasMaxLength(450);
+            entity.Property(e => e.Code).IsRequired().HasMaxLength(50);
+            entity.HasIndex(e => e.Code).IsUnique();
+            entity.HasIndex(e => e.UserId).IsUnique();
+            entity.HasIndex(e => e.BranchId);
+
+            // Configure Agent -> User relationship
+            entity.HasOne(a => a.User)
+                .WithOne(u => u.Agent)
+                .HasForeignKey<Agent>(a => a.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Configure ApplicationUser
+        builder.Entity<ApplicationUser>(entity =>
+        {
+            entity.Property(e => e.FirstName).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.LastName).IsRequired().HasMaxLength(100);
+        });
 
         // Configure WalletType
         builder.Entity<WalletType>(entity =>
@@ -48,6 +74,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .WithMany(w => w.Wallets)
                 .HasForeignKey(e => e.WalletTypeId)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Agent)
+                .WithMany(a => a.Wallets)
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => new { e.AgentId, e.BranchId });
         });
 
@@ -60,6 +90,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .IsRequired()
                 .HasConversion<string>()
                 .HasMaxLength(50);
+            entity.HasOne<Agent>()
+                .WithMany(a => a.CashSessions)
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => new { e.AgentId, e.SessionDate }).IsUnique();
             entity.HasIndex(e => new { e.Status, e.BranchId });
         });
@@ -149,5 +183,60 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(e => new { e.UserId, e.CreatedAt });
             entity.HasIndex(e => e.CreatedAt);
         });
+
+        // Seed default wallet types
+        SeedWalletTypes(builder);
+    }
+
+    private static void SeedWalletTypes(ModelBuilder builder)
+    {
+        var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        builder.Entity<WalletType>().HasData(
+            new WalletType
+            {
+                Id = 1,
+                Name = "Cash",
+                Description = "Physical cash in drawer or safe",
+                Type = WalletTypeEnum.Cash,
+                IsSystem = true,
+                IsActive = true,
+                SupportsDenominations = true,
+                CreatedAt = now
+            },
+            new WalletType
+            {
+                Id = 2,
+                Name = "MTN Mobile Money",
+                Description = "MTN Mobile Money float",
+                Type = WalletTypeEnum.MobileMoney,
+                IsSystem = true,
+                IsActive = true,
+                SupportsDenominations = false,
+                CreatedAt = now
+            },
+            new WalletType
+            {
+                Id = 3,
+                Name = "Airtel Money",
+                Description = "Airtel Money float",
+                Type = WalletTypeEnum.MobileMoney,
+                IsSystem = true,
+                IsActive = true,
+                SupportsDenominations = false,
+                CreatedAt = now
+            },
+            new WalletType
+            {
+                Id = 4,
+                Name = "Bank Account",
+                Description = "Linked bank account for transfers",
+                Type = WalletTypeEnum.Bank,
+                IsSystem = true,
+                IsActive = true,
+                SupportsDenominations = false,
+                CreatedAt = now
+            }
+        );
     }
 }

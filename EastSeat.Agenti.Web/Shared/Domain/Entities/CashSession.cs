@@ -12,10 +12,10 @@ public class CashSession
     public long? BranchId { get; set; }
     public DateOnly SessionDate { get; set; }
     public CashSessionStatus Status { get; set; }
-    public DateTime OpenedAt { get; set; }
-    public DateTime? ClosedAt { get; set; }
-    public DateTime? LockedAt { get; set; }
-    public DateTime? UnlockedAt { get; set; }
+    public DateTimeOffset OpenedAt { get; set; }
+    public DateTimeOffset? ClosedAt { get; set; }
+    public DateTimeOffset? BlockedAt { get; set; }
+    public DateTimeOffset? UnblockedAt { get; set; }
 
     // Navigation properties
     public ICollection<CashCount> CashCounts { get; set; } = new List<CashCount>();

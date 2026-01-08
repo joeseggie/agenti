@@ -17,8 +17,8 @@ public class Transaction
     public string? Reference { get; set; }
     public string? Notes { get; set; }
     public long? RecordedByUserId { get; set; }
-    public DateTime CreatedAt { get; set; }
-    public DateTime? ReversedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? ReversedAt { get; set; }
     public long? ReversalTransactionId { get; set; }
 
     // Navigation properties

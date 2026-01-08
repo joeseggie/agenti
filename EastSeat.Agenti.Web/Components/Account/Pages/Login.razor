@@ -55,8 +55,18 @@
 
                     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
                         FullWidth="true" Size="Size.Large" Class="mb-4 rounded-pill auth-button"
-                        StartIcon="@Icons.Material.Filled.Login">
-                        Sign In
+                        Disabled="@_isLoggingIn">
+                        @if (_isLoggingIn)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Inherit"
+                                Class="mr-2" />
+                            <span>Signing in...</span>
+                        }
+                        else
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.Login" Class="mr-2" />
+                            <span>Sign In</span>
+                        }
                     </MudButton>
                 </EditForm>
 
@@ -101,6 +111,7 @@
 
 @code {
     private string? errorMessage;
+    private bool _isLoggingIn = false;
 
     [CascadingParameter]
     private HttpContext HttpContext { get; set; } = default!;
@@ -136,6 +147,9 @@
 
     public async Task LoginUser()
     {
+        _isLoggingIn = true;
+        errorMessage = null;
+
         Logger.LogInformation("LoginUser called - Email: {Email}, RememberMe: {RememberMe}", Input.Email, Input.RememberMe);
         // This doesn't count login failures towards account lockout
         // To enable password failures to trigger account lockout, set lockoutOnFailure: true

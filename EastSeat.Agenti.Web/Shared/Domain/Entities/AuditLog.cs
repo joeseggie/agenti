@@ -11,6 +11,6 @@ public class AuditLog
     public long? EntityId { get; set; }
     public string Action { get; set; } = string.Empty; // Create, Update, Delete, etc.
     public string? Changes { get; set; } // JSON format for before/after values
-    public DateTime CreatedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
     public string? IpAddress { get; set; }
 }

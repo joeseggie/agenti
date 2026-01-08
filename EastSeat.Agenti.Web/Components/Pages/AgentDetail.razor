@@ -1,0 +1,383 @@
+@page "/agents/{AgentId:long}"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Web.Features.Agents
+@using EastSeat.Agenti.Shared.Domain.Enums
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject IAgentService AgentService
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Agent Details - Agenti</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    @if (_isLoading)
+    {
+        <MudGrid>
+            <MudItem xs="12" Class="d-flex justify-center">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    }
+    else if (_agent == null)
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">
+            Agent not found.
+            <MudButton Variant="Variant.Text" Color="Color.Primary"
+                OnClick="@(() => NavigationManager.NavigateTo("/agents"))">
+                Back to Agents
+            </MudButton>
+        </MudAlert>
+    }
+    else
+    {
+        <!-- Header -->
+        <MudGrid>
+            <MudItem xs="12">
+                <MudButton Variant="Variant.Text" Color="Color.Default" StartIcon="@Icons.Material.Filled.ArrowBack"
+                    OnClick="@(() => NavigationManager.NavigateTo("/agents"))">
+                    Back to Agents
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+
+        <!-- Agent Info Card -->
+        <MudGrid Class="mt-2">
+            <MudItem xs="12" md="4">
+                <MudCard Elevation="2">
+                    <MudCardContent>
+                        <MudStack AlignItems="AlignItems.Center" Class="mb-4">
+                            <MudAvatar Size="Size.Large" Color="Color.Primary">
+                                @_agent.FirstName[0]@(_agent.LastName.Length > 0 ? _agent.LastName[0] : "")
+                            </MudAvatar>
+                            <MudText Typo="Typo.h5">@_agent.FullName</MudText>
+                            <MudChip T="string" Size="Size.Small"
+                                Color="@(_agent.IsActive? Color.Success: Color.Default)">
+                                @(_agent.IsActive ? "Active" : "Inactive")
+                            </MudChip>
+                        </MudStack>
+
+                        <MudDivider Class="mb-4" />
+
+                        <MudStack Spacing="2">
+                            <MudStack Row="true" Justify="Justify.SpaceBetween">
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">Code</MudText>
+                                <MudText Typo="Typo.body2"><strong>@_agent.Code</strong></MudText>
+                            </MudStack>
+
+                            @if (!string.IsNullOrEmpty(_agent.Email))
+                            {
+                                <MudStack Row="true" Justify="Justify.SpaceBetween">
+                                    <MudText Typo="Typo.body2" Color="Color.Secondary">Email</MudText>
+                                    <MudText Typo="Typo.body2">@_agent.Email</MudText>
+                                </MudStack>
+                            }
+
+                            @if (!string.IsNullOrEmpty(_agent.PhoneNumber))
+                            {
+                                <MudStack Row="true" Justify="Justify.SpaceBetween">
+                                    <MudText Typo="Typo.body2" Color="Color.Secondary">Phone</MudText>
+                                    <MudText Typo="Typo.body2">@_agent.PhoneNumber</MudText>
+                                </MudStack>
+                            }
+
+                            <MudStack Row="true" Justify="Justify.SpaceBetween">
+                                <MudText Typo="Typo.body2" Color="Color.Secondary">Created</MudText>
+                                <MudText Typo="Typo.body2">@_agent.CreatedAt.ToString("MMM dd, yyyy")</MudText>
+                            </MudStack>
+                        </MudStack>
+
+                        <MudDivider Class="my-4" />
+
+                        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                            <MudText Typo="Typo.body1" Color="Color.Secondary">Total Balance</MudText>
+                            <MudText Typo="Typo.h5" Color="Color.Primary">
+                                UGX @_agent.TotalBalance.ToString("N0")
+                            </MudText>
+                        </MudStack>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+
+            <!-- Wallets Section -->
+            <MudItem xs="12" md="8">
+                <MudCard Elevation="2">
+                    <MudCardHeader>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.h6">💼 Wallets</MudText>
+                        </CardHeaderContent>
+                        <CardHeaderActions>
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddWalletDialog">
+                                Add Wallet
+                            </MudButton>
+                        </CardHeaderActions>
+                    </MudCardHeader>
+                    <MudCardContent>
+                        @if (_agent.Wallets.Count == 0)
+                        {
+                            <MudAlert Severity="Severity.Info" Variant="Variant.Text">
+                                No wallets configured for this agent. Click "Add Wallet" to create one.
+                            </MudAlert>
+                        }
+                        else
+                        {
+                            <MudStack Spacing="3">
+                                @foreach (var wallet in _agent.Wallets)
+                                {
+                                    <MudPaper Class="pa-4" Elevation="1" Style="@(!wallet.IsActive ? "opacity: 0.6;" : "")">
+                                        <MudGrid>
+                                            <MudItem xs="12" sm="6">
+                                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                                    <MudText Typo="Typo.h6">@wallet.WalletTypeIcon</MudText>
+                                                    <MudStack Spacing="0">
+                                                        <MudText Typo="Typo.body1"><strong>@wallet.Name</strong></MudText>
+                                                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                                            @wallet.WalletTypeName
+                                                            @if (wallet.SupportsDenominations)
+                                                            {
+                                                                <MudChip T="string" Size="Size.Small" Color="Color.Info" Class="ml-2">
+                                                                    Denominations
+                                                                </MudChip>
+                                                            }
+                                                        </MudText>
+                                                    </MudStack>
+                                                </MudStack>
+                                            </MudItem>
+                                            <MudItem xs="6" sm="3" Class="d-flex align-center">
+                                                <MudStack Spacing="0">
+                                                    <MudText Typo="Typo.caption" Color="Color.Secondary">Balance</MudText>
+                                                    <MudText Typo="Typo.body1">
+                                                        <strong>@wallet.Currency @wallet.Balance.ToString("N0")</strong>
+                                                    </MudText>
+                                                </MudStack>
+                                            </MudItem>
+                                            <MudItem xs="6" sm="3" Class="d-flex align-center justify-end">
+                                                <MudStack Row="true" Spacing="1">
+                                                    @if (!wallet.IsActive)
+                                                    {
+                                                        <MudChip T="string" Size="Size.Small" Color="Color.Default">Inactive</MudChip>
+                                                    }
+                                                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                                                        OnClick="@(() => OpenEditWalletDialog(wallet))" Title="Edit" />
+                                                    <MudIconButton
+                                                        Icon="@(wallet.IsActive? Icons.Material.Filled.Block : Icons.Material.Filled.CheckCircle)"
+                                                        Size="Size.Small" Color="@(wallet.IsActive? Color.Warning: Color.Success)"
+                                                        OnClick="@(() => ToggleWalletStatus(wallet))"
+                                                        Title="@(wallet.IsActive ? "Deactivate" : "Activate")" />
+                                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small"
+                                                        Color="Color.Error" OnClick="@(() => DeleteWallet(wallet))"
+                                                        Title="Delete" />
+                                                </MudStack>
+                                            </MudItem>
+                                        </MudGrid>
+                                    </MudPaper>
+                                }
+                            </MudStack>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+    }
+</MudContainer>
+
+<!-- Wallet Form Dialog -->
+<MudDialog @bind-Visible="_showWalletDialog"
+    Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_walletForm.Id.HasValue ? "Edit Wallet" : "Add Wallet")</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudGrid>
+            <MudItem xs="12">
+                <MudSelect T="long" @bind-Value="_walletForm.WalletTypeId" Label="Wallet Type"
+                    Variant="Variant.Outlined" Required="true" RequiredError="Wallet type is required">
+                    @foreach (var walletType in _walletTypes)
+                    {
+                        <MudSelectItem T="long" Value="walletType.Id">
+                            @walletType.Name
+                            @if (walletType.SupportsDenominations)
+                            {
+                                <span class="ml-2" style="color: var(--mud-palette-info);">(Denominations)</span>
+                            }
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_walletForm.Name" Label="Wallet Name" Variant="Variant.Outlined"
+                    Required="true" RequiredError="Name is required"
+                    HelperText="e.g., 'Main Cash Drawer', 'MTN Mobile Money'" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudSelect T="string" @bind-Value="_walletForm.Currency" Label="Currency" Variant="Variant.Outlined">
+                    <MudSelectItem T="string" Value="@("UGX")">UGX - Ugandan Shilling</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("USD")">USD - US Dollar</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("KES")">KES - Kenyan Shilling</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            @if (!_walletForm.Id.HasValue)
+            {
+                <MudItem xs="12" sm="6">
+                    <MudNumericField T="decimal" @bind-Value="_walletForm.InitialBalance" Label="Initial Balance"
+                        Variant="Variant.Outlined" Min="0" Adornment="Adornment.Start"
+                        AdornmentText="@_walletForm.Currency" />
+                </MudItem>
+            }
+            <MudItem xs="12">
+                <MudSwitch @bind-Value="_walletForm.IsActive" Label="Active" Color="Color.Success" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseWalletDialog" Color="Color.Default">Cancel</MudButton>
+        <MudButton OnClick="SaveWallet" Color="Color.Primary" Variant="Variant.Filled" Disabled="_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Save
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter]
+    public long AgentId { get; set; }
+
+    private AgentDetailDto? _agent;
+    private List<WalletTypeDto> _walletTypes = [];
+    private bool _isLoading = true;
+    private bool _isSaving = false;
+    private bool _showWalletDialog = false;
+    private WalletFormModel _walletForm = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAgentAsync();
+        _walletTypes = await AgentService.GetWalletTypesAsync();
+    }
+
+    private async Task LoadAgentAsync()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            _agent = await AgentService.GetAgentAsync(AgentId);
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OpenAddWalletDialog()
+    {
+        _walletForm = new WalletFormModel
+        {
+            AgentId = AgentId,
+            Currency = "UGX",
+            IsActive = true,
+            WalletTypeId = _walletTypes.FirstOrDefault()?.Id ?? 0
+        };
+        _showWalletDialog = true;
+    }
+
+    private void OpenEditWalletDialog(AgentWalletDto wallet)
+    {
+        var walletType = _walletTypes.FirstOrDefault(wt => wt.Name == wallet.WalletTypeName);
+        _walletForm = new WalletFormModel
+        {
+            Id = wallet.Id,
+            AgentId = AgentId,
+            WalletTypeId = walletType?.Id ?? 0,
+            Name = wallet.Name,
+            Currency = wallet.Currency,
+            IsActive = wallet.IsActive
+        };
+        _showWalletDialog = true;
+    }
+
+    private void CloseWalletDialog()
+    {
+        _showWalletDialog = false;
+        _walletForm = new();
+    }
+
+    private async Task SaveWallet()
+    {
+        if (_walletForm.WalletTypeId == 0 || string.IsNullOrWhiteSpace(_walletForm.Name))
+        {
+            Snackbar.Add("Please fill in all required fields.", Severity.Warning);
+            return;
+        }
+
+        _isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            var result = _walletForm.Id.HasValue
+            ? await AgentService.UpdateWalletAsync(_walletForm)
+            : await AgentService.AddWalletAsync(_walletForm);
+
+            if (result.Success)
+            {
+                Snackbar.Add(_walletForm.Id.HasValue ? "Wallet updated successfully." : "Wallet added successfully.", Severity.Success);
+                CloseWalletDialog();
+                await LoadAgentAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to save wallet.", Severity.Error);
+            }
+        }
+        finally
+        {
+            _isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleWalletStatus(AgentWalletDto wallet)
+    {
+        var result = await AgentService.ToggleWalletStatusAsync(wallet.Id);
+        if (result.Success)
+        {
+            Snackbar.Add($"Wallet {(wallet.IsActive ? "deactivated" : "activated")}.", Severity.Success);
+            await LoadAgentAsync();
+        }
+        else
+        {
+            Snackbar.Add(result.ErrorMessage ?? "Failed to update status.", Severity.Error);
+        }
+    }
+
+    private async Task DeleteWallet(AgentWalletDto wallet)
+    {
+        var confirm = await DialogService.ShowMessageBox(
+                    "Delete Wallet",
+        $"Are you sure you want to delete wallet '{wallet.Name}'? This action cannot be undone.",
+        yesText: "Delete",
+        cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            var result = await AgentService.DeleteWalletAsync(wallet.Id);
+            if (result.Success)
+            {
+                Snackbar.Add("Wallet deleted.", Severity.Success);
+                await LoadAgentAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to delete wallet.", Severity.Error);
+            }
+        }
+    }
+}

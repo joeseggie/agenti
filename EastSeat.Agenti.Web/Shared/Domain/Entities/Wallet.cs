@@ -15,10 +15,11 @@ public class Wallet
     public string Currency { get; set; } = "UGX";
     public decimal Balance { get; set; }
     public bool IsActive { get; set; } = true;
-    public DateTime CreatedAt { get; set; }
-    public DateTime? UpdatedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? UpdatedAt { get; set; }
 
     // Navigation properties
+    public Agent? Agent { get; set; }
     public WalletType? WalletType { get; set; }
     public ICollection<Transaction> TransactionsFrom { get; set; } = new List<Transaction>();
     public ICollection<Transaction> TransactionsTo { get; set; } = new List<Transaction>();

@@ -17,11 +17,11 @@ public class Discrepancy
     public string? Reason { get; set; }
     public string? Explanation { get; set; }
     public long? ExplainedByUserId { get; set; }
-    public DateTime? ExplainedAt { get; set; }
+    public DateTimeOffset? ExplainedAt { get; set; }
     public long? ApprovedByUserId { get; set; }
-    public DateTime? ApprovedAt { get; set; }
+    public DateTimeOffset? ApprovedAt { get; set; }
     public string? ApprovalNotes { get; set; }
-    public DateTime CreatedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
 
     // Navigation properties
     public CashSession? CashSession { get; set; }

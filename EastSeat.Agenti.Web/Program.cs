@@ -4,6 +4,9 @@ using Microsoft.EntityFrameworkCore;
 using EastSeat.Agenti.Web.Components;
 using EastSeat.Agenti.Web.Components.Account;
 using EastSeat.Agenti.Web.Data;
+using EastSeat.Agenti.Web.Features.Dashboard;
+using EastSeat.Agenti.Web.Features.CashCounts;
+using EastSeat.Agenti.Web.Features.Agents;
 using MudBlazor.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -36,12 +39,17 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
-builder.Services.AddIdentityCore<ApplicationUser>(options => options.SignIn.RequireConfirmedAccount = true)
+builder.Services.AddIdentityCore<ApplicationUser>(options => options.SignIn.RequireConfirmedAccount = false)
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddSignInManager()
     .AddDefaultTokenProviders();
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
+
+// Add application services
+builder.Services.AddScoped<IDashboardService, DashboardService>();
+builder.Services.AddScoped<ICashCountService, CashCountService>();
+builder.Services.AddScoped<IAgentService, AgentService>();
 
 // Add SignalR
 builder.Services.AddSignalR();
