@@ -78,7 +78,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .WithMany(a => a.Wallets)
                 .HasForeignKey(e => e.AgentId)
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.HasIndex(e => new { e.AgentId, e.BranchId });
+            // Each agent can only have one wallet of each type
+            entity.HasIndex(e => new { e.AgentId, e.WalletTypeId }).IsUnique();
         });
 
         // Configure CashSession

@@ -1,0 +1,292 @@
+@page "/wallettypes"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Web.Features.WalletTypes
+@using EastSeat.Agenti.Shared.Domain.Enums
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject IWalletTypeService WalletTypeService
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Wallet Types - Agenti</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudGrid>
+        <MudItem xs="12" sm="8">
+            <MudText Typo="Typo.h4" Class="mb-2">💳 Wallet Types</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Manage wallet types for agent wallets
+            </MudText>
+        </MudItem>
+        <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                OnClick="OpenCreateDialog">
+                Add Wallet Type
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+
+    @if (_isLoading)
+    {
+        <MudGrid Class="mt-4">
+            <MudItem xs="12" Class="d-flex justify-center">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    }
+    else if (_walletTypes.Count == 0)
+    {
+        <MudGrid Class="mt-4">
+            <MudItem xs="12">
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                    <MudText Typo="Typo.body1">No wallet types configured yet.</MudText>
+                    <MudText Typo="Typo.body2" Class="mt-2">
+                        Click "Add Wallet Type" to create your first wallet type.
+                    </MudText>
+                </MudAlert>
+            </MudItem>
+        </MudGrid>
+    }
+    else
+    {
+        <MudGrid Class="mt-4">
+            <MudItem xs="12">
+                <MudTable Items="@_walletTypes" Hover="true" Striped="true" Dense="true" Elevation="2">
+                    <HeaderContent>
+                        <MudTh>Name</MudTh>
+                        <MudTh>Type</MudTh>
+                        <MudTh>Description</MudTh>
+                        <MudTh Style="text-align: center;">Denominations</MudTh>
+                        <MudTh Style="text-align: center;">Wallets</MudTh>
+                        <MudTh Style="text-align: center;">Status</MudTh>
+                        <MudTh Style="text-align: center;">Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Name">
+                            <MudText Typo="Typo.body2">
+                                <strong>@context.TypeIcon @context.Name</strong>
+                                @if (context.IsSystem)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Default" Class="ml-2">System</MudChip>
+                                }
+                            </MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Type">@context.TypeDisplayName</MudTd>
+                        <MudTd DataLabel="Description">
+                            <MudText Typo="Typo.caption">@context.Description</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Denominations" Style="text-align: center;">
+                            @if (context.SupportsDenominations)
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.Check" Color="Color.Success" Size="Size.Small" />
+                            }
+                            else
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.Remove" Color="Color.Default" Size="Size.Small" />
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Wallets" Style="text-align: center;">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info">
+                                @context.WalletCount
+                            </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Status" Style="text-align: center;">
+                            <MudChip T="string" Size="Size.Small"
+                                Color="@(context.IsActive? Color.Success: Color.Default)">
+                                @(context.IsActive ? "Active" : "Inactive")
+                            </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Actions" Style="text-align: center;">
+                            <MudButtonGroup Size="Size.Small" Variant="Variant.Text">
+                                <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Default"
+                                    OnClick="@(() => OpenEditDialog(context))" Title="Edit" />
+                                <MudIconButton
+                                    Icon="@(context.IsActive? Icons.Material.Filled.Block : Icons.Material.Filled.CheckCircle)"
+                                    Color="@(context.IsActive? Color.Warning: Color.Success)"
+                                    OnClick="@(() => ToggleStatus(context))"
+                                    Title="@(context.IsActive ? "Deactivate" : "Activate")" />
+                                @if (context.CanDelete)
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                        OnClick="@(() => DeleteWalletType(context))" Title="Delete" />
+                                }
+                            </MudButtonGroup>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudItem>
+        </MudGrid>
+    }
+</MudContainer>
+
+<!-- Wallet Type Form Dialog -->
+@if (_showDialog)
+{
+    <MudOverlay Visible="true" DarkBackground="true" ZIndex="9999" OnClick="CloseDialog" />
+    <MudPaper Class="pa-4"
+        Style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10000; width: 500px; max-width: 90vw;">
+        <MudText Typo="Typo.h6" Class="mb-4">@(_form.Id.HasValue ? "Edit Wallet Type" : "Add Wallet Type")</MudText>
+
+        <MudGrid>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_form.Name" Label="Name" Variant="Variant.Outlined" Required="true"
+                    RequiredError="Name is required" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_form.Description" Label="Description" Variant="Variant.Outlined" Lines="2" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudSelect T="WalletTypeEnum" @bind-Value="_form.Type" Label="Type" Variant="Variant.Outlined"
+                    AnchorOrigin="Origin.BottomCenter">
+                    <MudSelectItem T="WalletTypeEnum" Value="WalletTypeEnum.Cash">💵 Cash</MudSelectItem>
+                    <MudSelectItem T="WalletTypeEnum" Value="WalletTypeEnum.MobileMoney">📱 Mobile Money</MudSelectItem>
+                    <MudSelectItem T="WalletTypeEnum" Value="WalletTypeEnum.Bank">🏦 Bank</MudSelectItem>
+                    <MudSelectItem T="WalletTypeEnum" Value="WalletTypeEnum.Custom">💰 Custom</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" Class="d-flex align-center">
+                <MudSwitch @bind-Value="_form.SupportsDenominations" Label="Supports Denominations" Color="Color.Primary" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudSwitch @bind-Value="_form.IsActive" Label="Active" Color="Color.Success" />
+            </MudItem>
+        </MudGrid>
+        <div class="d-flex justify-end gap-2 mt-4">
+            <MudButton OnClick="CloseDialog" Color="Color.Default">Cancel</MudButton>
+            <MudButton OnClick="SaveWalletType" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+                @if (_isSaving)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                }
+                Save
+            </MudButton>
+        </div>
+    </MudPaper>
+}
+
+@code {
+    private List<WalletTypeListItemDto> _walletTypes = [];
+    private bool _isLoading = true;
+    private bool _isSaving = false;
+    private bool _showDialog = false;
+    private WalletTypeFormModel _form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadWalletTypesAsync();
+    }
+
+    private async Task LoadWalletTypesAsync()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            _walletTypes = await WalletTypeService.GetWalletTypesAsync();
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OpenCreateDialog()
+    {
+        _form = new WalletTypeFormModel { IsActive = true, Type = WalletTypeEnum.Custom };
+        _showDialog = true;
+    }
+
+    private void OpenEditDialog(WalletTypeListItemDto walletType)
+    {
+        _form = new WalletTypeFormModel
+        {
+            Id = walletType.Id,
+            Name = walletType.Name,
+            Description = walletType.Description,
+            Type = walletType.Type,
+            SupportsDenominations = walletType.SupportsDenominations,
+            IsActive = walletType.IsActive
+        };
+        _showDialog = true;
+    }
+
+    private void CloseDialog()
+    {
+        _showDialog = false;
+        _form = new();
+    }
+
+    private async Task SaveWalletType()
+    {
+        if (string.IsNullOrWhiteSpace(_form.Name))
+        {
+            Snackbar.Add("Please enter a name.", Severity.Warning);
+            return;
+        }
+
+        _isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            var result = _form.Id.HasValue
+            ? await WalletTypeService.UpdateAsync(_form)
+            : await WalletTypeService.CreateAsync(_form);
+
+            if (result.Success)
+            {
+                Snackbar.Add(_form.Id.HasValue ? "Wallet type updated successfully." : "Wallet type created successfully.",
+                Severity.Success);
+                CloseDialog();
+                await LoadWalletTypesAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to save wallet type.", Severity.Error);
+            }
+        }
+        finally
+        {
+            _isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleStatus(WalletTypeListItemDto walletType)
+    {
+        var result = await WalletTypeService.ToggleStatusAsync(walletType.Id);
+        if (result.Success)
+        {
+            Snackbar.Add($"Wallet type {(walletType.IsActive ? "deactivated" : "activated")}.", Severity.Success);
+            await LoadWalletTypesAsync();
+        }
+        else
+        {
+            Snackbar.Add(result.ErrorMessage ?? "Failed to update status.", Severity.Error);
+        }
+    }
+
+    private async Task DeleteWalletType(WalletTypeListItemDto walletType)
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+                    "Delete Wallet Type",
+        $"Are you sure you want to delete '{walletType.Name}'? This action cannot be undone.",
+        yesText: "Delete", cancelText: "Cancel");
+
+        if (confirmed == true)
+        {
+            var result = await WalletTypeService.DeleteAsync(walletType.Id);
+            if (result.Success)
+            {
+                Snackbar.Add("Wallet type deleted successfully.", Severity.Success);
+                await LoadWalletTypesAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to delete wallet type.", Severity.Error);
+            }
+        }
+    }
+}

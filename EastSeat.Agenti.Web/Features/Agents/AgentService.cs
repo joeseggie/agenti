@@ -282,6 +282,19 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
             return SaveResult.Error("Wallet type not found.");
         }
 
+        if (!walletType.IsActive)
+        {
+            return SaveResult.Error("Cannot create wallet with an inactive wallet type.");
+        }
+
+        // Check if agent already has a wallet of this type
+        var existingWallet = await dbContext.Wallets
+            .AnyAsync(w => w.AgentId == model.AgentId && w.WalletTypeId == model.WalletTypeId);
+        if (existingWallet)
+        {
+            return SaveResult.Error($"Agent already has a wallet of type '{walletType.Name}'.");
+        }
+
         var wallet = new Wallet
         {
             AgentId = model.AgentId,
@@ -377,5 +390,52 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
         await dbContext.SaveChangesAsync();
 
         return SaveResult.Ok(walletId);
+    }
+
+    /// <inheritdoc />
+    public async Task<List<AgentWalletDto>> GetAgentWalletsAsync(long agentId)
+    {
+        return await dbContext.Wallets
+            .Include(w => w.WalletType)
+            .Where(w => w.AgentId == agentId)
+            .OrderBy(w => w.WalletType!.Name)
+            .ThenBy(w => w.Name)
+            .Select(w => new AgentWalletDto
+            {
+                Id = w.Id,
+                Name = w.Name,
+                WalletTypeName = w.WalletType!.Name,
+                WalletType = w.WalletType.Type,
+                Currency = w.Currency,
+                Balance = w.Balance,
+                IsActive = w.IsActive,
+                SupportsDenominations = w.WalletType.SupportsDenominations,
+                CreatedAt = w.CreatedAt
+            })
+            .ToListAsync();
+    }
+
+    /// <inheritdoc />
+    public async Task<List<WalletTypeDto>> GetAvailableWalletTypesForAgentAsync(long agentId)
+    {
+        // Get wallet type IDs already assigned to this agent
+        var assignedTypeIds = await dbContext.Wallets
+            .Where(w => w.AgentId == agentId)
+            .Select(w => w.WalletTypeId)
+            .ToListAsync();
+
+        // Return active wallet types not yet assigned
+        return await dbContext.WalletTypes
+            .Where(wt => wt.IsActive && !assignedTypeIds.Contains(wt.Id))
+            .OrderBy(wt => wt.Name)
+            .Select(wt => new WalletTypeDto
+            {
+                Id = wt.Id,
+                Name = wt.Name,
+                Description = wt.Description,
+                Type = wt.Type,
+                SupportsDenominations = wt.SupportsDenominations
+            })
+            .ToListAsync();
     }
 }

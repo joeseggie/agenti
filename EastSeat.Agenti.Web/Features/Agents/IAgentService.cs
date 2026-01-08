@@ -60,4 +60,14 @@ public interface IAgentService
     /// Deletes a wallet (only if balance is zero and no transactions).
     /// </summary>
     Task<SaveResult> DeleteWalletAsync(long walletId);
+
+    /// <summary>
+    /// Gets wallets for a specific agent.
+    /// </summary>
+    Task<List<AgentWalletDto>> GetAgentWalletsAsync(long agentId);
+
+    /// <summary>
+    /// Gets available wallet types for an agent (types not yet assigned to the agent).
+    /// </summary>
+    Task<List<WalletTypeDto>> GetAvailableWalletTypesForAgentAsync(long agentId);
 }

@@ -9,8 +9,7 @@ public class Wallet
 {
     public long Id { get; set; }
     public long WalletTypeId { get; set; }
-    public long? AgentId { get; set; }
-    public long? BranchId { get; set; }
+    public long AgentId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Currency { get; set; } = "UGX";
     public decimal Balance { get; set; }

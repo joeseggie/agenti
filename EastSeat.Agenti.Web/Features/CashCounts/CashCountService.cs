@@ -284,24 +284,14 @@ public class CashCountService(ApplicationDbContext dbContext) : ICashCountServic
     }
 
     /// <summary>
-    /// Gets the agent ID for a user. 
-    /// For now, this uses a simplified approach based on the ApplicationUser table.
-    /// In a real system, this would come from claims or a user-agent mapping table.
+    /// Gets the agent ID for a user from the ApplicationUser.AgentId field.
     /// </summary>
     private async Task<long?> GetAgentIdForUserAsync(string userId)
     {
-        // For demo purposes, we'll use the hash of the user ID as the agent ID
-        // In production, this should come from a proper user-agent mapping
         var user = await dbContext.Users.FindAsync(userId);
         if (user == null) return null;
 
-        // Check if user has wallets assigned (they are an agent)
-        // Using a simple hash-based ID for demo
-        var agentId = Math.Abs(userId.GetHashCode()) % 1000000 + 1;
-
-        // Check if this agent has wallets
-        var hasWallets = await dbContext.Wallets.AnyAsync(w => w.AgentId == agentId);
-
-        return agentId;
+        // Return the AgentId from the ApplicationUser
+        return user.AgentId;
     }
 }

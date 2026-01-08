@@ -95,6 +95,8 @@
                             <MudButtonGroup Size="Size.Small" Variant="Variant.Text">
                                 <MudIconButton Icon="@Icons.Material.Filled.Visibility" Color="Color.Primary"
                                     OnClick="@(() => ViewAgent(context.Id))" Title="View Details" />
+                                <MudIconButton Icon="@Icons.Material.Filled.Wallet" Color="Color.Info"
+                                    OnClick="@(() => OpenWalletDialog(context))" Title="Manage Wallets" />
                                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Default"
                                     OnClick="@(() => OpenEditDialog(context))" Title="Edit" />
                                 <MudIconButton
@@ -204,6 +206,117 @@
     </MudPaper>
 }
 
+<!-- Wallet Management Dialog -->
+@if (_showWalletDialog)
+{
+    <MudOverlay Visible="true" DarkBackground="true" ZIndex="9999" OnClick="CloseWalletDialog" />
+    <MudPaper Class="pa-4"
+        Style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10000; width: 600px; max-width: 95vw; max-height: 90vh; overflow-y: auto;">
+        <MudText Typo="Typo.h6" Class="mb-4">💼 Wallets for @_selectedAgent?.FullName (@_selectedAgent?.Code)</MudText>
+
+        @if (_isLoadingWallets)
+        {
+            <div class="d-flex justify-center pa-4">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </div>
+        }
+        else
+        {
+            @if (_agentWallets.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mb-4">
+                    No wallets configured for this agent yet.
+                </MudAlert>
+            }
+            else
+            {
+                <MudTable Items="@_agentWallets" Hover="true" Dense="true" Elevation="0" Class="mb-4">
+                    <HeaderContent>
+                        <MudTh>Name</MudTh>
+                        <MudTh>Type</MudTh>
+                        <MudTh Style="text-align: right;">Balance</MudTh>
+                        <MudTh Style="text-align: center;">Status</MudTh>
+                        <MudTh Style="text-align: center;">Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Name">
+                            <MudText Typo="Typo.body2"><strong>@context.Name</strong></MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Type">
+                            @context.WalletTypeIcon @context.WalletTypeName
+                        </MudTd>
+                        <MudTd DataLabel="Balance" Style="text-align: right;">
+                            <MudText Typo="Typo.body2" Color="@(context.Balance > 0 ? Color.Success : Color.Default)">
+                                @context.Currency @context.Balance.ToString("N0")
+                            </MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Status" Style="text-align: center;">
+                            <MudChip T="string" Size="Size.Small" Color="@(context.IsActive? Color.Success: Color.Default)">
+                                @(context.IsActive ? "Active" : "Inactive")
+                            </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Actions" Style="text-align: center;">
+                            <MudButtonGroup Size="Size.Small" Variant="Variant.Text">
+                                <MudIconButton
+                                    Icon="@(context.IsActive? Icons.Material.Filled.Block : Icons.Material.Filled.CheckCircle)"
+                                    Color="@(context.IsActive? Color.Warning: Color.Success)"
+                                    OnClick="@(() => ToggleWalletStatus(context))"
+                                    Title="@(context.IsActive ? "Deactivate" : "Activate")" />
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                    Disabled="@(context.Balance != 0)" OnClick="@(() => DeleteWallet(context))"
+                                    Title="@(context.Balance != 0 ? "Cannot delete: balance is not zero" : "Delete")" />
+                            </MudButtonGroup>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+
+            <MudDivider Class="my-4" />
+
+            @if (_availableWalletTypes.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true">
+                    All available wallet types have been added to this agent.
+                </MudAlert>
+            }
+            else
+            {
+                <MudText Typo="Typo.subtitle1" Class="mb-2">Add Wallet</MudText>
+                <MudGrid>
+                    <MudItem xs="12" sm="6">
+                        <MudSelect T="long" @bind-Value="_walletForm.WalletTypeId" Label="Wallet Type" Variant="Variant.Outlined"
+                            AnchorOrigin="Origin.BottomCenter">
+                            @foreach (var wt in _availableWalletTypes)
+                            {
+                                <MudSelectItem T="long" Value="@wt.Id">@GetWalletTypeIcon(wt.Type) @wt.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudTextField @bind-Value="_walletForm.Name" Label="Wallet Name" Variant="Variant.Outlined"
+                            Placeholder="e.g., Main Cash Drawer" Required="true" />
+                    </MudItem>
+                    <MudItem xs="12" Class="d-flex justify-end">
+                        <MudButton OnClick="AddWallet" Color="Color.Primary" Variant="Variant.Filled"
+                            Disabled="@(_isSavingWallet || _walletForm.WalletTypeId == 0 || string.IsNullOrWhiteSpace(_walletForm.Name))"
+                            StartIcon="@Icons.Material.Filled.Add">
+                            @if (_isSavingWallet)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            }
+                            Add Wallet
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            }
+        }
+
+        <div class="d-flex justify-end mt-4">
+            <MudButton OnClick="CloseWalletDialog" Color="Color.Default">Close</MudButton>
+        </div>
+    </MudPaper>
+}
+
 @code {
     private List<AgentListItemDto> _agents = [];
     private List<AvailableUserDto> _availableUsers = [];
@@ -212,6 +325,15 @@
     private bool _isSaving = false;
     private bool _showAgentDialog = false;
     private AgentFormModel _agentForm = new();
+
+    // Wallet dialog state
+    private bool _showWalletDialog = false;
+    private bool _isLoadingWallets = false;
+    private bool _isSavingWallet = false;
+    private AgentListItemDto? _selectedAgent;
+    private List<AgentWalletDto> _agentWallets = [];
+    private List<WalletTypeDto> _availableWalletTypes = [];
+    private WalletFormModel _walletForm = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -347,4 +469,121 @@
             Snackbar.Add(result.ErrorMessage ?? "Failed to update status.", Severity.Error);
         }
     }
+
+    // Wallet dialog methods
+    private async Task OpenWalletDialog(AgentListItemDto agent)
+    {
+        _selectedAgent = agent;
+        _walletForm = new WalletFormModel { AgentId = agent.Id, IsActive = true };
+        _showWalletDialog = true;
+        _isLoadingWallets = true;
+        StateHasChanged();
+
+        try
+        {
+            _agentWallets = await AgentService.GetAgentWalletsAsync(agent.Id);
+            _availableWalletTypes = await AgentService.GetAvailableWalletTypesForAgentAsync(agent.Id);
+        }
+        finally
+        {
+            _isLoadingWallets = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseWalletDialog()
+    {
+        _showWalletDialog = false;
+        _selectedAgent = null;
+        _agentWallets = [];
+        _availableWalletTypes = [];
+        _walletForm = new();
+    }
+
+    private async Task AddWallet()
+    {
+        if (_walletForm.WalletTypeId == 0 || string.IsNullOrWhiteSpace(_walletForm.Name))
+        {
+            Snackbar.Add("Please select a wallet type and enter a name.", Severity.Warning);
+            return;
+        }
+
+        _isSavingWallet = true;
+        StateHasChanged();
+
+        try
+        {
+            var result = await AgentService.AddWalletAsync(_walletForm);
+            if (result.Success)
+            {
+                Snackbar.Add("Wallet added successfully.", Severity.Success);
+                _walletForm = new WalletFormModel { AgentId = _selectedAgent!.Id, IsActive = true };
+                _agentWallets = await AgentService.GetAgentWalletsAsync(_selectedAgent.Id);
+                _availableWalletTypes = await AgentService.GetAvailableWalletTypesForAgentAsync(_selectedAgent.Id);
+                await LoadAgentsAsync(); // Refresh the main list
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to add wallet.", Severity.Error);
+            }
+        }
+        finally
+        {
+            _isSavingWallet = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleWalletStatus(AgentWalletDto wallet)
+    {
+        var result = await AgentService.ToggleWalletStatusAsync(wallet.Id);
+        if (result.Success)
+        {
+            Snackbar.Add($"Wallet {(wallet.IsActive ? "deactivated" : "activated")}.", Severity.Success);
+            _agentWallets = await AgentService.GetAgentWalletsAsync(_selectedAgent!.Id);
+            await LoadAgentsAsync();
+        }
+        else
+        {
+            Snackbar.Add(result.ErrorMessage ?? "Failed to update wallet status.", Severity.Error);
+        }
+    }
+
+    private async Task DeleteWallet(AgentWalletDto wallet)
+    {
+        if (wallet.Balance != 0)
+        {
+            Snackbar.Add("Cannot delete wallet with non-zero balance.", Severity.Warning);
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBox(
+                    "Delete Wallet",
+        $"Are you sure you want to delete '{wallet.Name}'? This action cannot be undone.",
+        yesText: "Delete", cancelText: "Cancel");
+
+        if (confirmed == true)
+        {
+            var result = await AgentService.DeleteWalletAsync(wallet.Id);
+            if (result.Success)
+            {
+                Snackbar.Add("Wallet deleted successfully.", Severity.Success);
+                _agentWallets = await AgentService.GetAgentWalletsAsync(_selectedAgent!.Id);
+                _availableWalletTypes = await AgentService.GetAvailableWalletTypesForAgentAsync(_selectedAgent.Id);
+                await LoadAgentsAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to delete wallet.", Severity.Error);
+            }
+        }
+    }
+
+    private static string GetWalletTypeIcon(Shared.Domain.Enums.WalletTypeEnum type) => type switch
+    {
+        Shared.Domain.Enums.WalletTypeEnum.Cash => "💵",
+        Shared.Domain.Enums.WalletTypeEnum.MobileMoney => "📱",
+        Shared.Domain.Enums.WalletTypeEnum.Bank => "🏦",
+        _ => "💰"
+    };
 }
