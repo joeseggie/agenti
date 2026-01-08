@@ -1,0 +1,43 @@
+﻿@using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.Identity
+@using EastSeat.Agenti.Web.Data
+
+@inject SignInManager<ApplicationUser> SignInManager
+@inject IdentityRedirectManager RedirectManager
+
+@if (externalLogins.Length == 0)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true">
+        There are no external authentication services configured. See this
+        <MudLink Href="https://go.microsoft.com/fwlink/?LinkID=532715" Target="_blank">article about setting up external
+            services</MudLink>.
+    </MudAlert>
+}
+else
+{
+    <form action="Account/PerformExternalLogin" method="post">
+        <AntiforgeryToken />
+        <input type="hidden" name="ReturnUrl" value="@ReturnUrl" />
+        <MudStack Row="true" Spacing="2">
+            @foreach (var provider in externalLogins)
+            {
+                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Outlined" Color="Color.Primary" name="provider"
+                    value="@provider.Name">
+                    @provider.DisplayName
+                </MudButton>
+            }
+        </MudStack>
+    </form>
+}
+
+@code {
+    private AuthenticationScheme[] externalLogins = [];
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        externalLogins = (await SignInManager.GetExternalAuthenticationSchemesAsync()).ToArray();
+    }
+}

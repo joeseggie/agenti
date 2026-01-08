@@ -1,0 +1,213 @@
+﻿@page "/Account/Register"
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using EastSeat.Agenti.Web.Data
+
+@inject UserManager<ApplicationUser> UserManager
+@inject IUserStore<ApplicationUser> UserStore
+@inject SignInManager<ApplicationUser> SignInManager
+@inject ILogger<Register> Logger
+@inject NavigationManager NavigationManager
+@inject IdentityRedirectManager RedirectManager
+
+<PageTitle>Register</PageTitle>
+
+<div class="register-page">
+    <MudContainer MaxWidth="MaxWidth.Small" Class="d-flex align-center justify-center" Style="min-height: 100vh;">
+        <MudCard Elevation="8" Class="pa-8 rounded-lg" Style="width: 100%; max-width: 450px;">
+            <MudCardHeader Class="pb-0">
+                <CardHeaderContent>
+                    <MudStack AlignItems="AlignItems.Center" Class="mb-4">
+                        <MudIcon Icon="@Icons.Material.Filled.PersonAdd" Size="Size.Large" Color="Color.Secondary" Class="mb-2" />
+                        <MudText Typo="Typo.h4" Color="Color.Secondary">Create Account</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Dark">Join us today</MudText>
+                    </MudStack>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                @if (!string.IsNullOrEmpty(Message))
+                {
+                    <MudAlert Severity="Severity.Error" Class="mb-4" Variant="Variant.Filled">@Message</MudAlert>
+                }
+
+                <EditForm Model="Input" asp-route-returnUrl="@ReturnUrl" method="post" OnValidSubmit="RegisterUser" OnInvalidSubmit="HandleInvalidSubmit" FormName="register">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary class="text-danger" role="alert" />
+
+                    <MudTextField @bind-Value="Input.Email"
+                                  Label="Email"
+                                  Variant="Variant.Outlined"
+                                  InputType="InputType.Email"
+                                  Class="mb-4"
+                                  Required="true"
+                                  RequiredError="Email is required"
+                                  autocomplete="username"
+                                  name="Input.Email"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Email"
+                                  AdornmentColor="Color.Secondary"
+                                  FullWidth="true" />
+
+                    <MudTextField @bind-Value="Input.Password"
+                                  Label="Password"
+                                  Variant="Variant.Outlined"
+                                  InputType="InputType.Password"
+                                  Class="mb-4"
+                                  Required="true"
+                                  RequiredError="Password is required"
+                                  autocomplete="new-password"
+                                  name="Input.Password"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Lock"
+                                  AdornmentColor="Color.Secondary"
+                                  FullWidth="true" />
+
+                    <MudTextField @bind-Value="Input.ConfirmPassword"
+                                  Label="Confirm Password"
+                                  Variant="Variant.Outlined"
+                                  InputType="InputType.Password"
+                                  Class="mb-4"
+                                  Required="true"
+                                  RequiredError="Please confirm your password"
+                                  autocomplete="new-password"
+                                  name="Input.ConfirmPassword"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.LockOpen"
+                                  AdornmentColor="Color.Secondary"
+                                  FullWidth="true" />
+
+                    <MudButton ButtonType="ButtonType.Submit"
+                               Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               FullWidth="true"
+                               Size="Size.Large"
+                               Class="mb-4 rounded-pill auth-button"
+                               StartIcon="@Icons.Material.Filled.HowToReg">
+                        Create Account
+                    </MudButton>
+                </EditForm>
+
+                <MudDivider Class="my-4">
+                    <MudText Typo="Typo.body2" Color="Color.Dark">OR</MudText>
+                </MudDivider>
+
+                <ExternalLoginPicker />
+
+                <MudStack AlignItems="AlignItems.Center" Class="mt-6">
+                    <MudText Typo="Typo.body2">
+                        Already have an account?
+                        <MudLink Href="Account/Login" Color="Color.Secondary" Typo="Typo.body2">
+                            <strong>Sign in</strong>
+                        </MudLink>
+                    </MudText>
+                </MudStack>
+            </MudCardContent>
+        </MudCard>
+    </MudContainer>
+</div>
+
+<style>
+    .register-page {
+        background: #ffffff;
+        min-height: 100vh;
+    }
+
+    .auth-button {
+        transition: all 0.3s ease;
+    }
+
+    .auth-button:hover {
+        background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%) !important;
+        box-shadow: 0 4px 15px rgba(25, 118, 210, 0.4);
+        transform: translateY(-2px);
+        color: #ffffff !important;
+    }
+</style>
+
+@code {
+    private IEnumerable<IdentityError>? identityErrors;
+    
+    private InputModel _input = new();
+
+    [SupplyParameterFromForm]
+    private InputModel Input
+    {
+        get => _input;
+        set => _input = value ?? new();
+    }
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    private string? Message => identityErrors is null ? null : $"Error: {string.Join(", ", identityErrors.Select(error => error.Description))}";
+
+    private void HandleInvalidSubmit(EditContext editContext)
+    {
+        Logger.LogWarning("Form validation failed. Errors: {Errors}", 
+            string.Join(", ", editContext.GetValidationMessages()));
+    }
+
+    public async Task RegisterUser(EditContext editContext)
+    {
+        Logger.LogInformation("RegisterUser called - Email: {Email}", Input.Email);
+        var user = CreateUser();
+
+        await UserStore.SetUserNameAsync(user, Input.Email, CancellationToken.None);
+        var emailStore = GetEmailStore();
+        await emailStore.SetEmailAsync(user, Input.Email, CancellationToken.None);
+        var result = await UserManager.CreateAsync(user, Input.Password);
+
+        if (!result.Succeeded)
+        {
+            identityErrors = result.Errors;
+            return;
+        }
+
+        Logger.LogInformation("User created a new account with password.");
+
+        await SignInManager.SignInAsync(user, isPersistent: false);
+        RedirectManager.RedirectTo(ReturnUrl);
+    }
+
+    private ApplicationUser CreateUser()
+    {
+        try
+        {
+            return Activator.CreateInstance<ApplicationUser>();
+        }
+        catch
+        {
+            throw new InvalidOperationException($"Can't create an instance of '{nameof(ApplicationUser)}'. " +
+                $"Ensure that '{nameof(ApplicationUser)}' is not an abstract class and has a parameterless constructor.");
+        }
+    }
+
+    private IUserEmailStore<ApplicationUser> GetEmailStore()
+    {
+        if (!UserManager.SupportsUserEmail)
+        {
+            throw new NotSupportedException("The default UI requires a user store with email support.");
+        }
+        return (IUserEmailStore<ApplicationUser>)UserStore;
+    }
+
+    private sealed class InputModel
+    {
+        [Required]
+        [EmailAddress]
+        [Display(Name = "Email")]
+        public string Email { get; set; } = "";
+
+        [Required]
+        [StringLength(100, ErrorMessage = "The {0} must be at least {2} and at max {1} characters long.", MinimumLength = 6)]
+        [DataType(DataType.Password)]
+        [Display(Name = "Password")]
+        public string Password { get; set; } = "";
+
+        [DataType(DataType.Password)]
+        [Display(Name = "Confirm password")]
+        [Compare("Password", ErrorMessage = "The password and confirmation password do not match.")]
+        public string ConfirmPassword { get; set; } = "";
+    }
+}

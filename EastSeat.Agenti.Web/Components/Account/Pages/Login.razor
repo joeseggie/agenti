@@ -1,0 +1,192 @@
+﻿@page "/Account/Login"
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.Identity
+@using EastSeat.Agenti.Web.Data
+
+@inject SignInManager<ApplicationUser> SignInManager
+@inject ILogger<Login> Logger
+@inject NavigationManager NavigationManager
+@inject IdentityRedirectManager RedirectManager
+
+<PageTitle>Log in</PageTitle>
+
+<div class="login-page">
+    <MudContainer MaxWidth="MaxWidth.Small" Class="d-flex align-center justify-center" Style="min-height: 100vh;">
+        <MudCard Elevation="8" Class="pa-8 rounded-lg" Style="width: 100%; max-width: 450px;">
+            <MudCardHeader Class="pb-0">
+                <CardHeaderContent>
+                    <MudStack AlignItems="AlignItems.Center" Class="mb-4">
+                        <MudIcon Icon="@Icons.Material.Filled.Lock" Size="Size.Large" Color="Color.Primary"
+                            Class="mb-2" />
+                        <MudText Typo="Typo.h4" Color="Color.Primary">Welcome Back</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Sign in to your account</MudText>
+                    </MudStack>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <MudAlert Severity="Severity.Error" Class="mb-4" Variant="Variant.Filled">@errorMessage</MudAlert>
+                }
+
+                <EditForm Model="Input" method="post" OnValidSubmit="LoginUser" OnInvalidSubmit="HandleInvalidSubmit"
+                    FormName="login">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary class="text-danger" role="alert" />
+
+                    <MudTextField @bind-Value="Input.Email" Label="Email" Variant="Variant.Outlined"
+                        InputType="InputType.Email" Class="mb-4" Required="true" RequiredError="Email is required"
+                        autocomplete="username" name="Input.Email" Adornment="Adornment.Start"
+                        AdornmentIcon="@Icons.Material.Filled.Email" AdornmentColor="Color.Primary" FullWidth="true" />
+
+                    <MudTextField @bind-Value="Input.Password" Label="Password" Variant="Variant.Outlined"
+                        InputType="InputType.Password" Class="mb-4" Required="true" RequiredError="Password is required"
+                        autocomplete="current-password" name="Input.Password" Adornment="Adornment.Start"
+                        AdornmentIcon="@Icons.Material.Filled.Lock" AdornmentColor="Color.Primary" FullWidth="true" />
+
+                    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-4">
+                        <MudCheckBox @bind-Value="Input.RememberMe" Label="Remember me" Color="Color.Primary"
+                            Dense="true" name="Input.RememberMe" />
+                        <MudLink Href="Account/ForgotPassword" Color="Color.Primary" Typo="Typo.body2">Forgot password?
+                        </MudLink>
+                    </MudStack>
+
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                        FullWidth="true" Size="Size.Large" Class="mb-4 rounded-pill auth-button"
+                        StartIcon="@Icons.Material.Filled.Login">
+                        Sign In
+                    </MudButton>
+                </EditForm>
+
+                <MudDivider Class="my-4">
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">OR</MudText>
+                </MudDivider>
+
+                <ExternalLoginPicker />
+
+                <MudStack AlignItems="AlignItems.Center" Class="mt-6">
+                    <MudText Typo="Typo.body2">
+                        Don't have an account?
+                        <MudLink
+                            Href="@(NavigationManager.GetUriWithQueryParameters("Account/Register", new Dictionary<string, object?> { ["ReturnUrl"] = ReturnUrl }))"
+                            Color="Color.Primary" Typo="Typo.body2">
+                            <strong>Sign up</strong>
+                        </MudLink>
+                    </MudText>
+                </MudStack>
+            </MudCardContent>
+        </MudCard>
+    </MudContainer>
+</div>
+
+<style>
+    .login-page {
+        background: #ffffff;
+        min-height: 100vh;
+    }
+
+    .auth-button {
+        transition: all 0.3s ease;
+    }
+
+    .auth-button:hover {
+        background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%) !important;
+        box-shadow: 0 4px 15px rgba(25, 118, 210, 0.4);
+        transform: translateY(-2px);
+        color: #ffffff !important;
+    }
+</style>
+
+@code {
+    private string? errorMessage;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    private InputModel _input = new();
+
+    [SupplyParameterFromForm]
+    private InputModel Input
+    {
+        get => _input;
+        set => _input = value ?? new();
+    }
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Logger.LogInformation("Login page initialized. Method: {Method}", HttpContext.Request.Method);
+
+        if (HttpMethods.IsGet(HttpContext.Request.Method))
+        {
+            // Clear the existing external cookie to ensure a clean login process
+            await HttpContext.SignOutAsync(IdentityConstants.ExternalScheme);
+        }
+    }
+
+    private void HandleInvalidSubmit(EditContext editContext)
+    {
+        Logger.LogWarning("Login form validation failed. Errors: {Errors}",
+        string.Join(", ", editContext.GetValidationMessages()));
+    }
+
+    public async Task LoginUser()
+    {
+        Logger.LogInformation("LoginUser called - Email: {Email}, RememberMe: {RememberMe}", Input.Email, Input.RememberMe);
+        // This doesn't count login failures towards account lockout
+        // To enable password failures to trigger account lockout, set lockoutOnFailure: true
+        var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure:
+        false);
+
+        Logger.LogInformation("Sign in result - Succeeded: {Succeeded}, RequiresTwoFactor: {RequiresTwoFactor}, IsLockedOut: {IsLockedOut}, IsNotAllowed: {IsNotAllowed}",
+        result.Succeeded, result.RequiresTwoFactor, result.IsLockedOut, result.IsNotAllowed);
+
+        if (result.Succeeded)
+        {
+            Logger.LogInformation("User logged in successfully. Redirecting to: {ReturnUrl}", ReturnUrl ?? "/");
+            RedirectManager.RedirectTo(ReturnUrl);
+        }
+        else if (result.RequiresTwoFactor)
+        {
+            Logger.LogInformation("Two-factor authentication required.");
+            RedirectManager.RedirectTo("Account/LoginWith2fa", new()
+            {
+                ["returnUrl"] = ReturnUrl,
+                ["rememberMe"] = Input.RememberMe
+            });
+        }
+        else if (result.IsLockedOut)
+        {
+            Logger.LogWarning("User account locked out.");
+            RedirectManager.RedirectTo("Account/Lockout");
+        }
+        else if (result.IsNotAllowed)
+        {
+            Logger.LogWarning("User is not allowed to sign in. Email might not be confirmed.");
+            errorMessage = "Error: Your account is not allowed to sign in. Please confirm your email.";
+        }
+        else
+        {
+            Logger.LogWarning("Invalid login attempt for email: {Email}", Input.Email);
+            errorMessage = "Error: Invalid login attempt.";
+        }
+    }
+
+    private sealed class InputModel
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; } = "";
+
+        [Required]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+
+        [Display(Name = "Remember me?")]
+        public bool RememberMe { get; set; }
+    }
+}
