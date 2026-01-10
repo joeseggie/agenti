@@ -91,7 +91,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .IsRequired()
                 .HasConversion<string>()
                 .HasMaxLength(50);
-            entity.HasOne<Agent>()
+            entity.HasOne(e => e.Agent)
                 .WithMany(a => a.CashSessions)
                 .HasForeignKey(e => e.AgentId)
                 .OnDelete(DeleteBehavior.Restrict);

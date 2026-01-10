@@ -6,6 +6,7 @@ using EastSeat.Agenti.Web.Components.Account;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Dashboard;
 using EastSeat.Agenti.Web.Features.CashCounts;
+using EastSeat.Agenti.Web.Features.CashSessions;
 using EastSeat.Agenti.Web.Features.Agents;
 using EastSeat.Agenti.Web.Features.WalletTypes;
 using MudBlazor.Services;
@@ -50,6 +51,7 @@ builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSe
 // Add application services
 builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<ICashCountService, CashCountService>();
+builder.Services.AddScoped<ICashSessionService, CashSessionService>();
 builder.Services.AddScoped<IAgentService, AgentService>();
 builder.Services.AddScoped<IWalletTypeService, WalletTypeService>();
 

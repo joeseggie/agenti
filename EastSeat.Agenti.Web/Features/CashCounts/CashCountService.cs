@@ -13,10 +13,7 @@ public class CashCountService(ApplicationDbContext dbContext) : ICashCountServic
     /// <inheritdoc />
     public async Task<CurrentSessionDto> GetCurrentSessionAsync(string userId)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-
-        // Get current user's agent ID (for now, use a simple approach)
-        // In production, this would come from claims or a user-agent mapping
+        // Get current user's agent ID
         var agentId = await GetAgentIdForUserAsync(userId);
         if (agentId == null)
         {
@@ -29,45 +26,39 @@ public class CashCountService(ApplicationDbContext dbContext) : ICashCountServic
             };
         }
 
-        var session = await dbContext.CashSessions
+        // Find the agent's current open session (only one allowed at a time)
+        var openSession = await dbContext.CashSessions
             .Include(s => s.CashCounts)
-            .Where(s => s.AgentId == agentId && s.SessionDate == today)
+            .Where(s => s.AgentId == agentId && s.Status == CashSessionStatus.Open)
             .FirstOrDefaultAsync();
 
-        if (session == null)
+        if (openSession == null)
         {
+            // No open session - agent can start a new one with an opening count
             return new CurrentSessionDto
             {
-                StatusText = "No session for today",
+                StatusText = "No open session",
                 StatusColor = "info",
                 CanPerformOpeningCount = true,
                 CanPerformClosingCount = false
             };
         }
 
-        var hasOpeningCount = session.CashCounts.Any(c => c.IsOpening);
-        var hasClosingCount = session.CashCounts.Any(c => !c.IsOpening);
-
-        var (statusText, statusColor) = session.Status switch
-        {
-            CashSessionStatus.Open => ("Session Open", "success"),
-            CashSessionStatus.Pending => ("Pending Approval", "warning"),
-            CashSessionStatus.DiscrepancyUnderReview => ("Discrepancy Under Review", "error"),
-            CashSessionStatus.Completed => ("Session Completed", "info"),
-            CashSessionStatus.Blocked => ("Session Blocked", "error"),
-            _ => ("Session Closed", "default")
-        };
+        var hasOpeningCount = openSession.CashCounts.Any(c => c.IsOpening && c.SubmittedAt.HasValue);
+        var hasClosingCount = openSession.CashCounts.Any(c => !c.IsOpening && c.SubmittedAt.HasValue);
 
         return new CurrentSessionDto
         {
-            SessionId = session.Id,
-            SessionDate = session.SessionDate,
-            StatusText = statusText,
-            StatusColor = statusColor,
+            SessionId = openSession.Id,
+            SessionDate = openSession.SessionDate,
+            StatusText = "Session Open",
+            StatusColor = "success",
             HasOpeningCount = hasOpeningCount,
             HasClosingCount = hasClosingCount,
-            CanPerformOpeningCount = !hasOpeningCount && session.Status == CashSessionStatus.Open,
-            CanPerformClosingCount = hasOpeningCount && !hasClosingCount && session.Status == CashSessionStatus.Open
+            // Cannot perform opening count if session is already open (it already has one)
+            CanPerformOpeningCount = false,
+            // Can perform closing count only if opening count is submitted
+            CanPerformClosingCount = hasOpeningCount && !hasClosingCount
         };
     }
 
@@ -119,14 +110,19 @@ public class CashCountService(ApplicationDbContext dbContext) : ICashCountServic
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
-        // Get or create session
+        // Find the agent's current open session
         var session = await dbContext.CashSessions
             .Include(s => s.CashCounts)
-            .Where(s => s.AgentId == agentId && s.SessionDate == today)
+            .Where(s => s.AgentId == agentId && s.Status == CashSessionStatus.Open)
             .FirstOrDefaultAsync();
 
-        if (form.IsOpening && session == null)
+        if (form.IsOpening)
         {
+            if (session != null)
+            {
+                return CashCountSaveResult.Error("An open session already exists. Please close it before starting a new one.");
+            }
+
             // Create new session for opening count
             session = new CashSession
             {
@@ -138,10 +134,13 @@ public class CashCountService(ApplicationDbContext dbContext) : ICashCountServic
             dbContext.CashSessions.Add(session);
             await dbContext.SaveChangesAsync();
         }
-
-        if (session == null)
+        else
         {
-            return CashCountSaveResult.Error("No active session found. Please perform an opening count first.");
+            // Closing count requires an open session
+            if (session == null)
+            {
+                return CashCountSaveResult.Error("No open session found. Please perform an opening count first.");
+            }
         }
 
         // Check if count already exists
@@ -234,6 +233,12 @@ public class CashCountService(ApplicationDbContext dbContext) : ICashCountServic
                 }
             }
             cashCount.ApprovedAt = DateTimeOffset.UtcNow;
+        }
+        else
+        {
+            // Closing count: close the session
+            cashCount.CashSession!.Status = CashSessionStatus.Closed;
+            cashCount.CashSession.ClosedAt = DateTimeOffset.UtcNow;
         }
 
         await dbContext.SaveChangesAsync();

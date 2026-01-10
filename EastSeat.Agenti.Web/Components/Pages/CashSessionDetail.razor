@@ -1,0 +1,324 @@
+@page "/cashsessions/{Id:long}"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Web.Features.CashSessions
+@using EastSeat.Agenti.Shared.Domain.Enums
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject ICashSessionService CashSessionService
+@inject NavigationManager NavigationManager
+
+<PageTitle>Cash Session Details - Agenti</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    @if (_isLoading)
+    {
+        <MudGrid>
+            <MudItem xs="12" Class="d-flex justify-center">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    }
+    else if (_session == null)
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Filled">
+            Cash session not found.
+        </MudAlert>
+        <MudButton Variant="Variant.Text" Color="Color.Primary" Class="mt-4" StartIcon="@Icons.Material.Filled.ArrowBack"
+            OnClick="GoBack">
+            Back to Sessions
+        </MudButton>
+    }
+    else
+    {
+        <!-- Header -->
+        <MudGrid>
+            <MudItem xs="12" sm="8">
+                <MudButton Variant="Variant.Text" Color="Color.Default" Class="mb-2"
+                    StartIcon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack">
+                    Back to Sessions
+                </MudButton>
+                <MudText Typo="Typo.h4" Class="mb-2">
+                    📅 @_session.SessionDate.ToString("dddd, MMMM dd, yyyy")
+                </MudText>
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                    <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(_session.Status)">
+                        @GetStatusText(_session.Status)
+                    </MudChip>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        Agent: @_session.AgentName (@_session.AgentCode)
+                    </MudText>
+                </MudStack>
+            </MudItem>
+            <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
+                <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="LoadSessionAsync"
+                    StartIcon="@Icons.Material.Filled.Refresh" Disabled="_isLoading">
+                    Refresh
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+
+        <!-- Session Summary Card -->
+        <MudCard Elevation="2" Class="mt-4">
+            <MudCardContent>
+                <MudGrid>
+                    <MudItem xs="6" sm="3">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Opened At</MudText>
+                        <MudText Typo="Typo.body1">@_session.OpenedAt.ToLocalTime().ToString("HH:mm")</MudText>
+                    </MudItem>
+                    <MudItem xs="6" sm="3">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Closed At</MudText>
+                        @if (_session.ClosedAt.HasValue)
+                        {
+                            <MudText Typo="Typo.body1">@_session.ClosedAt.Value.ToLocalTime().ToString("HH:mm")</MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body1" Style="opacity: 0.5;">---</MudText>
+                        }
+                    </MudItem>
+                    <MudItem xs="6" sm="2">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Opening Total</MudText>
+                        <MudText Typo="Typo.body1">UGX @_session.OpeningTotal.ToString("N0")</MudText>
+                    </MudItem>
+                    <MudItem xs="6" sm="2">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Closing Total</MudText>
+                        @if (_session.ClosingTotal.HasValue)
+                        {
+                            <MudText Typo="Typo.body1">UGX @_session.ClosingTotal.Value.ToString("N0")</MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body1" Style="opacity: 0.5;">---</MudText>
+                        }
+                    </MudItem>
+                    <MudItem xs="12" sm="2">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Variance</MudText>
+                        @if (_session.Variance.HasValue)
+                        {
+                            <MudText Typo="Typo.body1" Color="@GetVarianceColor(_session.Variance.Value)">
+                                UGX @((_session.Variance.Value >= 0 ? "+" : ""))@_session.Variance.Value.ToString("N0")
+                            </MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body1" Style="opacity: 0.5;">---</MudText>
+                        }
+                    </MudItem>
+                </MudGrid>
+            </MudCardContent>
+        </MudCard>
+
+        <!-- Opening and Closing Counts -->
+        <MudGrid Class="mt-4">
+            <!-- Opening Count -->
+            <MudItem xs="12" md="6">
+                <MudCard Elevation="2" Class="h-100">
+                    <MudCardHeader>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.h6">🌅 Opening Count</MudText>
+                        </CardHeaderContent>
+                    </MudCardHeader>
+                    <MudCardContent>
+                        @if (_session.OpeningCount != null)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2">
+                                @if (_session.OpeningCount.SubmittedAt.HasValue)
+                                {
+                                    <span>Submitted: @_session.OpeningCount.SubmittedAt.Value.ToLocalTime().ToString("HH:mm")</span>
+                                }
+                                else
+                                {
+                                    <span>Draft - Not submitted</span>
+                                }
+                            </MudText>
+                            <MudTable Items="@_session.OpeningCount.WalletEntries" Dense="true" Hover="true" Elevation="0">
+                                <HeaderContent>
+                                    <MudTh>Wallet</MudTh>
+                                    <MudTh Style="text-align: right;">Amount (UGX)</MudTh>
+                                </HeaderContent>
+                                <RowTemplate>
+                                    <MudTd DataLabel="Wallet">
+                                        <MudText Typo="Typo.body2">@context.WalletName</MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.WalletTypeName</MudText>
+                                    </MudTd>
+                                    <MudTd DataLabel="Amount" Style="text-align: right;">
+                                        @context.Amount.ToString("N0")
+                                    </MudTd>
+                                </RowTemplate>
+                            </MudTable>
+                            <MudDivider Class="my-2" />
+                            <MudStack Row="true" Justify="Justify.SpaceBetween">
+                                <MudText Typo="Typo.subtitle1">Total</MudText>
+                                <MudText Typo="Typo.subtitle1" Color="Color.Primary">
+                                    UGX @_session.OpeningCount.TotalAmount.ToString("N0")
+                                </MudText>
+                            </MudStack>
+                        }
+                        else
+                        {
+                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                                Opening count not recorded.
+                            </MudAlert>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+
+            <!-- Closing Count -->
+            <MudItem xs="12" md="6">
+                <MudCard Elevation="2" Class="h-100">
+                    <MudCardHeader>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.h6">🌙 Closing Count</MudText>
+                        </CardHeaderContent>
+                    </MudCardHeader>
+                    <MudCardContent>
+                        @if (_session.ClosingCount != null)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2">
+                                @if (_session.ClosingCount.SubmittedAt.HasValue)
+                                {
+                                    <span>Submitted: @_session.ClosingCount.SubmittedAt.Value.ToLocalTime().ToString("HH:mm")</span>
+                                }
+                                else
+                                {
+                                    <span>Draft - Not submitted</span>
+                                }
+                            </MudText>
+                            <MudTable Items="@GetClosingEntriesWithVariance()" Dense="true" Hover="true" Elevation="0">
+                                <HeaderContent>
+                                    <MudTh>Wallet</MudTh>
+                                    <MudTh Style="text-align: right;">Amount (UGX)</MudTh>
+                                    <MudTh Style="text-align: right;">Variance (UGX)</MudTh>
+                                </HeaderContent>
+                                <RowTemplate>
+                                    <MudTd DataLabel="Wallet">
+                                        <MudText Typo="Typo.body2">@context.WalletName</MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.WalletTypeName</MudText>
+                                    </MudTd>
+                                    <MudTd DataLabel="Amount" Style="text-align: right;">
+                                        @context.Amount.ToString("N0")
+                                    </MudTd>
+                                    <MudTd DataLabel="Variance" Style="text-align: right;">
+                                        <MudText Typo="Typo.body2" Color="@GetVarianceColor(context.Variance)">
+                                            @((context.Variance >= 0 ? "+" : ""))@context.Variance.ToString("N0")
+                                        </MudText>
+                                    </MudTd>
+                                </RowTemplate>
+                            </MudTable>
+                            <MudDivider Class="my-2" />
+                            <MudStack Row="true" Justify="Justify.SpaceBetween">
+                                <MudText Typo="Typo.subtitle1">Total</MudText>
+                                <MudStack Row="true" Spacing="4">
+                                    <MudText Typo="Typo.subtitle1" Color="Color.Primary">
+                                        UGX @_session.ClosingCount.TotalAmount.ToString("N0")
+                                    </MudText>
+                                    @if (_session.Variance.HasValue)
+                                    {
+                                        <MudText Typo="Typo.subtitle1" Color="@GetVarianceColor(_session.Variance.Value)">
+                                            (@((_session.Variance.Value >= 0 ? "+" : ""))@_session.Variance.Value.ToString("N0"))
+                                        </MudText>
+                                    }
+                                </MudStack>
+                            </MudStack>
+                        }
+                        else
+                        {
+                            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+                                Closing count not yet recorded.
+                            </MudAlert>
+                        }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+    }
+</MudContainer>
+
+@code {
+    [Parameter]
+    public long Id { get; set; }
+
+    private CashSessionDetailDto? _session;
+    private bool _isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSessionAsync();
+    }
+
+    private async Task LoadSessionAsync()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            _session = await CashSessionService.GetCashSessionDetailAsync(Id);
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void GoBack()
+    {
+        NavigationManager.NavigateTo("/cashsessions");
+    }
+
+    private List<ClosingEntryWithVariance> GetClosingEntriesWithVariance()
+    {
+        if (_session?.ClosingCount == null) return [];
+
+        var openingEntries = _session.OpeningCount?.WalletEntries
+        .ToDictionary(w => w.WalletId, w => w.Amount) ?? [];
+
+        return _session.ClosingCount.WalletEntries.Select(c => new ClosingEntryWithVariance
+        {
+            WalletId = c.WalletId,
+            WalletName = c.WalletName,
+            WalletTypeName = c.WalletTypeName,
+            Amount = c.Amount,
+            Variance = c.Amount - (openingEntries.TryGetValue(c.WalletId, out var openingAmount) ? openingAmount : 0)
+        }).ToList();
+    }
+
+    private static Color GetStatusColor(CashSessionStatus status) => status switch
+    {
+        CashSessionStatus.Open => Color.Success,
+        CashSessionStatus.Completed => Color.Info,
+        CashSessionStatus.Pending => Color.Warning,
+        CashSessionStatus.DiscrepancyUnderReview => Color.Warning,
+        CashSessionStatus.Blocked => Color.Error,
+        CashSessionStatus.Closed => Color.Default,
+        _ => Color.Default
+    };
+
+    private static string GetStatusText(CashSessionStatus status) => status switch
+    {
+        CashSessionStatus.Open => "Open",
+        CashSessionStatus.Completed => "Completed",
+        CashSessionStatus.Pending => "Pending",
+        CashSessionStatus.DiscrepancyUnderReview => "Under Review",
+        CashSessionStatus.Blocked => "Blocked",
+        CashSessionStatus.Closed => "Closed",
+        _ => "Unknown"
+    };
+
+    private static Color GetVarianceColor(decimal variance)
+    {
+        if (variance == 0) return Color.Success;
+        return Color.Warning;
+    }
+
+    private class ClosingEntryWithVariance
+    {
+        public long WalletId { get; set; }
+        public string WalletName { get; set; } = string.Empty;
+        public string WalletTypeName { get; set; } = string.Empty;
+        public decimal Amount { get; set; }
+        public decimal Variance { get; set; }
+    }
+}

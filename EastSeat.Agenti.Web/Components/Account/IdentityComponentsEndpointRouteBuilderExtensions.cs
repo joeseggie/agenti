@@ -46,6 +46,8 @@ internal static class IdentityComponentsEndpointRouteBuilderExtensions
             [FromForm] string returnUrl) =>
         {
             await signInManager.SignOutAsync();
+            // Ensure returnUrl is a valid local path
+            returnUrl = string.IsNullOrEmpty(returnUrl) ? "/" : returnUrl.TrimStart('~').TrimStart('/');
             return TypedResults.LocalRedirect($"~/{returnUrl}");
         });
 

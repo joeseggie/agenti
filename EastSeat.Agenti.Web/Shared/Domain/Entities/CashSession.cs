@@ -18,6 +18,7 @@ public class CashSession
     public DateTimeOffset? UnblockedAt { get; set; }
 
     // Navigation properties
+    public Agent? Agent { get; set; }
     public ICollection<CashCount> CashCounts { get; set; } = new List<CashCount>();
     public ICollection<Transaction> Transactions { get; set; } = new List<Transaction>();
     public ICollection<Discrepancy> Discrepancies { get; set; } = new List<Discrepancy>();

@@ -1,0 +1,208 @@
+@page "/cashsessions"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Web.Features.CashSessions
+@using EastSeat.Agenti.Shared.Domain.Enums
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject ICashSessionService CashSessionService
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Cash Sessions - Agenti</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudGrid>
+        <MudItem xs="12" sm="8">
+            <MudText Typo="Typo.h4" Class="mb-2">📅 Cash Sessions</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                View all cash sessions with opening and closing counts
+            </MudText>
+        </MudItem>
+        <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
+            <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="LoadSessionsAsync"
+                StartIcon="@Icons.Material.Filled.Refresh" Disabled="_isLoading">
+                Refresh
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+
+    @if (_isLoading)
+    {
+        <MudGrid Class="mt-4">
+            <MudItem xs="12" Class="d-flex justify-center">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    }
+    else if (_sessions.Count == 0)
+    {
+        <MudGrid Class="mt-4">
+            <MudItem xs="12">
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                    No cash sessions found. Cash sessions are created automatically when an opening count is performed.
+                </MudAlert>
+            </MudItem>
+        </MudGrid>
+    }
+    else
+    {
+        <MudTable Items="@_sessions" Hover="true" Striped="true" Dense="true" Elevation="2" Class="mt-4">
+            <HeaderContent>
+                <MudTh>Date</MudTh>
+                <MudTh>Agent</MudTh>
+                <MudTh Style="text-align: center;">Status</MudTh>
+                <MudTh Style="text-align: right;">Opening (UGX)</MudTh>
+                <MudTh Style="text-align: right;">Closing (UGX)</MudTh>
+                <MudTh Style="text-align: right;">Variance (UGX)</MudTh>
+                <MudTh Style="text-align: center;">Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Date">
+                    <MudText Typo="Typo.body2">@context.SessionDate.ToString("ddd, MMM dd, yyyy")</MudText>
+                </MudTd>
+                <MudTd DataLabel="Agent">
+                    <MudText Typo="Typo.body2">@context.AgentName</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@context.AgentCode</MudText>
+                </MudTd>
+                <MudTd DataLabel="Status" Style="text-align: center;">
+                    <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">
+                        @GetStatusText(context.Status)
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Opening" Style="text-align: right;">
+                    <MudText Typo="Typo.body2">@context.OpeningTotal.ToString("N0")</MudText>
+                </MudTd>
+                <MudTd DataLabel="Closing" Style="text-align: right;">
+                    @if (context.ClosingTotal.HasValue)
+                    {
+                        <MudText Typo="Typo.body2">@context.ClosingTotal.Value.ToString("N0")</MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Default" Style="opacity: 0.5;">---</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Variance" Style="text-align: right;">
+                    @if (context.Variance.HasValue)
+                    {
+                        <MudText Typo="Typo.body2" Color="@GetVarianceColor(context.Variance.Value)">
+                            @(context.Variance.Value >= 0 ? "" : "")@context.Variance.Value.ToString("N0")
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Default" Style="opacity: 0.5;">---</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Actions" Style="text-align: center;">
+                    <MudTooltip Text="View Details">
+                        <MudIconButton Icon="@Icons.Material.Filled.Visibility" Color="Color.Primary" Size="Size.Small"
+                            OnClick="@(() => ViewSession(context.Id))" />
+                    </MudTooltip>
+                    @if (context.Status == CashSessionStatus.Open)
+                    {
+                        <MudTooltip Text="Close Session">
+                            <MudIconButton Icon="@Icons.Material.Filled.Close" Color="Color.Error" Size="Size.Small"
+                                OnClick="@(() => ConfirmCloseSession(context))" />
+                        </MudTooltip>
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    private List<CashSessionListItemDto> _sessions = [];
+    private bool _isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSessionsAsync();
+    }
+
+    private async Task LoadSessionsAsync()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            _sessions = await CashSessionService.GetCashSessionsAsync();
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ViewSession(long sessionId)
+    {
+        NavigationManager.NavigateTo($"/cashsessions/{sessionId}");
+    }
+
+    private async Task ConfirmCloseSession(CashSessionListItemDto session)
+    {
+        var parameters = new DialogParameters<MudMessageBox>
+{
+{ x => x.Title, "Close Cash Session" },
+{ x => x.MarkupMessage, new MarkupString($"Are you sure you want to close the session for <b>{session.AgentName}</b> on <b>{session.SessionDate:MMM dd, yyyy}</b>?<br/><br/>This action cannot be undone.") },
+{ x => x.YesText, "Close Session" },
+{ x => x.NoText, "Cancel" }
+};
+
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small };
+        var dialog = await DialogService.ShowAsync<MudMessageBox>("Close Session", parameters, options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled)
+        {
+            await CloseSessionAsync(session.Id);
+        }
+    }
+
+    private async Task CloseSessionAsync(long sessionId)
+    {
+        var (success, errorMessage) = await CashSessionService.CloseSessionAsync(sessionId);
+
+        if (success)
+        {
+            Snackbar.Add("Cash session closed successfully.", Severity.Success);
+            await LoadSessionsAsync();
+        }
+        else
+        {
+            Snackbar.Add(errorMessage ?? "Failed to close session.", Severity.Error);
+        }
+    }
+
+    private static Color GetStatusColor(CashSessionStatus status) => status switch
+    {
+        CashSessionStatus.Open => Color.Success,
+        CashSessionStatus.Completed => Color.Info,
+        CashSessionStatus.Pending => Color.Warning,
+        CashSessionStatus.DiscrepancyUnderReview => Color.Warning,
+        CashSessionStatus.Blocked => Color.Error,
+        CashSessionStatus.Closed => Color.Default,
+        _ => Color.Default
+    };
+
+    private static string GetStatusText(CashSessionStatus status) => status switch
+    {
+        CashSessionStatus.Open => "Open",
+        CashSessionStatus.Completed => "Completed",
+        CashSessionStatus.Pending => "Pending",
+        CashSessionStatus.DiscrepancyUnderReview => "Under Review",
+        CashSessionStatus.Blocked => "Blocked",
+        CashSessionStatus.Closed => "Closed",
+        _ => "Unknown"
+    };
+
+    private static Color GetVarianceColor(decimal variance)
+    {
+        if (variance == 0) return Color.Success;
+        return Color.Warning;
+    }
+}
