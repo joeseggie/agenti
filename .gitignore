@@ -147,3 +147,4 @@ _NCrunch*/
 *.nupkg
 *.meta
 *.cache
+scripts/grant_admin_access.sql

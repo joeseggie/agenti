@@ -1,6 +1,7 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Web.Data;
+using EastSeat.Agenti.Web.Features.Vaults;
 using Microsoft.EntityFrameworkCore;
 
 namespace EastSeat.Agenti.Web.Features.CashCounts;
@@ -8,7 +9,7 @@ namespace EastSeat.Agenti.Web.Features.CashCounts;
 /// <summary>
 /// Service implementation for cash count operations.
 /// </summary>
-public class CashCountService(ApplicationDbContext dbContext) : ICashCountService
+public class CashCountService(ApplicationDbContext dbContext, IVaultService vaultService) : ICashCountService
 {
     /// <inheritdoc />
     public async Task<CurrentSessionDto> GetCurrentSessionAsync(string userId)
@@ -204,6 +205,7 @@ public class CashCountService(ApplicationDbContext dbContext) : ICashCountServic
 
         var cashCount = await dbContext.CashCounts
             .Include(c => c.CashSession)
+                .ThenInclude(s => s!.Agent)
             .Include(c => c.Details)
                 .ThenInclude(d => d.Wallet)
             .Where(c => c.Id == cashCountId && c.CashSession!.AgentId == agentId)
@@ -221,9 +223,30 @@ public class CashCountService(ApplicationDbContext dbContext) : ICashCountServic
 
         cashCount.SubmittedAt = DateTimeOffset.UtcNow;
 
-        // For opening count, update wallet balances and auto-approve
+        // For opening count, withdraw from vault and update wallet balances
         if (cashCount.IsOpening)
         {
+            var branchId = cashCount.CashSession!.BranchId;
+            if (!branchId.HasValue)
+            {
+                return CashCountSaveResult.Error("Cash session is not associated with a branch.");
+            }
+
+            // Withdraw total amount from vault
+            var withdrawResult = await vaultService.WithdrawForSessionAsync(
+                cashCount.CashSessionId,
+                branchId.Value,
+                cashCount.TotalAmount,
+                userId,
+                ensureTransaction: true
+            );
+
+            if (!withdrawResult.Success)
+            {
+                return CashCountSaveResult.Error($"Vault withdrawal failed: {withdrawResult.ErrorMessage}");
+            }
+
+            // Update wallet balances
             foreach (var detail in cashCount.Details)
             {
                 if (detail.Wallet != null)
@@ -236,7 +259,38 @@ public class CashCountService(ApplicationDbContext dbContext) : ICashCountServic
         }
         else
         {
-            // Closing count: close the session
+            // Closing count: return funds to vault and zero out wallets
+            var branchId = cashCount.CashSession!.BranchId;
+            if (!branchId.HasValue)
+            {
+                return CashCountSaveResult.Error("Cash session is not associated with a branch.");
+            }
+
+            // Deposit closing amount back to vault
+            var depositResult = await vaultService.DepositForSessionAsync(
+                cashCount.CashSessionId,
+                branchId.Value,
+                cashCount.TotalAmount,
+                userId,
+                ensureTransaction: true
+            );
+
+            if (!depositResult.Success)
+            {
+                return CashCountSaveResult.Error($"Vault deposit failed: {depositResult.ErrorMessage}");
+            }
+
+            // Zero out wallet balances
+            foreach (var detail in cashCount.Details)
+            {
+                if (detail.Wallet != null)
+                {
+                    detail.Wallet.Balance = 0;
+                    detail.Wallet.UpdatedAt = DateTimeOffset.UtcNow;
+                }
+            }
+
+            // Close the session
             cashCount.CashSession!.Status = CashSessionStatus.Closed;
             cashCount.CashSession.ClosedAt = DateTimeOffset.UtcNow;
         }

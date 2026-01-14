@@ -1,0 +1,163 @@
+@page "/user/{Id}"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "UserManagement")]
+@inject EastSeat.Agenti.Web.Features.Users.IUserService UserService
+@inject AuthenticationStateProvider Auth
+@inject NavigationManager Nav
+
+<h3>User Management</h3>
+
+@if (loading)
+{
+    <MudProgressCircular Indeterminate="true" />
+}
+else if (model is null)
+{
+    <MudAlert Severity="Severity.Error">User not found.</MudAlert>
+}
+else
+{
+    <MudPaper Class="pa-4">
+        <MudText Typo="Typo.h6">@model.FullName</MudText>
+        <MudText Typo="Typo.body2">@model.Email</MudText>
+        <MudText Typo="Typo.body2">@model.PhoneNumber</MudText>
+
+        <MudGrid Class="mt-4">
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="form.FirstName" Label="First name" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="form.LastName" Label="Last name" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="form.Email" Label="Email" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="form.PhoneNumber" Label="Phone" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudSelect @bind-Value="form.Role" Label="Role">
+                    @foreach (var r in roles)
+                    {
+                        <MudSelectItem Value="@r">@r</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudSwitch T="bool" @bind-Checked="form.IsActive" Color="Color.Success" Label="Active" />
+            </MudItem>
+        </MudGrid>
+
+        <div class="mt-4 d-flex gap-2">
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SaveProfile"
+                StartIcon="@Icons.Material.Filled.Save">Save</MudButton>
+            <MudButton Color="Color.Info" Variant="Variant.Outlined" OnClick="ChangeRole"
+                StartIcon="@Icons.Material.Filled.AdminPanelSettings">Update Role</MudButton>
+            @if (form.IsActive)
+            {
+                <MudButton Color="Color.Warning" Variant="Variant.Outlined" OnClick="Deactivate"
+                    StartIcon="@Icons.Material.Filled.Block">Deactivate</MudButton>
+            }
+            else
+            {
+                <MudButton Color="Color.Success" Variant="Variant.Outlined" OnClick="Reactivate"
+                    StartIcon="@Icons.Material.Filled.Restore">Reactivate</MudButton>
+            }
+            <MudButton Color="Color.Error" Variant="Variant.Outlined" OnClick="Delete"
+                StartIcon="@Icons.Material.Filled.DeleteForever">Delete</MudButton>
+            <MudButton Variant="Variant.Text" OnClick="@(() => Nav.NavigateTo("/users"))">Back</MudButton>
+        </div>
+
+        @if (!string.IsNullOrEmpty(message))
+        {
+            <MudAlert Severity="@messageSeverity" Class="mt-3">@message</MudAlert>
+        }
+    </MudPaper>
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = string.Empty;
+
+    private EastSeat.Agenti.Web.Features.Users.UserDetailDto? model;
+    private EastSeat.Agenti.Web.Features.Users.UserFormModel form = new();
+    private bool loading = true;
+    private string? message;
+    private Severity messageSeverity = Severity.Info;
+
+    private readonly EastSeat.Agenti.Shared.Domain.Enums.UserRole[] roles =
+    Enum.GetValues<EastSeat.Agenti.Shared.Domain.Enums.UserRole>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        loading = true;
+        model = await UserService.GetByIdAsync(Id);
+        if (model != null)
+        {
+            form = new()
+            {
+                Id = model.Id,
+                FirstName = model.FirstName,
+                LastName = model.LastName,
+                Email = model.Email,
+                PhoneNumber = model.PhoneNumber,
+                Role = model.Role,
+                IsActive = model.IsActive
+            };
+        }
+        loading = false;
+    }
+
+    private async Task<string> CurrentUserId()
+    {
+        var state = await Auth.GetAuthenticationStateAsync();
+        return state.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
+    }
+
+    private async Task SaveProfile()
+    {
+        var res = await UserService.UpdateProfileAsync(form, await CurrentUserId());
+        await Load();
+        message = res.Success ? "Profile updated" : res.Message ?? "Failed to update profile";
+        messageSeverity = res.Success ? Severity.Success : Severity.Error;
+    }
+
+    private async Task ChangeRole()
+    {
+        var res = await UserService.ChangeRoleAsync(Id, form.Role, await CurrentUserId());
+        await Load();
+        message = res.Success ? "Role updated" : res.Message ?? "Failed to update role";
+        messageSeverity = res.Success ? Severity.Success : Severity.Error;
+    }
+
+    private async Task Deactivate()
+    {
+        var res = await UserService.DeactivateAsync(Id, await CurrentUserId());
+        await Load();
+        message = res.Success ? "User deactivated" : res.Message ?? "Failed to deactivate";
+        messageSeverity = res.Success ? Severity.Success : Severity.Error;
+    }
+
+    private async Task Reactivate()
+    {
+        var res = await UserService.ReactivateAsync(Id, await CurrentUserId());
+        await Load();
+        message = res.Success ? "User reactivated" : res.Message ?? "Failed to reactivate";
+        messageSeverity = res.Success ? Severity.Success : Severity.Error;
+    }
+
+    private async Task Delete()
+    {
+        var res = await UserService.DeleteAsync(Id, await CurrentUserId());
+        if (res.Success)
+        {
+            Nav.NavigateTo("/users");
+            return;
+        }
+        message = res.Message ?? "Failed to delete user";
+        messageSeverity = Severity.Error;
+    }
+}

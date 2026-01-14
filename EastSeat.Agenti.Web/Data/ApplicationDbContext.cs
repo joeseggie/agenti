@@ -12,6 +12,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     : IdentityDbContext<ApplicationUser>(options)
 {
     // Domain entities
+    public DbSet<Branch> Branches { get; set; }
+    public DbSet<Vault> Vaults { get; set; }
+    public DbSet<VaultTransaction> VaultTransactions { get; set; }
     public DbSet<Agent> Agents { get; set; }
     public DbSet<WalletType> WalletTypes { get; set; }
     public DbSet<Wallet> Wallets { get; set; }
@@ -21,10 +24,115 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Transaction> Transactions { get; set; }
     public DbSet<Discrepancy> Discrepancies { get; set; }
     public DbSet<AuditLog> AuditLogs { get; set; }
+    public DbSet<UserAuditLog> UserAuditLogs { get; set; }
+
+    public override int SaveChanges()
+    {
+        return SaveChangesAsync().GetAwaiter().GetResult();
+    }
+
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var newBranches = ChangeTracker.Entries<Branch>()
+            .Where(e => e.State == EntityState.Added)
+            .Select(e => e.Entity)
+            .ToList();
+
+        if (!newBranches.Any())
+        {
+            return await base.SaveChangesAsync(cancellationToken);
+        }
+
+        await using var transaction = await Database.BeginTransactionAsync(cancellationToken);
+
+        var result = await base.SaveChangesAsync(cancellationToken);
+
+        foreach (var branch in newBranches)
+        {
+            var hasVault = await Vaults.AnyAsync(v => v.BranchId == branch.Id, cancellationToken);
+            if (!hasVault)
+            {
+                Vaults.Add(new Vault
+                {
+                    BranchId = branch.Id,
+                    CurrentBalance = 0,
+                    CreatedAt = DateTimeOffset.UtcNow
+                });
+            }
+        }
+
+        result += await base.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return result;
+    }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        // Configure Branch
+        builder.Entity<Branch>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(256);
+        });
+
+        // Configure Vault
+        builder.Entity<Vault>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.CurrentBalance).HasPrecision(18, 2);
+            entity.HasIndex(e => e.BranchId).IsUnique();
+
+            entity.HasOne(v => v.Branch)
+                .WithOne(b => b.Vault)
+                .HasForeignKey<Vault>(v => v.BranchId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // Configure VaultTransaction
+        builder.Entity<VaultTransaction>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Amount).HasPrecision(18, 2);
+            entity.Property(e => e.BalanceAfter).HasPrecision(18, 2);
+            entity.Property(e => e.Type)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(50);
+            entity.Property(e => e.Status)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(50);
+            entity.Property(e => e.CreatedByUserId).IsRequired().HasMaxLength(450);
+            entity.Property(e => e.ApprovedByUserId).HasMaxLength(450);
+            entity.Property(e => e.Notes).HasMaxLength(1000);
+
+            entity.HasIndex(e => e.VaultId);
+            entity.HasIndex(e => new { e.VaultId, e.CreatedAt });
+            entity.HasIndex(e => new { e.Status, e.ExpiresAt });
+
+            entity.HasOne(e => e.Vault)
+                .WithMany(v => v.Transactions)
+                .HasForeignKey(e => e.VaultId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CashSession)
+                .WithMany()
+                .HasForeignKey(e => e.CashSessionId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.CreatedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.ApprovedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.ApprovedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
 
         // Configure Agent
         builder.Entity<Agent>(entity =>
@@ -183,6 +291,34 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(e => new { e.EntityType, e.EntityId });
             entity.HasIndex(e => new { e.UserId, e.CreatedAt });
             entity.HasIndex(e => e.CreatedAt);
+        });
+
+        // Configure UserAuditLog
+        builder.Entity<UserAuditLog>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.UserId).IsRequired().HasMaxLength(450);
+            entity.Property(e => e.PerformedByUserId).IsRequired().HasMaxLength(450);
+            entity.Property(e => e.Action)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(50);
+            entity.Property(e => e.OldValue).HasMaxLength(1000);
+            entity.Property(e => e.NewValue).HasMaxLength(1000);
+            entity.Property(e => e.PerformedAt).IsRequired();
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.PerformedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.PerformedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(e => new { e.UserId, e.PerformedAt });
+            entity.HasIndex(e => e.PerformedAt);
         });
 
         // Seed default wallet types

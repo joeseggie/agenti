@@ -70,4 +70,9 @@ public interface IAgentService
     /// Gets available wallet types for an agent (types not yet assigned to the agent).
     /// </summary>
     Task<List<WalletTypeDto>> GetAvailableWalletTypesForAgentAsync(long agentId);
+
+    /// <summary>
+    /// Gets all branches for agent assignment.
+    /// </summary>
+    Task<List<BranchDto>> GetBranchesAsync();
 }

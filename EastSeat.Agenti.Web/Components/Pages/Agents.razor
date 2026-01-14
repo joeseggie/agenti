@@ -188,6 +188,16 @@
                     </MudItem>
                 }
                 <MudItem xs="12" sm="6">
+                    <MudSelect T="long?" @bind-Value="_agentForm.BranchId" Label="Branch" Variant="Variant.Outlined"
+                        AnchorOrigin="Origin.BottomCenter">
+                        <MudSelectItem T="long?" Value="@(null as long?)">-- Select Branch --</MudSelectItem>
+                        @foreach (var branch in _branches)
+                        {
+                            <MudSelectItem T="long?" Value="@branch.Id">@branch.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
                     <MudSwitch @bind-Value="_agentForm.IsActive" Label="Active" Color="Color.Success" />
                 </MudItem>
             </MudGrid>
@@ -320,6 +330,7 @@
 @code {
     private List<AgentListItemDto> _agents = [];
     private List<AvailableUserDto> _availableUsers = [];
+    private List<BranchDto> _branches = [];
     private bool _isLoading = true;
     private bool _isLoadingUsers = false;
     private bool _isSaving = false;
@@ -370,7 +381,10 @@
 
         try
         {
-            _availableUsers = await AgentService.GetAvailableUsersAsync();
+            var users = await AgentService.GetAvailableUsersAsync();
+            var branches = await AgentService.GetBranchesAsync();
+            _availableUsers = users;
+            _branches = branches;
         }
         finally
         {
@@ -379,16 +393,42 @@
         }
     }
 
-    private void OpenEditDialog(AgentListItemDto agent)
+    private async Task OpenEditDialog(AgentListItemDto agent)
     {
-        _agentForm = new AgentFormModel
-        {
-            Id = agent.Id,
-            Code = agent.Code,
-            IsActive = agent.IsActive
-        };
-        _availableUsers = []; // Not needed for edit
         _showAgentDialog = true;
+
+        try
+        {
+            // Load agent details including BranchId
+            var agentDetail = await AgentService.GetAgentAsync(agent.Id);
+            if (agentDetail != null)
+            {
+                _agentForm = new AgentFormModel
+                {
+                    Id = agent.Id,
+                    Code = agent.Code,
+                    BranchId = agentDetail.BranchId,
+                    IsActive = agent.IsActive
+                };
+            }
+            else
+            {
+                _agentForm = new AgentFormModel
+                {
+                    Id = agent.Id,
+                    Code = agent.Code,
+                    IsActive = agent.IsActive
+                };
+            }
+
+            var branches = await AgentService.GetBranchesAsync();
+            _branches = branches;
+            _availableUsers = []; // Not needed for edit
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load agent details: {ex.Message}", Severity.Error);
+        }
     }
 
     private void CloseAgentDialog()
@@ -558,7 +598,7 @@
         }
 
         var confirmed = await DialogService.ShowMessageBox(
-                    "Delete Wallet",
+                            "Delete Wallet",
         $"Are you sure you want to delete '{wallet.Name}'? This action cannot be undone.",
         yesText: "Delete", cancelText: "Cancel");
 

@@ -1,0 +1,66 @@
+@page "/users"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "UserManagement")]
+@inject EastSeat.Agenti.Web.Features.Users.IUserService UserService
+@inject NavigationManager Nav
+
+<h3>Users</h3>
+
+<MudTextField @bind-Value="search" Placeholder="Search users..." Adornment="Adornment.Start"
+    AdornmentIcon="@Icons.Material.Filled.Search" Class="mb-2" />
+<MudTable Items="filtered" Dense="true" Hover="true">
+    <HeaderContent>
+        <MudTh>Full Name</MudTh>
+        <MudTh>Email</MudTh>
+        <MudTh>Phone</MudTh>
+        <MudTh>Role</MudTh>
+        <MudTh>Status</MudTh>
+        <MudTh></MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd>@context.FullName</MudTd>
+        <MudTd>@context.Email</MudTd>
+        <MudTd>@context.PhoneNumber</MudTd>
+        <MudTd>
+            <MudChip T="string" Color="@RoleColor(context.Role)" Variant="Variant.Filled">@context.Role</MudChip>
+        </MudTd>
+        <MudTd>
+            @if (context.IsActive)
+            {
+                <MudChip T="string" Color="Color.Success" Variant="Variant.Outlined">Active</MudChip>
+            }
+            else
+            {
+                <MudChip T="string" Color="Color.Error" Variant="Variant.Outlined">Inactive</MudChip>
+            }
+        </MudTd>
+        <MudTd Class="d-flex justify-end">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                OnClick="@(() => Nav.NavigateTo($"/user/{context.Id}"))"
+                StartIcon="@Icons.Material.Filled.ManageAccounts">Manage</MudButton>
+        </MudTd>
+    </RowTemplate>
+</MudTable>
+
+@code {
+    private List<EastSeat.Agenti.Web.Features.Users.UserListItemDto> users = new();
+    private string? search;
+
+    protected override async Task OnInitializedAsync()
+    {
+        users = await UserService.GetAllAsync();
+    }
+
+    private IEnumerable<EastSeat.Agenti.Web.Features.Users.UserListItemDto> filtered =>
+    string.IsNullOrWhiteSpace(search)
+    ? users
+    : users.Where(u => (u.FullName ?? string.Empty).Contains(search, StringComparison.OrdinalIgnoreCase)
+    || (u.Email ?? string.Empty).Contains(search, StringComparison.OrdinalIgnoreCase)
+    || (u.PhoneNumber ?? string.Empty).Contains(search, StringComparison.OrdinalIgnoreCase));
+
+    private Color RoleColor(EastSeat.Agenti.Shared.Domain.Enums.UserRole role) => role switch
+    {
+        EastSeat.Agenti.Shared.Domain.Enums.UserRole.Admin => Color.Warning,
+        EastSeat.Agenti.Shared.Domain.Enums.UserRole.Supervisor => Color.Info,
+        _ => Color.Default
+    };
+}

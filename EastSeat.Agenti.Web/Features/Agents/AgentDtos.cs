@@ -3,6 +3,15 @@ using EastSeat.Agenti.Shared.Domain.Enums;
 namespace EastSeat.Agenti.Web.Features.Agents;
 
 /// <summary>
+/// DTO for branch information.
+/// </summary>
+public class BranchDto
+{
+    public long Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// DTO for ApplicationUsers available to become agents (no AgentId assigned yet).
 /// </summary>
 public class AvailableUserDto
@@ -26,6 +35,7 @@ public class AgentListItemDto
     public string FullName { get; set; } = string.Empty;
     public string? Email { get; set; }
     public string? PhoneNumber { get; set; }
+    public long? BranchId { get; set; }
     public bool IsActive { get; set; }
     public int WalletCount { get; set; }
     public decimal TotalBalance { get; set; }

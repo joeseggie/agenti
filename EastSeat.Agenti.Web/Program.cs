@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using EastSeat.Agenti.Web.Components;
@@ -9,6 +10,9 @@ using EastSeat.Agenti.Web.Features.CashCounts;
 using EastSeat.Agenti.Web.Features.CashSessions;
 using EastSeat.Agenti.Web.Features.Agents;
 using EastSeat.Agenti.Web.Features.WalletTypes;
+using EastSeat.Agenti.Web.Features.Vaults;
+using EastSeat.Agenti.Web.Features.Users;
+using EastSeat.Agenti.Shared.Domain.Enums;
 using MudBlazor.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -42,11 +46,15 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
 builder.Services.AddIdentityCore<ApplicationUser>(options => options.SignIn.RequireConfirmedAccount = false)
+    .AddRoles<IdentityRole>()
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddSignInManager()
     .AddDefaultTokenProviders();
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
+
+// Add claims transformation for BranchId
+builder.Services.AddScoped<IClaimsTransformation, BranchIdClaimsTransformer>();
 
 // Add application services
 builder.Services.AddScoped<IDashboardService, DashboardService>();
@@ -54,9 +62,22 @@ builder.Services.AddScoped<ICashCountService, CashCountService>();
 builder.Services.AddScoped<ICashSessionService, CashSessionService>();
 builder.Services.AddScoped<IAgentService, AgentService>();
 builder.Services.AddScoped<IWalletTypeService, WalletTypeService>();
+builder.Services.AddScoped<IVaultService, VaultService>();
+builder.Services.AddScoped<IUserService, UserService>();
 
-// Add SignalR
-builder.Services.AddSignalR();
+// Add vault background service
+builder.Services.AddHostedService<VaultExpirationService>();
+// Add user audit cleanup background service
+builder.Services.AddHostedService<UserAuditCleanupService>();
+
+// Add authorization policies
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("VaultView", policy => policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString()))
+    .AddPolicy("VaultAccess", policy => policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString()))
+    .AddPolicy("VaultAdjust", policy => policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString()))
+    .AddPolicy("VaultApprove", policy => policy.RequireRole(UserRole.Admin.ToString()))
+    // Admin-only user management access
+    .AddPolicy("UserManagement", policy => policy.RequireRole(UserRole.Admin.ToString()));
 
 var app = builder.Build();
 

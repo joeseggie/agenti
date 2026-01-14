@@ -1,0 +1,362 @@
+@page "/vault"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Web.Features.Vaults
+@using EastSeat.Agenti.Shared.Domain.Enums
+@attribute [Authorize(Policy = "VaultView")]
+@rendermode InteractiveServer
+@inject IVaultService VaultService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+
+<PageTitle>Vault - Agenti</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudText Typo="Typo.h4" Class="mb-4">Vault Management</MudText>
+
+    @if (_isLoading)
+    {
+        <MudContainer Class="d-flex justify-center align-center" Style="height: 400px;">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+        </MudContainer>
+    }
+    else if (_vault != null)
+    {
+        <!-- Vault Balance Card -->
+        <MudGrid Class="mb-4">
+            <MudItem xs="12" sm="6">
+                <MudCard>
+                    <MudCardContent>
+                        <MudText Typo="Typo.subtitle2" Color="Color.Default">Current Vault Balance</MudText>
+                        <MudText Typo="Typo.h3" Color="Color.Primary">
+                            @(_vault.CurrentBalance.ToString("C0"))
+                        </MudText>
+                        <MudText Typo="Typo.caption" Class="mt-2">@_vault.BranchName</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+
+        <!-- Actions -->
+        <MudGrid Class="mb-4">
+            <MudItem xs="12">
+                <AuthorizeView Policy="VaultApprove">
+                    <Authorized Context="auth">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="NavigateToAdjustment"
+                            EndIcon="@Icons.Material.Filled.AddCircle">
+                            Request Manual Adjustment
+                        </MudButton>
+                    </Authorized>
+                </AuthorizeView>
+            </MudItem>
+        </MudGrid>
+
+        <!-- Pending Approvals Section (Admin only) -->
+        <AuthorizeView Policy="VaultApprove">
+            <Authorized Context="auth">
+                @if (_pendingTransactions.Any())
+                {
+                    <MudCard Class="mb-4">
+                        <MudCardHeader>
+                            <CardHeaderContent>
+                                <MudText Typo="Typo.h6">Pending Approvals (@_pendingTransactions.Count)</MudText>
+                            </CardHeaderContent>
+                        </MudCardHeader>
+                        <MudCardContent>
+                            <MudTable Items="@_pendingTransactions" Hover="true" Striped="true">
+                                <HeaderContent>
+                                    <MudTh>Created By</MudTh>
+                                    <MudTh>Type</MudTh>
+                                    <MudTh>Amount</MudTh>
+                                    <MudTh>Notes</MudTh>
+                                    <MudTh>Expires In</MudTh>
+                                    <MudTh>Actions</MudTh>
+                                </HeaderContent>
+                                <RowTemplate Context="trx">
+                                    <MudTd>@trx.CreatedBy</MudTd>
+                                    <MudTd>
+                                        <MudChip T="string" Color="@GetTransactionTypeColor(trx.Type)"
+                                            Icon="@GetTransactionTypeIcon(trx.Type)" Size="Size.Small">
+                                            @GetTransactionTypeLabel(trx.Type)
+                                        </MudChip>
+                                    </MudTd>
+                                    <MudTd>
+                                        <MudText
+                                            Color="@(trx.Type == VaultTransactionType.ManualDeposit ? Color.Success : Color.Error)">
+                                            @(trx.Type == VaultTransactionType.ManualDeposit ? "+" :
+                                                                                "-")@trx.Amount.ToString("C0")
+                                        </MudText>
+                                    </MudTd>
+                                    <MudTd>@trx.Notes</MudTd>
+                                    <MudTd>
+                                        @if (trx.ExpiresAt.HasValue)
+                                        {
+                                            var timeRemaining = trx.ExpiresAt.Value - DateTimeOffset.UtcNow;
+                                            if (timeRemaining.TotalMinutes > 0)
+                                            {
+                                                <MudText Typo="Typo.caption">
+                                                    @if (timeRemaining.TotalHours >= 1)
+                                                    {
+                                                        @($"{(int)timeRemaining.TotalHours}h {timeRemaining.Minutes}m")
+                                                    }
+                                                    else
+                                                    {
+                                                        @($"{timeRemaining.Minutes}m")
+                                                    }
+                                                </MudText>
+                                            }
+                                            else
+                                            {
+                                                <MudChip T="string" Color="Color.Error" Size="Size.Small">Expired</MudChip>
+                                            }
+                                        }
+                                    </MudTd>
+                                    <MudTd>
+                                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Success"
+                                            OnClick="@(() => ApproveTransaction(trx.Id))"
+                                            Disabled="@(trx.ExpiresAt.HasValue && trx.ExpiresAt.Value <= DateTimeOffset.UtcNow)">
+                                            Approve
+                                        </MudButton>
+                                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                                            OnClick="@(() => RejectTransaction(trx.Id))">
+                                            Reject
+                                        </MudButton>
+                                    </MudTd>
+                                </RowTemplate>
+                            </MudTable>
+                        </MudCardContent>
+                    </MudCard>
+                }
+            </Authorized>
+        </AuthorizeView>
+
+        <!-- Transaction History -->
+        <MudCard>
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Transaction History</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                @if (_transactions.Any())
+                {
+                    <MudTable Items="@_transactions" Hover="true" Striped="true">
+                        <HeaderContent>
+                            <MudTh>Date</MudTh>
+                            <MudTh>Type</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Amount</MudTh>
+                            <MudTh>Balance After</MudTh>
+                            <MudTh>Created By</MudTh>
+                            <MudTh>Approved By</MudTh>
+                        </HeaderContent>
+                        <RowTemplate Context="trx">
+                            <MudTd>@trx.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+                            <MudTd>
+                                <MudChip T="string" Color="@GetTransactionTypeColor(trx.Type)"
+                                    Icon="@GetTransactionTypeIcon(trx.Type)" Size="Size.Small">
+                                    @GetTransactionTypeLabel(trx.Type)
+                                </MudChip>
+                            </MudTd>
+                            <MudTd>
+                                <MudChip T="string" Color="@GetStatusColor(trx.Status)" Size="Size.Small">
+                                    @GetStatusLabel(trx.Status)
+                                </MudChip>
+                            </MudTd>
+                            <MudTd>
+                                <MudText
+                                    Color="@(trx.Type == VaultTransactionType.ManualDeposit || trx.Type == VaultTransactionType.Closing ? Color.Success : Color.Error)">
+                                    @(trx.Type == VaultTransactionType.ManualDeposit || trx.Type == VaultTransactionType.Closing
+                                                                ? "+" : "-")@trx.Amount.ToString("C0")
+                                </MudText>
+                            </MudTd>
+                            <MudTd>
+                                @if (trx.BalanceAfter.HasValue)
+                                {
+                                    <MudText Color="Color.Primary" Typo="Typo.body2">@trx.BalanceAfter.Value.ToString("C0")
+                                    </MudText>
+                                }
+                            </MudTd>
+                            <MudTd>@trx.CreatedBy</MudTd>
+                            <MudTd>@(trx.ApprovedBy ?? "-")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+                else
+                {
+                    <MudText Color="Color.Default">No transactions found.</MudText>
+                }
+            </MudCardContent>
+        </MudCard>
+    }
+    else
+    {
+        <MudAlert Severity="Severity.Error">Unable to load vault information.</MudAlert>
+    }
+</MudContainer>
+
+@code {
+    private VaultDto? _vault;
+    private List<VaultTransactionListItemDto> _transactions = [];
+    private List<VaultTransactionListItemDto> _pendingTransactions = [];
+    private bool _isLoading = true;
+    private long _branchId = 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+
+            if (user?.Identity?.IsAuthenticated != true)
+            {
+                Snackbar.Add("User is not authenticated.", Severity.Error);
+                return;
+            }
+
+            // Get branch ID from claims
+            var branchIdClaim = user.FindFirst("BranchId");
+            if (!long.TryParse(branchIdClaim?.Value, out var branchId))
+            {
+                Snackbar.Add("User is not associated with a branch. Please contact an administrator.", Severity.Error);
+                _vault = null;
+                _isLoading = false;
+                return;
+            }
+
+            _branchId = branchId;
+            await LoadVaultAsync();
+        }
+        catch (Exception ex)
+        {
+            // Handle error
+            Console.WriteLine($"Error during vault initialization: {ex.Message}");
+            Snackbar.Add($"Error initializing vault page: {ex.Message}", Severity.Error);
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadVaultAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            _vault = await VaultService.GetVaultAsync(_branchId);
+            if (_vault == null)
+            {
+                Snackbar.Add($"No vault found for branch {_branchId}. Please ensure the branch is properly configured.",
+                Severity.Warning);
+                _vault = null;
+            }
+            else
+            {
+                _transactions = await VaultService.GetRecentTransactionsAsync(_branchId, take: 100, includeExpired: true);
+                _pendingTransactions = _transactions
+                .Where(t => t.Status == VaultTransactionStatus.Pending)
+                .OrderBy(t => t.ExpiresAt)
+                .ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading vault data: {ex.Message}", Severity.Error);
+            Console.Error.WriteLine($"Vault loading error: {ex}");
+            _vault = null;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void NavigateToAdjustment()
+    {
+        NavigationManager.NavigateTo("/vault-adjustment");
+    }
+
+    private async Task ApproveTransaction(long transactionId)
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userId = authState.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        if (string.IsNullOrEmpty(userId)) return;
+
+        var result = await VaultService.ApproveManualAdjustmentAsync(transactionId, userId);
+
+        if (result.Success)
+        {
+            Snackbar.Add("Transaction approved successfully.", Severity.Success);
+            await LoadVaultAsync();
+        }
+        else
+        {
+            Snackbar.Add(result.ErrorMessage ?? "Failed to approve transaction.", Severity.Error);
+        }
+    }
+
+    private async Task RejectTransaction(long transactionId)
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userId = authState.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        if (string.IsNullOrEmpty(userId)) return;
+
+        var result = await VaultService.RejectManualAdjustmentAsync(transactionId, userId);
+
+        if (result.Success)
+        {
+            Snackbar.Add("Transaction rejected.", Severity.Info);
+            await LoadVaultAsync();
+        }
+        else
+        {
+            Snackbar.Add(result.ErrorMessage ?? "Failed to reject transaction.", Severity.Error);
+        }
+    }
+
+    private Color GetTransactionTypeColor(VaultTransactionType type) => type switch
+    {
+        VaultTransactionType.Opening => Color.Warning,
+        VaultTransactionType.Closing => Color.Info,
+        VaultTransactionType.ManualDeposit => Color.Success,
+        VaultTransactionType.ManualWithdrawal => Color.Error,
+        _ => Color.Default
+    };
+
+    private string GetTransactionTypeIcon(VaultTransactionType type) => type switch
+    {
+        VaultTransactionType.Opening => Icons.Material.Filled.Input,
+        VaultTransactionType.Closing => Icons.Material.Filled.Output,
+        VaultTransactionType.ManualDeposit => Icons.Material.Filled.AddCircle,
+        VaultTransactionType.ManualWithdrawal => Icons.Material.Filled.RemoveCircle,
+        _ => Icons.Material.Filled.Help
+    };
+
+    private string GetTransactionTypeLabel(VaultTransactionType type) => type switch
+    {
+        VaultTransactionType.Opening => "Opening",
+        VaultTransactionType.Closing => "Closing",
+        VaultTransactionType.ManualDeposit => "Deposit",
+        VaultTransactionType.ManualWithdrawal => "Withdrawal",
+        _ => "Unknown"
+    };
+
+    private Color GetStatusColor(VaultTransactionStatus status) => status switch
+    {
+        VaultTransactionStatus.Completed => Color.Success,
+        VaultTransactionStatus.Pending => Color.Warning,
+        VaultTransactionStatus.Rejected => Color.Error,
+        VaultTransactionStatus.Expired => Color.Error,
+        _ => Color.Default
+    };
+
+    private string GetStatusLabel(VaultTransactionStatus status) => status switch
+    {
+        VaultTransactionStatus.Completed => "Completed",
+        VaultTransactionStatus.Pending => "Pending",
+        VaultTransactionStatus.Rejected => "Rejected",
+        VaultTransactionStatus.Expired => "Expired",
+        _ => "Unknown"
+    };
+}

@@ -1,0 +1,149 @@
+@page "/vault-adjustment"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Web.Features.Vaults
+@attribute [Authorize(Policy = "VaultAdjust")]
+@rendermode InteractiveServer
+@inject IVaultService VaultService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+
+<PageTitle>Request Vault Adjustment - Agenti</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="mt-4">
+    <MudText Typo="Typo.h4" Class="mb-4">Request Manual Vault Adjustment</MudText>
+
+    <MudCard>
+        <MudCardContent>
+            <MudForm @ref="_form" @bind-IsValid="@_formIsValid">
+                <MudRadioGroup @bind-Value="@_formModel.IsDeposit" Class="mb-4">
+                    <MudText Typo="Typo.body2" Class="mb-2">Adjustment Type</MudText>
+                    <MudRadio Value="@true" Color="Color.Success">Deposit (Add to Vault)</MudRadio>
+                    <MudRadio Value="@false" Color="Color.Error">Withdrawal (Remove from Vault)</MudRadio>
+                </MudRadioGroup>
+
+                <MudNumericField @bind-Value="@_formModel.Amount" Label="Amount" Variant="Variant.Outlined" Min="0"
+                    Step="1000" Class="mb-4" Required="true" />
+
+                <MudTextField @bind-Value="@_formModel.Notes" Label="Reason/Notes" Variant="Variant.Outlined" Lines="4"
+                    HelperText="Minimum 10 characters required" Counter="@_notesCharCount" MaxLength="1000" Class="mb-4"
+                    Required="true" />
+            </MudForm>
+
+            <MudAlert Severity="Severity.Info" Class="mb-4">
+                <strong>Note:</strong> This request will be sent for approval by an administrator. Requests pending
+                approval will expire after 12 hours.
+            </MudAlert>
+        </MudCardContent>
+
+        <MudCardActions>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SubmitRequest"
+                Disabled="@(!_formIsValid || _isSubmitting || !IsFormValid())" Class="ml-auto">
+                @if (_isSubmitting)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                    <span>Submitting...</span>
+                }
+                else
+                {
+                    <span>Submit Request</span>
+                }
+            </MudButton>
+            <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        </MudCardActions>
+    </MudCard>
+</MudContainer>
+
+@code {
+    private MudForm? _form;
+    private bool _formIsValid = false;
+    private bool _isSubmitting = false;
+    private long _branchId = 1;
+    private ManualAdjustmentFormModel _formModel = new();
+    private int _notesCharCount = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+
+            if (user?.Identity?.IsAuthenticated != true)
+            {
+                Snackbar.Add("User is not authenticated.", Severity.Error);
+                return;
+            }
+
+            // Get branch ID from claims
+            var branchIdClaim = user.FindFirst("BranchId");
+            if (!long.TryParse(branchIdClaim?.Value, out var branchId))
+            {
+                Snackbar.Add("User is not associated with a branch. Please contact an administrator.", Severity.Error);
+                return;
+            }
+
+            _branchId = branchId;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error during initialization: {ex.Message}");
+            Snackbar.Add($"Error initializing page: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private bool IsFormValid()
+    {
+        return _formModel.Amount > 0 && !string.IsNullOrWhiteSpace(_formModel.Notes) && _formModel.Notes.Length >= 10;
+    }
+
+    private async Task SubmitRequest()
+    {
+        if (_form != null)
+        {
+            await _form.Validate();
+        }
+
+        if (!IsFormValid()) return;
+
+        _isSubmitting = true;
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var userId = authState.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+            if (string.IsNullOrEmpty(userId))
+            {
+                Snackbar.Add("Unable to identify user.", Severity.Error);
+                return;
+            }
+
+            var result = await VaultService.RequestManualAdjustmentAsync(
+            _branchId,
+            _formModel.Amount,
+            _formModel.IsDeposit,
+            _formModel.Notes,
+            userId
+            );
+
+            if (result.Success)
+            {
+                Snackbar.Add("Adjustment request submitted for approval.", Severity.Success);
+                NavigationManager.NavigateTo("/vault");
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to submit request.", Severity.Error);
+            }
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void Cancel()
+    {
+        NavigationManager.NavigateTo("/vault");
+    }
+}

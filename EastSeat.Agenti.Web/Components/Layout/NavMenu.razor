@@ -19,6 +19,20 @@
             <MudNavLink Href="wallettypes" Icon="@Icons.Material.Filled.Wallet">
                 Wallet Types
             </MudNavLink>
+            <AuthorizeView Policy="VaultAccess">
+                <Authorized Context="vaultCtx">
+                    <MudNavLink Href="vault" Icon="@Icons.Material.Filled.SafetyDivider">
+                        Vault
+                    </MudNavLink>
+                </Authorized>
+            </AuthorizeView>
+            <AuthorizeView Policy="UserManagement">
+                <Authorized Context="adminCtx">
+                    <MudNavLink Href="users" Icon="@Icons.Material.Filled.ManageAccounts">
+                        Users
+                    </MudNavLink>
+                </Authorized>
+            </AuthorizeView>
         </Authorized>
         <NotAuthorized>
             <MudNavLink Href="Account/Register" Icon="@Icons.Material.Filled.PersonAdd">

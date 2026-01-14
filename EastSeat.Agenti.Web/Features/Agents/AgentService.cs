@@ -22,6 +22,7 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
                 FullName = a.User != null ? (a.User.FirstName + " " + a.User.LastName).Trim() : "Unknown",
                 Email = a.User != null ? a.User.Email : null,
                 PhoneNumber = a.User != null ? a.User.PhoneNumber : null,
+                BranchId = a.BranchId,
                 IsActive = a.IsActive,
                 WalletCount = a.Wallets.Count(w => w.IsActive),
                 TotalBalance = a.Wallets.Where(w => w.IsActive).Sum(w => w.Balance)
@@ -130,8 +131,9 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
             dbContext.Agents.Add(agent);
             await dbContext.SaveChangesAsync();
 
-            // Step 2: Update the ApplicationUser with the new AgentId
+            // Step 2: Update the ApplicationUser with the new AgentId and BranchId
             user.AgentId = agent.Id;
+            user.BranchId = model.BranchId;
             user.UpdatedAt = DateTime.UtcNow;
             await dbContext.SaveChangesAsync();
 
@@ -209,7 +211,9 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
             return SaveResult.Error("Agent ID is required for update.");
         }
 
-        var agent = await dbContext.Agents.FindAsync(model.Id.Value);
+        var agent = await dbContext.Agents
+            .Include(a => a.User)
+            .FirstOrDefaultAsync(a => a.Id == model.Id.Value);
         if (agent == null)
         {
             return SaveResult.Error("Agent not found.");
@@ -227,6 +231,13 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
         agent.BranchId = model.BranchId;
         agent.IsActive = model.IsActive;
         agent.UpdatedAt = DateTimeOffset.UtcNow;
+
+        // Also update the user's BranchId
+        if (agent.User != null)
+        {
+            agent.User.BranchId = model.BranchId;
+            agent.User.UpdatedAt = DateTime.UtcNow;
+        }
 
         await dbContext.SaveChangesAsync();
 
@@ -435,6 +446,19 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
                 Description = wt.Description,
                 Type = wt.Type,
                 SupportsDenominations = wt.SupportsDenominations
+            })
+            .ToListAsync();
+    }
+
+    /// <inheritdoc />
+    public async Task<List<BranchDto>> GetBranchesAsync()
+    {
+        return await dbContext.Branches
+            .OrderBy(b => b.Name)
+            .Select(b => new BranchDto
+            {
+                Id = b.Id,
+                Name = b.Name
             })
             .ToListAsync();
     }
