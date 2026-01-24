@@ -103,11 +103,19 @@ public class CashCountService(ApplicationDbContext dbContext, IVaultService vaul
     /// <inheritdoc />
     public async Task<CashCountSaveResult> SaveCashCountAsync(string userId, CashCountFormModel form)
     {
-        var agentId = await GetAgentIdForUserAsync(userId);
-        if (agentId == null)
+        var agent = await GetAgentForUserAsync(userId);
+        if (agent == null)
         {
             return CashCountSaveResult.Error("User is not configured as an agent.");
         }
+
+        if (!agent.BranchId.HasValue)
+        {
+            return CashCountSaveResult.Error("Agent is not assigned to a branch. Please contact your administrator.");
+        }
+
+        var agentId = agent.Id;
+        var branchId = agent.BranchId.Value;
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
@@ -116,6 +124,18 @@ public class CashCountService(ApplicationDbContext dbContext, IVaultService vaul
             .Include(s => s.CashCounts)
             .Where(s => s.AgentId == agentId && s.Status == CashSessionStatus.Open)
             .FirstOrDefaultAsync();
+
+        if (session != null)
+        {
+            if (!session.BranchId.HasValue)
+            {
+                session.BranchId = branchId;
+            }
+            else if (session.BranchId != branchId)
+            {
+                return CashCountSaveResult.Error("Active cash session is linked to a different branch. Please close it before continuing.");
+            }
+        }
 
         if (form.IsOpening)
         {
@@ -127,7 +147,8 @@ public class CashCountService(ApplicationDbContext dbContext, IVaultService vaul
             // Create new session for opening count
             session = new CashSession
             {
-                AgentId = agentId.Value,
+                AgentId = agentId,
+                BranchId = branchId,
                 SessionDate = today,
                 Status = CashSessionStatus.Open,
                 OpenedAt = DateTimeOffset.UtcNow
@@ -347,10 +368,15 @@ public class CashCountService(ApplicationDbContext dbContext, IVaultService vaul
     /// </summary>
     private async Task<long?> GetAgentIdForUserAsync(string userId)
     {
-        var user = await dbContext.Users.FindAsync(userId);
-        if (user == null) return null;
+        var agent = await GetAgentForUserAsync(userId);
+        return agent?.Id;
+    }
 
-        // Return the AgentId from the ApplicationUser
-        return user.AgentId;
+    /// <summary>
+    /// Gets the Agent entity for a given user.
+    /// </summary>
+    private async Task<Agent?> GetAgentForUserAsync(string userId)
+    {
+        return await dbContext.Agents.FirstOrDefaultAsync(a => a.UserId == userId);
     }
 }
