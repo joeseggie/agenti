@@ -25,6 +25,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Discrepancy> Discrepancies { get; set; }
     public DbSet<AuditLog> AuditLogs { get; set; }
     public DbSet<UserAuditLog> UserAuditLogs { get; set; }
+    public DbSet<AppConfig> AppConfigs { get; set; }
 
     public override int SaveChanges()
     {
@@ -321,8 +322,30 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(e => e.PerformedAt);
         });
 
+        // Configure AppConfig
+        builder.Entity<AppConfig>(entity =>
+        {
+            entity.HasKey(e => e.Key);
+            entity.Property(e => e.Key).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.Value).HasMaxLength(1000);
+        });
+
+        // Seed default app config
+        SeedAppConfig(builder);
+
         // Seed default wallet types
         SeedWalletTypes(builder);
+    }
+
+    private static void SeedAppConfig(ModelBuilder builder)
+    {
+        builder.Entity<AppConfig>().HasData(
+            new AppConfig
+            {
+                Key = "SetupComplete",
+                Value = "false"
+            }
+        );
     }
 
     private static void SeedWalletTypes(ModelBuilder builder)

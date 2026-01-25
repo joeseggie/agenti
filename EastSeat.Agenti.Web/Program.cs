@@ -12,6 +12,7 @@ using EastSeat.Agenti.Web.Features.Agents;
 using EastSeat.Agenti.Web.Features.WalletTypes;
 using EastSeat.Agenti.Web.Features.Vaults;
 using EastSeat.Agenti.Web.Features.Users;
+using EastSeat.Agenti.Web.Features.Setup;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using MudBlazor.Services;
 
@@ -64,6 +65,7 @@ builder.Services.AddScoped<IAgentService, AgentService>();
 builder.Services.AddScoped<IWalletTypeService, WalletTypeService>();
 builder.Services.AddScoped<IVaultService, VaultService>();
 builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<ISetupService, SetupService>();
 
 // Add vault background service
 builder.Services.AddHostedService<VaultExpirationService>();
@@ -81,6 +83,33 @@ builder.Services.AddAuthorizationBuilder()
 
 var app = builder.Build();
 
+// Initialize setup check at startup
+using (var scope = app.Services.CreateScope())
+{
+    var setupService = scope.ServiceProvider.GetRequiredService<ISetupService>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    try
+    {
+        var isSetupComplete = await setupService.IsSetupCompleteAsync();
+
+        if (!isSetupComplete)
+        {
+            logger.LogInformation("Setup is required. Cleaning up database for fresh start...");
+            await setupService.CleanupDatabaseAsync();
+            logger.LogInformation("Database cleanup completed. Setup flow will be triggered.");
+        }
+        else
+        {
+            logger.LogInformation("Setup is already complete.");
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Error during startup setup check.");
+    }
+}
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
@@ -97,6 +126,40 @@ app.UseHttpsRedirection();
 
 app.UseStaticFiles();
 app.UseAntiforgery();
+
+// Redirect to setup page if setup is incomplete
+app.Use(async (context, next) =>
+{
+    var setupService = context.RequestServices.GetRequiredService<ISetupService>();
+    var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+
+    var path = context.Request.Path.Value ?? string.Empty;
+    var isSetupPage = path.StartsWith("/setup-prerequisites", StringComparison.OrdinalIgnoreCase);
+    var isStaticAsset = path.StartsWith("/_framework", StringComparison.OrdinalIgnoreCase) ||
+                       path.StartsWith("/_content", StringComparison.OrdinalIgnoreCase) ||
+                       path.StartsWith("/css", StringComparison.OrdinalIgnoreCase) ||
+                       path.StartsWith("/js", StringComparison.OrdinalIgnoreCase) ||
+                       path.StartsWith("/lib", StringComparison.OrdinalIgnoreCase) ||
+                       path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase);
+
+    var setupComplete = await setupService.IsSetupCompleteAsync();
+
+    if (!setupComplete && !isSetupPage && !isStaticAsset)
+    {
+        logger.LogInformation("Setup incomplete. Redirecting to setup page from {Path}", path);
+        context.Response.Redirect("/setup-prerequisites");
+        return;
+    }
+
+    if (setupComplete && isSetupPage)
+    {
+        logger.LogInformation("Setup already complete. Redirecting to home from setup page.");
+        context.Response.Redirect("/");
+        return;
+    }
+
+    await next();
+});
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

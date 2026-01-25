@@ -1,0 +1,192 @@
+@page "/setup-prerequisites"
+@rendermode InteractiveServer
+@using EastSeat.Agenti.Web.Features.Setup
+@using MudBlazor
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@inject ISetupService SetupService
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<div class="setup-container">
+    <MudContainer MaxWidth="MaxWidth.Small">
+        <MudPaper Elevation="0" Class="pa-8">
+            <div class="text-center mb-6">
+                <MudText class="mb-2" style="font-size: 2rem; font-weight: 500;">Initial System Setup</MudText>
+                <MudText>
+                    Complete the setup process to initialize your application
+                </MudText>
+            </div>
+
+            <MudAlert Severity="Severity.Warning" Class="mb-6">
+                <strong>Important:</strong> Please backup your database before continuing this process.
+                If the setup fails, the database will be cleaned to allow for a fresh restart.
+            </MudAlert>
+
+            <EditForm Model="setupModel" method="post" OnValidSubmit="HandleSubmit" FormName="SetupPrerequisitesForm">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+
+                <MudTextField @bind-Value="setupModel.Email"
+                              Label="Email Address" Variant="Variant.Outlined" Immediate="true"
+                              Class="mb-4" For="@(() => setupModel.Email)" Disabled="isSubmitting || setupComplete"
+                              name="setupModel.Email" />
+
+                <MudTextField @bind-Value="setupModel.Password"
+                              Label="Password" Variant="Variant.Outlined" Immediate="true" Class="mb-4"
+                              For="@(() => setupModel.Password)" InputType="InputType.Password"
+                              Disabled="isSubmitting || setupComplete"
+                              name="setupModel.Password" />
+
+                <MudTextField @bind-Value="setupModel.ConfirmPassword"
+                              Label="Confirm Password" Variant="Variant.Outlined" Immediate="true" Class="mb-4"
+                              For="@(() => setupModel.ConfirmPassword)" InputType="InputType.Password"
+                              Disabled="isSubmitting || setupComplete"
+                              name="setupModel.ConfirmPassword" />
+
+                <MudTextField @bind-Value="setupModel.FirstName"
+                              Label="First Name" Variant="Variant.Outlined" Immediate="true"
+                              Class="mb-4" For="@(() => setupModel.FirstName)" Disabled="isSubmitting || setupComplete"
+                              name="setupModel.FirstName" />
+
+                <MudTextField @bind-Value="setupModel.LastName"
+                              Label="Last Name" Variant="Variant.Outlined" Immediate="true"
+                              Class="mb-4" For="@(() => setupModel.LastName)" Disabled="isSubmitting || setupComplete"
+                              name="setupModel.LastName" />
+
+                <MudTextField @bind-Value="setupModel.BranchName"
+                              Label="Branch Name" Variant="Variant.Outlined" Immediate="true"
+                              Class="mb-6" For="@(() => setupModel.BranchName)" Disabled="isSubmitting || setupComplete"
+                              name="setupModel.BranchName" />
+
+                <div class="d-flex justify-center gap-4">
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                               Size="Size.Large" Disabled="isSubmitting || setupComplete">
+                        @if (isSubmitting)
+                        {
+                            <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                            <MudText Class="ms-2">Processing...</MudText>
+                        }
+                        else
+                        {
+                            <MudText>Finish Setup</MudText>
+                        }
+                    </MudButton>
+                </div>
+            </EditForm>
+
+            @if (!string.IsNullOrEmpty(successMessage))
+            {
+                <MudAlert Severity="Severity.Success" Class="mt-4">
+                    @successMessage
+                </MudAlert>
+            }
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <MudAlert Severity="Severity.Error" Class="mt-4">
+                    @errorMessage
+                </MudAlert>
+            }
+        </MudPaper>
+    </MudContainer>
+</div>
+
+@code {
+    private SetupFormModel _setupModel = new();
+
+    [SupplyParameterFromForm]
+    private SetupFormModel setupModel
+    {
+        get => _setupModel;
+        set => _setupModel = value ?? new();
+    }
+
+    private bool isSubmitting = false;
+    private bool setupComplete = false;
+    private string successMessage = string.Empty;
+    private string errorMessage = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check if setup is already complete
+        var isSetupComplete = await SetupService.IsSetupCompleteAsync();
+        if (isSetupComplete)
+        {
+            // Redirect to home if setup is already complete
+            NavigationManager.NavigateTo("/", forceLoad: true);
+            return;
+        }
+
+        await base.OnInitializedAsync();
+    }
+
+    private async Task HandleSubmit()
+    {
+        try
+        {
+            isSubmitting = true;
+            errorMessage = string.Empty;
+            successMessage = string.Empty;
+
+            // Call the setup service
+            await SetupService.CreateInitialAdminAndSetupAsync(
+                setupModel.Email,
+                setupModel.Password,
+                setupModel.FirstName,
+                setupModel.LastName,
+                setupModel.BranchName
+            );
+
+            setupComplete = true;
+            successMessage = "Setup complete! Redirecting to home...";
+
+            // Wait for 2 seconds before redirecting
+            await Task.Delay(2000);
+            NavigationManager.NavigateTo("/", forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Setup failed: {ex.Message}";
+            isSubmitting = false;
+        }
+    }
+
+    public class SetupFormModel
+    {
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Email is required")]
+        [System.ComponentModel.DataAnnotations.EmailAddress(ErrorMessage = "Invalid email address")]
+        public string Email { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "First Name is required")]
+        [System.ComponentModel.DataAnnotations.StringLength(100, MinimumLength = 1, ErrorMessage = "First Name must be between 1 and 100 characters")]
+        public string FirstName { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Last Name is required")]
+        [System.ComponentModel.DataAnnotations.StringLength(100, MinimumLength = 1, ErrorMessage = "Last Name must be between 1 and 100 characters")]
+        public string LastName { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Branch Name is required")]
+        [System.ComponentModel.DataAnnotations.StringLength(256, MinimumLength = 1, ErrorMessage = "Branch Name must be between 1 and 256 characters")]
+        public string BranchName { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Password is required")]
+        [System.ComponentModel.DataAnnotations.StringLength(100, MinimumLength = 6, ErrorMessage = "Password must be at least 6 characters")]
+        public string Password { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Confirm Password is required")]
+        [System.ComponentModel.DataAnnotations.Compare("Password", ErrorMessage = "Passwords do not match")]
+        public string ConfirmPassword { get; set; } = string.Empty;
+    }
+}
+
+<style>
+    .setup-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        padding: 2rem 1rem;
+    }
+</style>
