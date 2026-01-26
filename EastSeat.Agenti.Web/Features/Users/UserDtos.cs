@@ -40,4 +40,27 @@ public class UserFormModel
     public bool IsActive { get; set; }
 }
 
+public class CreateUserModel
+{
+    public string FirstName { get; set; } = string.Empty;
+    public string LastName { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public string? PhoneNumber { get; set; }
+}
+
 public record ServiceResult(bool Success, string? Message = null);
+
+public class CreateUserResult
+{
+    public bool Success { get; set; }
+    public string? Message { get; set; }
+    public string? UserId { get; set; }
+    public string? TemporaryPassword { get; set; }
+    public string? InviteToken { get; set; }
+
+    public static CreateUserResult Ok(string userId, string password, string token) =>
+        new() { Success = true, UserId = userId, TemporaryPassword = password, InviteToken = token };
+
+    public static CreateUserResult Error(string message) =>
+        new() { Success = false, Message = message };
+}

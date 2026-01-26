@@ -2,11 +2,19 @@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "UserManagement")]
 @inject EastSeat.Agenti.Web.Features.Users.IUserService UserService
 @inject NavigationManager Nav
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@inject AuthenticationStateProvider AuthenticationStateProvider
 
 <h3>Users</h3>
 
-<MudTextField @bind-Value="search" Placeholder="Search users..." Adornment="Adornment.Start"
-    AdornmentIcon="@Icons.Material.Filled.Search" Class="mb-2" />
+<div class="mb-4 d-flex gap-2">
+    <MudTextField @bind-Value="search" Placeholder="Search users..." Adornment="Adornment.Start"
+        AdornmentIcon="@Icons.Material.Filled.Search" Class="flex-grow-1" />
+    <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Add"
+        OnClick="OpenCreateUserDialog">Create User</MudButton>
+</div>
+
 <MudTable Items="filtered" Dense="true" Hover="true">
     <HeaderContent>
         <MudTh>Full Name</MudTh>
@@ -41,11 +49,114 @@
     </RowTemplate>
 </MudTable>
 
+@if (showCreateDialog)
+{
+    <MudDialog @bind-Visible="showCreateDialog" Options="new DialogOptions() { MaxWidth = MaxWidth.Small, FullWidth = true }">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Create New User</MudText>
+        </TitleContent>
+        <DialogContent>
+            @if (showSuccessDialog)
+            {
+                <div>
+                    <MudText Typo="Typo.h6" Class="mb-2">User Created Successfully</MudText>
+                    <MudText Class="mb-4">The user has been created with the following credentials:</MudText>
+                    
+                    <div class="mb-4">
+                        <MudText Typo="Typo.subtitle2" Class="mb-1"><strong>Temporary Password:</strong></MudText>
+                        <MudTextField ReadOnly="true" Value="@creationResult?.TemporaryPassword" 
+                            Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Outlined.FileCopy"
+                            OnAdornmentClick="@(() => CopyToClipboard(creationResult?.TemporaryPassword ?? string.Empty))"
+                            />
+                        <MudText Typo="Typo.caption" Class="mt-1">Click the copy icon to copy the password</MudText>
+                    </div>
+
+                    <div class="mb-4">
+                        <MudText Typo="Typo.subtitle2" Class="mb-1"><strong>Invite Link:</strong></MudText>
+                        <MudTextField ReadOnly="true" Value="@GetInviteLink()" 
+                            Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Outlined.FileCopy"
+                            OnAdornmentClick="@(() => CopyToClipboard(GetInviteLink()))"
+                            HelperText="Share this link with the user" />
+                    </div>
+
+                    <MudAlert Severity="Severity.Warning" Class="mb-4">
+                        <MudText>Share both the temporary password and invite link with the user. They can use either to set up their account.</MudText>
+                    </MudAlert>
+                </div>
+            }
+            else
+            {
+                <MudForm @ref="formRef" @bind-IsValid="@isFormValid" ValidationDelay="0">
+                    <MudTextField @bind-Value="createUserModel.FirstName" Label="First Name" 
+                        Required="true" RequiredError="First name is required" Class="mb-2" />
+                    
+                    <MudTextField @bind-Value="createUserModel.LastName" Label="Last Name" 
+                        Required="true" RequiredError="Last name is required" Class="mb-2" />
+                    
+                    <MudTextField @bind-Value="createUserModel.Email" Label="Email" InputType="InputType.Email"
+                        Required="true" RequiredError="Email is required" Class="mb-2" />
+                    
+                    <MudTextField @bind-Value="createUserModel.PhoneNumber" Label="Phone Number" 
+                        Placeholder="(Optional)" Class="mb-2" />
+
+                    @if (!string.IsNullOrEmpty(dialogError))
+                    {
+                        <MudAlert Severity="Severity.Error" Class="mb-2">@dialogError</MudAlert>
+                    }
+                </MudForm>
+            }
+        </DialogContent>
+        <DialogActions>
+            @if (!showSuccessDialog)
+            {
+                <MudButton OnClick="CloseCreateUserDialog">Cancel</MudButton>
+                <MudButton Color="Color.Primary" OnClick="SubmitCreateUser" Disabled="@(!isFormValid || isSubmitting)">
+                    @if (isSubmitting)
+                    {
+                        <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                        <MudText Class="ms-2">Creating...</MudText>
+                    }
+                    else
+                    {
+                        <span>Create User</span>
+                    }
+                </MudButton>
+            }
+            else
+            {
+                <MudButton Color="Color.Primary" OnClick="CloseCreateUserDialog">Done</MudButton>
+            }
+        </DialogActions>
+    </MudDialog>
+}
+
 @code {
     private List<EastSeat.Agenti.Web.Features.Users.UserListItemDto> users = new();
     private string? search;
+    private string? currentUserId;
+    private bool showCreateDialog;
+    private bool showSuccessDialog;
+    private MudForm? formRef;
+    private EastSeat.Agenti.Web.Features.Users.CreateUserModel createUserModel = new();
+    private string? dialogError;
+    private bool isFormValid;
+    private bool isSubmitting;
+    private EastSeat.Agenti.Web.Features.Users.CreateUserResult? creationResult;
 
     protected override async Task OnInitializedAsync()
+    {
+        await LoadUsers();
+        await GetCurrentUserId();
+    }
+
+    private async Task GetCurrentUserId()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUserId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "system";
+    }
+
+    private async Task LoadUsers()
     {
         users = await UserService.GetAllAsync();
     }
@@ -63,4 +174,78 @@
         EastSeat.Agenti.Shared.Domain.Enums.UserRole.Supervisor => Color.Info,
         _ => Color.Default
     };
+
+    private void OpenCreateUserDialog()
+    {
+        showCreateDialog = true;
+        showSuccessDialog = false;
+        dialogError = null;
+        createUserModel = new();
+        StateHasChanged();
+    }
+
+    private void CloseCreateUserDialog()
+    {
+        showCreateDialog = false;
+        showSuccessDialog = false;
+        dialogError = null;
+        createUserModel = new();
+        StateHasChanged();
+    }
+
+    private async Task SubmitCreateUser()
+    {
+        if (formRef == null || !isFormValid) return;
+
+        await formRef.Validate();
+        if (!formRef.IsValid) return;
+
+        isSubmitting = true;
+        dialogError = null;
+
+        try
+        {
+            var performedByUserId = currentUserId ?? "system";
+            
+            creationResult = await UserService.CreateUserAsync(createUserModel, performedByUserId);
+
+            if (creationResult!.Success)
+            {
+                showSuccessDialog = true;
+                await LoadUsers();
+                StateHasChanged();
+            }
+            else
+            {
+                dialogError = creationResult.Message ?? "An error occurred while creating the user.";
+            }
+        }
+        catch (Exception ex)
+        {
+            dialogError = $"An error occurred: {ex.Message}";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private string GetInviteLink()
+    {
+        var baseUrl = "http://localhost:5000";
+        return $"{baseUrl}/invite?token={Uri.EscapeDataString(creationResult?.InviteToken ?? string.Empty)}";
+    }
+
+    private async Task CopyToClipboard(string text)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            Snackbar.Add("Copied to clipboard", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to copy to clipboard: {ex.Message}", Severity.Error);
+        }
+    }
 }
