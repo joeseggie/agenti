@@ -173,7 +173,7 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         if (userId == performedByUserId)
             return new(false, "You cannot change your own role.");
 
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+        var user = await userManager.FindByIdAsync(userId);
         if (user is null) return new(false, "User not found");
 
         if (user.Role == newRole) return new(true);
@@ -187,8 +187,31 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         }
 
         var oldValue = user.Role.ToString();
+        var oldRoleName = user.Role.ToString();
+        var newRoleName = newRole.ToString();
+
+        // Remove from old Identity role
+        var removeResult = await userManager.RemoveFromRoleAsync(user, oldRoleName);
+        if (!removeResult.Succeeded)
+        {
+            var errors = string.Join(", ", removeResult.Errors.Select(e => e.Description));
+            return new(false, $"Failed to remove old role: {errors}");
+        }
+
+        // Add to new Identity role
+        var addResult = await userManager.AddToRoleAsync(user, newRoleName);
+        if (!addResult.Succeeded)
+        {
+            var errors = string.Join(", ", addResult.Errors.Select(e => e.Description));
+            // Try to restore old role
+            await userManager.AddToRoleAsync(user, oldRoleName);
+            return new(false, $"Failed to add new role: {errors}");
+        }
+
+        // Update custom role property
         user.Role = newRole;
         user.UpdatedAt = DateTime.UtcNow;
+        await userManager.UpdateAsync(user);
 
         db.UserAuditLogs.Add(new UserAuditLog
         {
