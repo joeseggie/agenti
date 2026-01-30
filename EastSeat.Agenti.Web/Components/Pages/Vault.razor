@@ -29,7 +29,7 @@
                     <MudCardContent>
                         <MudText Typo="Typo.subtitle2" Color="Color.Default">Current Vault Balance</MudText>
                         <MudText Typo="Typo.h3" Color="Color.Primary">
-                            @(_vault.CurrentBalance.ToString("C0"))
+                            UGX @(_vault.CurrentBalance.ToString("N0"))
                         </MudText>
                         <MudText Typo="Typo.caption" Class="mt-2">@_vault.BranchName</MudText>
                     </MudCardContent>
@@ -84,7 +84,7 @@
                                         <MudText
                                             Color="@(trx.Type == VaultTransactionType.ManualDeposit ? Color.Success : Color.Error)">
                                             @(trx.Type == VaultTransactionType.ManualDeposit ? "+" :
-                                                                                "-")@trx.Amount.ToString("C0")
+                                                                                "-")UGX @trx.Amount.ToString("N0")
                                         </MudText>
                                     </MudTd>
                                     <MudTd>@trx.Notes</MudTd>
@@ -167,13 +167,13 @@
                                 <MudText
                                     Color="@(trx.Type == VaultTransactionType.ManualDeposit || trx.Type == VaultTransactionType.Closing ? Color.Success : Color.Error)">
                                     @(trx.Type == VaultTransactionType.ManualDeposit || trx.Type == VaultTransactionType.Closing
-                                                                ? "+" : "-")@trx.Amount.ToString("C0")
+                                                                ? "+" : "-")UGX @trx.Amount.ToString("N0")
                                 </MudText>
                             </MudTd>
                             <MudTd>
                                 @if (trx.BalanceAfter.HasValue)
                                 {
-                                    <MudText Color="Color.Primary" Typo="Typo.body2">@trx.BalanceAfter.Value.ToString("C0")
+                                    <MudText Color="Color.Primary" Typo="Typo.body2">UGX @trx.BalanceAfter.Value.ToString("N0")
                                     </MudText>
                                 }
                             </MudTd>
