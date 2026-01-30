@@ -298,4 +298,51 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         await db.SaveChangesAsync(cancellationToken);
         return new(true);
     }
+
+    public async Task<ResetPasswordResult> ResetPasswordAsync(string userId, string performedByUserId, CancellationToken cancellationToken = default)
+    {
+        if (userId == performedByUserId)
+            return ResetPasswordResult.Error("You cannot reset your own password.");
+
+        var user = await userManager.FindByIdAsync(userId);
+        if (user is null)
+            return ResetPasswordResult.Error("User not found");
+
+        // Generate new temporary password
+        var newPassword = GenerateTemporaryPassword();
+
+        // Remove existing password and set new one
+        var removePasswordResult = await userManager.RemovePasswordAsync(user);
+        if (!removePasswordResult.Succeeded)
+        {
+            var errors = string.Join(", ", removePasswordResult.Errors.Select(e => e.Description));
+            return ResetPasswordResult.Error($"Failed to reset password: {errors}");
+        }
+
+        var addPasswordResult = await userManager.AddPasswordAsync(user, newPassword);
+        if (!addPasswordResult.Succeeded)
+        {
+            var errors = string.Join(", ", addPasswordResult.Errors.Select(e => e.Description));
+            return ResetPasswordResult.Error($"Failed to set new password: {errors}");
+        }
+
+        // Update timestamp
+        user.UpdatedAt = DateTime.UtcNow;
+        await userManager.UpdateAsync(user);
+
+        // Log password reset audit entry
+        db.UserAuditLogs.Add(new UserAuditLog
+        {
+            UserId = user.Id,
+            Action = UserAuditAction.PasswordReset,
+            OldValue = null,
+            NewValue = "Password reset by admin",
+            PerformedByUserId = performedByUserId,
+            PerformedAt = DateTimeOffset.UtcNow
+        });
+
+        await db.SaveChangesAsync(cancellationToken);
+
+        return ResetPasswordResult.Ok(newPassword);
+    }
 }

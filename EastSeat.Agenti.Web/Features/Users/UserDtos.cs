@@ -64,3 +64,16 @@ public class CreateUserResult
     public static CreateUserResult Error(string message) =>
         new() { Success = false, Message = message };
 }
+
+public class ResetPasswordResult
+{
+    public bool Success { get; set; }
+    public string? Message { get; set; }
+    public string? NewPassword { get; set; }
+
+    public static ResetPasswordResult Ok(string newPassword) =>
+        new() { Success = true, NewPassword = newPassword };
+
+    public static ResetPasswordResult Error(string message) =>
+        new() { Success = false, Message = message };
+}

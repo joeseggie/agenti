@@ -13,4 +13,5 @@ public interface IUserService
     Task<ServiceResult> DeactivateAsync(string userId, string performedByUserId, CancellationToken cancellationToken = default);
     Task<ServiceResult> ReactivateAsync(string userId, string performedByUserId, CancellationToken cancellationToken = default);
     Task<ServiceResult> DeleteAsync(string userId, string performedByUserId, CancellationToken cancellationToken = default);
+    Task<ResetPasswordResult> ResetPasswordAsync(string userId, string performedByUserId, CancellationToken cancellationToken = default);
 }

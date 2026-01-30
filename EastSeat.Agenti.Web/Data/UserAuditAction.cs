@@ -6,5 +6,6 @@ public enum UserAuditAction
     RoleChanged = 1,
     Deactivated = 2,
     Reactivated = 3,
-    Deleted = 4
+    Deleted = 4,
+    PasswordReset = 5
 }

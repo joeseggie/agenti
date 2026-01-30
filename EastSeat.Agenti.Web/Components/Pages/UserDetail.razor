@@ -3,6 +3,8 @@
 @inject EastSeat.Agenti.Web.Features.Users.IUserService UserService
 @inject AuthenticationStateProvider Auth
 @inject NavigationManager Nav
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
 
 <h3>User Management</h3>
 
@@ -52,6 +54,8 @@ else
                 StartIcon="@Icons.Material.Filled.Save">Save</MudButton>
             <MudButton Color="Color.Info" Variant="Variant.Outlined" OnClick="ChangeRole"
                 StartIcon="@Icons.Material.Filled.AdminPanelSettings">Update Role</MudButton>
+            <MudButton Color="Color.Secondary" Variant="Variant.Outlined" OnClick="ResetPassword"
+                StartIcon="@Icons.Material.Filled.LockReset">Reset Password</MudButton>
             @if (form.IsActive)
             {
                 <MudButton Color="Color.Warning" Variant="Variant.Outlined" OnClick="Deactivate"
@@ -74,6 +78,43 @@ else
     </MudPaper>
 }
 
+@if (showPasswordDialog && !string.IsNullOrEmpty(newPassword))
+{
+    <MudDialog @bind-Visible="showPasswordDialog" Options="new DialogOptions() { MaxWidth = MaxWidth.Small, FullWidth = true }">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Password Reset Successful</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Typo="Typo.body1" Class="mb-3">
+                Password has been reset for <strong>@(model?.Email ?? "User")</strong>
+            </MudText>
+
+            <MudAlert Severity="Severity.Info" Class="mb-3">
+                Copy the password below and share it with the user manually. This is the only time you will see this password.
+            </MudAlert>
+
+            <MudPaper Class="pa-3 mb-3" Elevation="2">
+                <div class="d-flex align-center justify-space-between">
+                    <MudText Typo="Typo.h6" Style="font-family: monospace; word-break: break-all;">
+                        @newPassword
+                    </MudText>
+                    <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                                   Color="Color.Primary"
+                                   OnClick="CopyToClipboard"
+                                   Title="Copy to clipboard" />
+                </div>
+            </MudPaper>
+
+            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                The user should change this password after their first login.
+            </MudText>
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="ClosePasswordDialog" Color="Color.Primary" Variant="Variant.Filled">Close</MudButton>
+        </DialogActions>
+    </MudDialog>
+}
+
 @code {
     [Parameter] public string Id { get; set; } = string.Empty;
 
@@ -82,6 +123,8 @@ else
     private bool loading = true;
     private string? message;
     private Severity messageSeverity = Severity.Info;
+    private bool showPasswordDialog = false;
+    private string? newPassword;
 
     private readonly EastSeat.Agenti.Shared.Domain.Enums.UserRole[] roles =
     Enum.GetValues<EastSeat.Agenti.Shared.Domain.Enums.UserRole>();
@@ -159,5 +202,41 @@ else
         }
         message = res.Message ?? "Failed to delete user";
         messageSeverity = Severity.Error;
+    }
+
+    private async Task ResetPassword()
+    {
+        var res = await UserService.ResetPasswordAsync(Id, await CurrentUserId());
+        if (res.Success && !string.IsNullOrEmpty(res.NewPassword))
+        {
+            newPassword = res.NewPassword;
+            showPasswordDialog = true;
+            message = "Password reset successful. Please share the new password with the user.";
+            messageSeverity = Severity.Success;
+        }
+        else
+        {
+            message = res.Message ?? "Failed to reset password";
+            messageSeverity = Severity.Error;
+        }
+    }
+
+    private async Task CopyToClipboard()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", newPassword);
+            Snackbar.Add("Password copied to clipboard!", Severity.Success);
+        }
+        catch (Exception)
+        {
+            Snackbar.Add("Failed to copy to clipboard. Please copy manually.", Severity.Warning);
+        }
+    }
+
+    private void ClosePasswordDialog()
+    {
+        showPasswordDialog = false;
+        newPassword = null;
     }
 }
