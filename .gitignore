@@ -148,3 +148,5 @@ _NCrunch*/
 *.meta
 *.cache
 scripts/grant_admin_access.sql
+.claude/settings.local.json
+nul
