@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>aspnet-EastSeat.Agenti.Web-f158fce3-8d06-4b04-9bf6-32e5e29eaf2a</UserSecretsId>
+    <NoWarn>BL0008;MUD0002</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
