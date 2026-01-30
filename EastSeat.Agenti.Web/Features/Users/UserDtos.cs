@@ -46,6 +46,7 @@ public class CreateUserModel
     public string LastName { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public string? PhoneNumber { get; set; }
+    public long BranchId { get; set; }
 }
 
 public record ServiceResult(bool Success, string? Message = null);

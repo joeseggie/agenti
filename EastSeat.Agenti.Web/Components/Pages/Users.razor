@@ -1,6 +1,8 @@
 @page "/users"
 @attribute [Microsoft.AspNetCore.Authorization.Authorize(Policy = "UserManagement")]
+@using Microsoft.EntityFrameworkCore
 @inject EastSeat.Agenti.Web.Features.Users.IUserService UserService
+@inject EastSeat.Agenti.Web.Data.ApplicationDbContext DbContext
 @inject NavigationManager Nav
 @inject ISnackbar Snackbar
 @inject IJSRuntime JS
@@ -87,17 +89,25 @@
             else
             {
                 <MudForm @ref="formRef" @bind-IsValid="@isFormValid" ValidationDelay="0">
-                    <MudTextField @bind-Value="createUserModel.FirstName" Label="First Name" 
+                    <MudTextField @bind-Value="createUserModel.FirstName" Label="First Name"
                         Required="true" RequiredError="First name is required" Class="mb-2" />
-                    
-                    <MudTextField @bind-Value="createUserModel.LastName" Label="Last Name" 
+
+                    <MudTextField @bind-Value="createUserModel.LastName" Label="Last Name"
                         Required="true" RequiredError="Last name is required" Class="mb-2" />
-                    
+
                     <MudTextField @bind-Value="createUserModel.Email" Label="Email" InputType="InputType.Email"
                         Required="true" RequiredError="Email is required" Class="mb-2" />
-                    
-                    <MudTextField @bind-Value="createUserModel.PhoneNumber" Label="Phone Number" 
+
+                    <MudTextField @bind-Value="createUserModel.PhoneNumber" Label="Phone Number"
                         Placeholder="(Optional)" Class="mb-2" />
+
+                    <MudSelect @bind-Value="createUserModel.BranchId" Label="Branch"
+                        Required="true" RequiredError="Branch is required" Class="mb-2">
+                        @foreach (var branch in branches)
+                        {
+                            <MudSelectItem Value="@branch.Id">@branch.Name</MudSelectItem>
+                        }
+                    </MudSelect>
 
                     @if (!string.IsNullOrEmpty(dialogError))
                     {
@@ -132,6 +142,7 @@
 
 @code {
     private List<EastSeat.Agenti.Web.Features.Users.UserListItemDto> users = new();
+    private List<EastSeat.Agenti.Shared.Domain.Entities.Branch> branches = new();
     private string? search;
     private string? currentUserId;
     private bool showCreateDialog;
@@ -147,6 +158,12 @@
     {
         await LoadUsers();
         await GetCurrentUserId();
+        await LoadBranches();
+    }
+
+    private async Task LoadBranches()
+    {
+        branches = await DbContext.Branches.OrderBy(b => b.Name).ToListAsync();
     }
 
     private async Task GetCurrentUserId()

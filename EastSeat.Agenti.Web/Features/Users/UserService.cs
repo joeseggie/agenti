@@ -69,6 +69,11 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         // Generate temporary password
         var temporaryPassword = GenerateTemporaryPassword();
 
+        // Validate branch exists
+        var branchExists = await db.Branches.AnyAsync(b => b.Id == model.BranchId, cancellationToken);
+        if (!branchExists)
+            return CreateUserResult.Error($"Branch with ID {model.BranchId} does not exist.");
+
         // Create the new user
         var newUser = new ApplicationUser
         {
@@ -78,6 +83,7 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
             LastName = model.LastName.Trim(),
             PhoneNumber = model.PhoneNumber,
             Role = UserRole.Agent,
+            BranchId = model.BranchId,
             IsActive = true,
             CreatedAt = DateTime.UtcNow
         };
