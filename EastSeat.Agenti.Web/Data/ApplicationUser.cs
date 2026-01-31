@@ -20,6 +20,11 @@ public class ApplicationUser : IdentityUser
     public DateTime? UpdatedAt { get; set; }
 
     /// <summary>
+    /// User's theme preference: null (system), "light", or "dark"
+    /// </summary>
+    public string? ThemePreference { get; set; }
+
+    /// <summary>
     /// Full name of the user.
     /// </summary>
     public string FullName => $"{FirstName} {LastName}".Trim();

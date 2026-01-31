@@ -1,6 +1,10 @@
 ﻿@inherits LayoutComponentBase
+@using EastSeat.Agenti.Web.Features.Theme
+@inject IThemeService ThemeService
+@inject IJSRuntime JS
+@implements IDisposable
 
-<MudThemeProvider />
+<MudThemeProvider @ref="_themeProvider" Theme="@_currentTheme" IsDarkMode="@_isDarkMode" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
@@ -13,6 +17,10 @@
         <MudSpacer />
         <AuthorizeView>
             <Authorized>
+                <MudIconButton Icon="@(_isDarkMode ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
+                    Color="Color.Inherit"
+                    OnClick="@ToggleTheme"
+                    Title="@(_isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode")" />
                 <MudText Class="mr-4">@context.User.Identity?.Name</MudText>
                 <form action="Account/Logout" method="post">
                     <AntiforgeryToken />
@@ -43,9 +51,81 @@
 
 @code {
     private bool _drawerOpen = true;
+    private MudThemeProvider? _themeProvider;
+    private bool _isDarkMode = false;
+    private MudTheme _currentTheme = AppThemes.LightTheme;
+    private DotNetObjectReference<MainLayout>? _dotNetHelper;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Detect system theme
+        string? systemPreference = null;
+        try
+        {
+            systemPreference = await JS.InvokeAsync<string>("themeHelpers.getSystemThemePreference");
+        }
+        catch
+        {
+            systemPreference = "light";
+        }
+
+        // Initialize theme service
+        await ThemeService.InitializeAsync(systemPreference);
+        ThemeService.ThemeChanged += OnThemeChanged;
+
+        // Set initial theme
+        _isDarkMode = ThemeService.IsDarkMode;
+        _currentTheme = _isDarkMode ? AppThemes.DarkTheme : AppThemes.LightTheme;
+
+        // Watch system theme changes
+        try
+        {
+            _dotNetHelper = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("themeHelpers.watchSystemThemePreference", _dotNetHelper);
+        }
+        catch
+        {
+            // If JS interop fails, continue without system theme watching
+        }
+    }
 
     private void ToggleDrawer()
     {
         _drawerOpen = !_drawerOpen;
+    }
+
+    private async Task ToggleTheme()
+    {
+        var currentPref = await ThemeService.GetUserPreferenceAsync();
+        var newPref = currentPref switch
+        {
+            ThemePreferenceConstants.Light => ThemePreferenceConstants.Dark,
+            ThemePreferenceConstants.Dark => ThemePreferenceConstants.System,
+            _ => ThemePreferenceConstants.Light
+        };
+        await ThemeService.SetUserPreferenceAsync(newPref);
+    }
+
+    private void OnThemeChanged(object? sender, EventArgs e)
+    {
+        _isDarkMode = ThemeService.IsDarkMode;
+        _currentTheme = _isDarkMode ? AppThemes.DarkTheme : AppThemes.LightTheme;
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public async Task OnSystemThemeChanged(string newTheme)
+    {
+        var userPref = await ThemeService.GetUserPreferenceAsync();
+        if (userPref == ThemePreferenceConstants.System)
+        {
+            await ThemeService.InitializeAsync(newTheme);
+        }
+    }
+
+    public void Dispose()
+    {
+        ThemeService.ThemeChanged -= OnThemeChanged;
+        _dotNetHelper?.Dispose();
     }
 }

@@ -13,6 +13,7 @@ using EastSeat.Agenti.Web.Features.WalletTypes;
 using EastSeat.Agenti.Web.Features.Vaults;
 using EastSeat.Agenti.Web.Features.Users;
 using EastSeat.Agenti.Web.Features.Setup;
+using EastSeat.Agenti.Web.Features.Theme;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using MudBlazor.Services;
 
@@ -66,6 +67,7 @@ builder.Services.AddScoped<IWalletTypeService, WalletTypeService>();
 builder.Services.AddScoped<IVaultService, VaultService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<ISetupService, SetupService>();
+builder.Services.AddScoped<IThemeService, ThemeService>();
 
 // Add vault background service
 builder.Services.AddHostedService<VaultExpirationService>();
