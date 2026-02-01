@@ -31,11 +31,11 @@
 
 param(
     [string]$ResourceGroupName = "agenti-rg",
-    [string]$Location = "eastus",
+    [string]$Location = "uaenorth",
     [Parameter(Mandatory=$true)]
     [string]$PostgresPassword,
     [string]$AppServicePlanName = "agenti-plan",
-    [string]$WebAppName = "agenti-web",
+    [string]$WebAppName = "agenti",
     [string]$PostgresContainerName = "agenti-postgres"
 )
 
