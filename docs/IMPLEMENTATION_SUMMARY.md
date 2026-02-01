@@ -136,9 +136,9 @@ C:\repos\Agenti/
 
 ## Database Configuration
 
-**Connection String**: 
+**Connection String** (credentials from `.env` file): 
 ```
-Server=localhost;Port=5432;Database=agenti_dev;User Id=agenti_user;Password=DevPassword123!;
+Server=localhost;Port=5432;Database=agenti_dev;User Id=<user>;Password=<password>;
 ```
 
 **Indexes Created**:

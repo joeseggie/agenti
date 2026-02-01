@@ -17,7 +17,7 @@ This guide explains how to configure the required GitHub secrets for the Agenti 
 2. Navigate to **Settings** → **Secrets and variables** → **Actions**
 3. Click **New repository secret**
 4. Name: `TEST_DB_PASSWORD`
-5. Value: A secure password for the CI test database (e.g., `TestPassword123!`)
+5. Value: A secure password for the CI test database
 6. Click **Add secret**
 
 ### 2. Create Azure Service Principal

@@ -16,11 +16,14 @@ public class DatabaseFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        // Credentials for ephemeral test container - not persisted
+        var testPassword = Environment.GetEnvironmentVariable("TEST_DB_PASSWORD") ?? "test_container_pwd_" + Guid.NewGuid().ToString("N")[..8];
+        
         _container = new PostgreSqlBuilder()
             .WithImage("postgres:17")
             .WithDatabase("agenti_test")
             .WithUsername("testuser")
-            .WithPassword("testpass123")
+            .WithPassword(testPassword)
             .WithCleanUp(true)
             .Build();
 

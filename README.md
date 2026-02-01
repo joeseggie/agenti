@@ -21,24 +21,29 @@ A vertical-slice architecture Blazor Server application for managing banking age
 
 ### Local Development Setup
 
-1. **Start PostgreSQL Container**:
+1. **Configure environment variables**:
    ```bash
-   cd C:\repos\Agenti
+   cp .env.example .env
+   # Edit .env and set POSTGRES_PASSWORD
+   ```
+
+2. **Start PostgreSQL Container**:
+   ```bash
    docker-compose up -d
    ```
 
-2. **Verify PostgreSQL Connection**:
+3. **Verify PostgreSQL Connection**:
    ```bash
-   docker-compose exec postgres psql -U agenti_user -d agenti_dev -c "SELECT 1"
+   docker-compose exec postgres psql -U $POSTGRES_USER -d agenti_dev -c "SELECT 1"
    ```
 
-3. **Apply Database Migrations**:
+4. **Apply Database Migrations**:
    ```bash
    cd EastSeat.Agenti.Web
    dotnet ef database update
    ```
 
-4. **Run the Application**:
+5. **Run the Application**:
    ```bash
    dotnet run
    ```
@@ -47,10 +52,11 @@ A vertical-slice architecture Blazor Server application for managing banking age
 
 ### Database Configuration
 
-- **Connection String**: `Server=localhost;Port=5432;Database=agenti_dev;User Id=agenti_user;Password=DevPassword123!;`
-- **User**: agenti_user
-- **Password**: DevPassword123!
-- **Database**: agenti_dev
+Database credentials are stored in a `.env` file (not committed to version control).
+
+1. Copy the example file: `cp .env.example .env`
+2. Edit `.env` and set your password
+3. The connection string format is: `Server=localhost;Port=5432;Database=agenti_dev;User Id=<user>;Password=<password>;`
 
 ## CI/CD Pipeline
 
