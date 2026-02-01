@@ -7,10 +7,20 @@ This guide explains how to configure the required GitHub secrets for the Agenti 
 | Secret Name | Description |
 |-------------|-------------|
 | `AZURE_CREDENTIALS` | Service principal JSON for Azure login |
+| `TEST_DB_PASSWORD` | Password for PostgreSQL test database in CI |
 
 ## Step-by-Step Setup
 
-### 1. Create Azure Service Principal
+### 1. Create Test Database Password Secret
+
+1. Go to your GitHub repository
+2. Navigate to **Settings** → **Secrets and variables** → **Actions**
+3. Click **New repository secret**
+4. Name: `TEST_DB_PASSWORD`
+5. Value: A secure password for the CI test database (e.g., `TestPassword123!`)
+6. Click **Add secret**
+
+### 2. Create Azure Service Principal
 
 Run the following command in Azure CLI (replace `<subscription-id>` with your actual subscription ID):
 
@@ -39,7 +49,7 @@ This will output JSON similar to:
 }
 ```
 
-### 2. Add Secret to GitHub
+### 3. Add Azure Credentials to GitHub
 
 1. Go to your GitHub repository
 2. Navigate to **Settings** → **Secrets and variables** → **Actions**
@@ -48,7 +58,7 @@ This will output JSON similar to:
 5. Value: Paste the entire JSON output from the previous step
 6. Click **Add secret**
 
-### 3. Configure GitHub Environment (Optional but Recommended)
+### 4. Configure GitHub Environment (Optional but Recommended)
 
 For additional security with the `production` environment:
 

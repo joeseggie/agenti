@@ -10,6 +10,8 @@ env:
   DOTNET_VERSION: '10.0.x'
   AZURE_WEBAPP_NAME: agenti-web
   AZURE_RESOURCE_GROUP: agenti-rg
+  TEST_DB_USER: agenti_user
+  TEST_DB_NAME: agenti_test
 
 jobs:
   build:
@@ -78,9 +80,9 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: agenti_user
-          POSTGRES_PASSWORD: TestPassword123!
-          POSTGRES_DB: agenti_test
+          POSTGRES_USER: ${{ env.TEST_DB_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
+          POSTGRES_DB: ${{ env.TEST_DB_NAME }}
         ports:
           - 5432:5432
         options: >-
@@ -104,7 +106,7 @@ jobs:
       - name: Run integration tests
         run: dotnet test tests/EastSeat.Agenti.IntegrationTests/EastSeat.Agenti.IntegrationTests.csproj --configuration Release --logger trx --results-directory TestResults
         env:
-          ConnectionStrings__DefaultConnection: "Server=localhost;Port=5432;Database=agenti_test;User Id=agenti_user;Password=TestPassword123!;"
+          ConnectionStrings__DefaultConnection: "Server=localhost;Port=5432;Database=${{ env.TEST_DB_NAME }};User Id=${{ env.TEST_DB_USER }};Password=${{ secrets.TEST_DB_PASSWORD }};"
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -123,9 +125,9 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: agenti_user
-          POSTGRES_PASSWORD: TestPassword123!
-          POSTGRES_DB: agenti_test
+          POSTGRES_USER: ${{ env.TEST_DB_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
+          POSTGRES_DB: ${{ env.TEST_DB_NAME }}
         ports:
           - 5432:5432
         options: >-
@@ -149,7 +151,7 @@ jobs:
       - name: Run E2E tests
         run: dotnet test tests/EastSeat.Agenti.E2ETests/EastSeat.Agenti.E2ETests.csproj --configuration Release --logger trx --results-directory TestResults
         env:
-          ConnectionStrings__DefaultConnection: "Server=localhost;Port=5432;Database=agenti_test;User Id=agenti_user;Password=TestPassword123!;"
+          ConnectionStrings__DefaultConnection: "Server=localhost;Port=5432;Database=${{ env.TEST_DB_NAME }};User Id=${{ env.TEST_DB_USER }};Password=${{ secrets.TEST_DB_PASSWORD }};"
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
