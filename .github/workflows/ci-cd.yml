@@ -1,0 +1,191 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ['*']
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  AZURE_WEBAPP_NAME: agenti-web
+  AZURE_RESOURCE_GROUP: agenti-rg
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build solution
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Publish application
+        run: dotnet publish EastSeat.Agenti.Web/EastSeat.Agenti.Web.csproj --configuration Release --no-build --output ./publish
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webapp
+          path: ./publish
+          retention-days: 1
+
+  test-unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Run unit tests
+        run: dotnet test tests/EastSeat.Agenti.UnitTests/EastSeat.Agenti.UnitTests.csproj --configuration Release --logger trx --results-directory TestResults --collect:"XPlat Code Coverage" --settings coverlet.runsettings
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results
+          path: TestResults
+          retention-days: 7
+
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: build
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agenti_user
+          POSTGRES_PASSWORD: TestPassword123!
+          POSTGRES_DB: agenti_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agenti_user"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Run integration tests
+        run: dotnet test tests/EastSeat.Agenti.IntegrationTests/EastSeat.Agenti.IntegrationTests.csproj --configuration Release --logger trx --results-directory TestResults
+        env:
+          ConnectionStrings__DefaultConnection: "Server=localhost;Port=5432;Database=agenti_test;User Id=agenti_user;Password=TestPassword123!;"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results
+          path: TestResults
+          retention-days: 7
+
+  test-e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: build
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agenti_user
+          POSTGRES_PASSWORD: TestPassword123!
+          POSTGRES_DB: agenti_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agenti_user"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Run E2E tests
+        run: dotnet test tests/EastSeat.Agenti.E2ETests/EastSeat.Agenti.E2ETests.csproj --configuration Release --logger trx --results-directory TestResults
+        env:
+          ConnectionStrings__DefaultConnection: "Server=localhost;Port=5432;Database=agenti_test;User Id=agenti_user;Password=TestPassword123!;"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-results
+          path: TestResults
+          retention-days: 7
+
+  deploy:
+    name: Deploy to Azure
+    runs-on: ubuntu-latest
+    needs: [build, test-unit, test-integration, test-e2e]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: webapp
+          path: ./publish
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          package: ./publish
+
+      - name: Azure logout
+        run: az logout
+        if: always()

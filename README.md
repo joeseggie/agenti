@@ -4,7 +4,7 @@ A vertical-slice architecture Blazor Server application for managing banking age
 
 ## Tech Stack
 
-- **Framework**: ASP.NET Core Blazor Server (.NET 9)
+- **Framework**: ASP.NET Core Blazor Server (.NET 10)
 - **Database**: PostgreSQL
 - **Authentication**: ASP.NET Identity
 - **UI**: MudBlazor
@@ -15,7 +15,7 @@ A vertical-slice architecture Blazor Server application for managing banking age
 
 ### Prerequisites
 
-- .NET 9.0 SDK
+- .NET 10.0 SDK
 - Docker & Docker Compose (for PostgreSQL)
 - Visual Studio Code (Recommended)
 
@@ -51,6 +51,43 @@ A vertical-slice architecture Blazor Server application for managing banking age
 - **User**: agenti_user
 - **Password**: DevPassword123!
 - **Database**: agenti_dev
+
+## CI/CD Pipeline
+
+The project uses GitHub Actions for continuous integration and deployment to Azure.
+
+### Pipeline Overview
+
+| Stage | Trigger | Description |
+|-------|---------|-------------|
+| Build | All branches | Restores, builds, and publishes the application |
+| Unit Tests | All branches | Runs unit tests with code coverage |
+| Integration Tests | All branches | Runs integration tests against PostgreSQL |
+| E2E Tests | All branches | Runs end-to-end tests |
+| Deploy | `main` branch only | Deploys to Azure App Service |
+
+### Azure Infrastructure (~$23/month)
+
+| Resource | SKU | Est. Cost |
+|----------|-----|-----------|
+| App Service Plan | Basic B1 | ~$13/month |
+| Container Instance (PostgreSQL) | 1 vCPU, 1.5GB | ~$10/month |
+
+### Setting Up Azure Infrastructure
+
+1. **Run the infrastructure setup script**:
+   ```powershell
+   cd scripts/azure
+   .\setup-infrastructure.ps1 -PostgresPassword "YourSecurePassword123!"
+   ```
+
+2. **Configure GitHub secrets** - see [setup-secrets.md](scripts/azure/setup-secrets.md)
+
+### Required GitHub Secrets
+
+| Secret | Description |
+|--------|-------------|
+| `AZURE_CREDENTIALS` | Azure service principal JSON for deployment |
 
 ## Project Structure
 

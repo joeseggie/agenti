@@ -85,6 +85,25 @@ builder.Services.AddAuthorizationBuilder()
 
 var app = builder.Build();
 
+// Apply pending migrations on startup (for production deployments)
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    try
+    {
+        logger.LogInformation("Applying database migrations...");
+        await db.Database.MigrateAsync();
+        logger.LogInformation("Database migrations applied successfully.");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Error applying database migrations.");
+        throw;
+    }
+}
+
 // Initialize setup check at startup
 using (var scope = app.Services.CreateScope())
 {
