@@ -19,6 +19,7 @@ public class UserBuilder
     private long? _branchId = 1;
     private long? _agentId = null;
     private DateTime _createdAt = DateTime.UtcNow;
+    private string? _themePreference = null;
 
     public UserBuilder WithId(string id)
     {
@@ -81,6 +82,12 @@ public class UserBuilder
         return this;
     }
 
+    public UserBuilder WithThemePreference(string? themePreference)
+    {
+        _themePreference = themePreference;
+        return this;
+    }
+
     public ApplicationUser Build()
     {
         return new ApplicationUser
@@ -95,7 +102,8 @@ public class UserBuilder
             IsActive = _isActive,
             BranchId = _branchId,
             AgentId = _agentId,
-            CreatedAt = _createdAt
+            CreatedAt = _createdAt,
+            ThemePreference = _themePreference
         };
     }
 
