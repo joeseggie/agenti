@@ -79,7 +79,7 @@ If you need to update the connection string manually:
 ```bash
 az webapp config connection-string set \
     --resource-group agenti-rg \
-    --name agenti-web \
+    --name agenti \
     --connection-string-type PostgreSQL \
     --settings DefaultConnection="Server=<postgres-ip>;Port=5432;Database=agenti_prod;User Id=agenti_user;Password=<password>;"
 ```
