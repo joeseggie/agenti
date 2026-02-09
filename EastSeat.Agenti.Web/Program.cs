@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
@@ -143,6 +144,11 @@ else
     app.UseHsts();
 }
 
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+});
+
 app.UseHttpsRedirection();
 
 app.UseStaticFiles();
@@ -156,7 +162,8 @@ app.Use(async (context, next) =>
 
     var path = context.Request.Path.Value ?? string.Empty;
     var isSetupPage = path.StartsWith("/setup-prerequisites", StringComparison.OrdinalIgnoreCase);
-    var isStaticAsset = path.StartsWith("/_framework", StringComparison.OrdinalIgnoreCase) ||
+    var isStaticAsset = path.StartsWith("/_blazor", StringComparison.OrdinalIgnoreCase) ||
+                       path.StartsWith("/_framework", StringComparison.OrdinalIgnoreCase) ||
                        path.StartsWith("/_content", StringComparison.OrdinalIgnoreCase) ||
                        path.StartsWith("/css", StringComparison.OrdinalIgnoreCase) ||
                        path.StartsWith("/js", StringComparison.OrdinalIgnoreCase) ||
