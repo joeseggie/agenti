@@ -84,9 +84,7 @@ yarn-debug.log*
 yarn-error.log*
 package-lock.json
 
-### Database and Migrations ###
-# Entity Framework Migrations
-migrations/
+### Database ###
 *.db
 *.sqlite
 *.mdf
