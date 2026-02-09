@@ -155,11 +155,10 @@ app.UseStaticFiles();
 app.UseAntiforgery();
 
 // Redirect to setup page if setup is incomplete
+// Use a separate scope to avoid DbContext concurrency with Blazor components
+var setupCompleteFlag = false;
 app.Use(async (context, next) =>
 {
-    var setupService = context.RequestServices.GetRequiredService<ISetupService>();
-    var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
-
     var path = context.Request.Path.Value ?? string.Empty;
     var isSetupPage = path.StartsWith("/setup-prerequisites", StringComparison.OrdinalIgnoreCase);
     var isStaticAsset = path.StartsWith("/_blazor", StringComparison.OrdinalIgnoreCase) ||
@@ -170,16 +169,22 @@ app.Use(async (context, next) =>
                        path.StartsWith("/lib", StringComparison.OrdinalIgnoreCase) ||
                        path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase);
 
-    var setupComplete = await setupService.IsSetupCompleteAsync();
-
-    if (!setupComplete && !isSetupPage && !isStaticAsset)
+    if (!setupCompleteFlag)
     {
+        using var scope = context.RequestServices.CreateScope();
+        var setupService = scope.ServiceProvider.GetRequiredService<ISetupService>();
+        setupCompleteFlag = await setupService.IsSetupCompleteAsync();
+    }
+
+    if (!setupCompleteFlag && !isSetupPage && !isStaticAsset)
+    {
+        var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
         logger.LogInformation("Setup incomplete. Redirecting to setup page from {Path}", path);
         context.Response.Redirect("/setup-prerequisites");
         return;
     }
 
-    if (setupComplete && isSetupPage)
+    if (setupCompleteFlag && isSetupPage)
     {
         logger.LogInformation("Setup already complete. Redirecting to home from setup page.");
         context.Response.Redirect("/");
