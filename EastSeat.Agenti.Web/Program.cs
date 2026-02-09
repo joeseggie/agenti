@@ -186,7 +186,6 @@ app.Use(async (context, next) =>
 
     if (setupCompleteFlag && isSetupPage)
     {
-        logger.LogInformation("Setup already complete. Redirecting to home from setup page.");
         context.Response.Redirect("/");
         return;
     }
