@@ -146,6 +146,10 @@
             await Task.Delay(2000);
             NavigationManager.NavigateTo("/", forceLoad: true);
         }
+        catch (NavigationException)
+        {
+            throw; // Let Blazor handle the navigation
+        }
         catch (Exception ex)
         {
             errorMessage = $"Setup failed: {ex.Message}";
