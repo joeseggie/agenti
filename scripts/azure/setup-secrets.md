@@ -9,7 +9,6 @@ This guide explains how to configure Azure OIDC authentication and GitHub secret
 | `AZURE_CLIENT_ID` | Azure AD application (client) ID | Infrastructure & CI/CD workflows |
 | `AZURE_TENANT_ID` | Azure AD tenant ID | Infrastructure & CI/CD workflows |
 | `AZURE_SUBSCRIPTION_ID` | Azure subscription ID | Infrastructure & CI/CD workflows |
-| `TEST_DB_PASSWORD` | Password for PostgreSQL test database in CI | Integration & E2E test jobs |
 
 ## Required GitHub Variables
 
@@ -105,7 +104,8 @@ az role assignment create \
    - `AZURE_CLIENT_ID` — The `appId` from step 1
    - `AZURE_TENANT_ID` — Your Azure AD tenant ID (`az account show --query tenantId -o tsv`)
    - `AZURE_SUBSCRIPTION_ID` — Your subscription ID (`az account show --query id -o tsv`)
-   - `TEST_DB_PASSWORD` — A secure password for CI test databases
+
+> **Note**: The CI/CD workflow uses a hardcoded test password for PostgreSQL in test jobs. This is safe as test databases are ephemeral and contain no production data.
 
 ### 6. Configure GitHub Environments
 
