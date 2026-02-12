@@ -6,6 +6,9 @@ using Microsoft.EntityFrameworkCore;
 using EastSeat.Agenti.Web.Components;
 using EastSeat.Agenti.Web.Components.Account;
 using EastSeat.Agenti.Web.Data;
+using Serilog;
+using Serilog.Events;
+using Microsoft.ApplicationInsights.Extensibility;
 using EastSeat.Agenti.Web.Features.Dashboard;
 using EastSeat.Agenti.Web.Features.CashCounts;
 using EastSeat.Agenti.Web.Features.CashSessions;
@@ -19,6 +22,21 @@ using EastSeat.Agenti.Shared.Domain.Enums;
 using MudBlazor.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configure Serilog
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Information)
+    .Enrich.FromLogContext()
+    .Enrich.WithProperty("Application", "Agenti")
+    .WriteTo.Console()
+    .WriteTo.ApplicationInsights(
+        builder.Configuration["ApplicationInsights:ConnectionString"] ?? string.Empty,
+        TelemetryConverter.Traces)
+    .CreateLogger();
+
+builder.Host.UseSerilog();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -47,6 +65,32 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(connectionString));
 
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
+
+// Add Application Insights telemetry
+var aiConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
+if (!string.IsNullOrEmpty(aiConnectionString))
+{
+    builder.Services.AddApplicationInsightsTelemetry(options =>
+    {
+        options.ConnectionString = aiConnectionString;
+        options.EnableAdaptiveSampling = builder.Configuration.GetValue<bool>("ApplicationInsights:EnableAdaptiveSampling", false);
+        options.EnableDependencyTrackingTelemetryModule = true;
+        options.EnableRequestTrackingTelemetryModule = true;
+        options.EnableEventCounterCollectionModule = true;
+    });
+
+    // Configure sampling percentage for production
+    if (builder.Environment.IsProduction())
+    {
+        var samplingPercentage = builder.Configuration.GetValue<double>("ApplicationInsights:SamplingPercentage", 100);
+        builder.Services.Configure<TelemetryConfiguration>(config =>
+        {
+            config.DefaultTelemetrySink.TelemetryProcessorChainBuilder.UseAdaptiveSampling(
+                maxTelemetryItemsPerSecond: 5,
+                excludedTypes: "Exception");
+        });
+    }
+}
 
 builder.Services.AddIdentityCore<ApplicationUser>(options => options.SignIn.RequireConfirmedAccount = false)
     .AddRoles<IdentityRole>()
@@ -199,4 +243,17 @@ app.MapRazorComponents<App>()
 // Add additional endpoints required by the Identity /Account Razor components.
 app.MapAdditionalIdentityEndpoints();
 
-app.Run();
+try
+{
+    Log.Information("Starting Agenti application");
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Application terminated unexpectedly");
+    throw;
+}
+finally
+{
+    Log.CloseAndFlush();
+}

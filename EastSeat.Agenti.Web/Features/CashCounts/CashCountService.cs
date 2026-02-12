@@ -2,6 +2,7 @@ using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Vaults;
+using Microsoft.ApplicationInsights;
 using Microsoft.EntityFrameworkCore;
 
 namespace EastSeat.Agenti.Web.Features.CashCounts;
@@ -9,7 +10,7 @@ namespace EastSeat.Agenti.Web.Features.CashCounts;
 /// <summary>
 /// Service implementation for cash count operations.
 /// </summary>
-public class CashCountService(ApplicationDbContext dbContext, IVaultService vaultService) : ICashCountService
+public class CashCountService(ApplicationDbContext dbContext, IVaultService vaultService, TelemetryClient? telemetryClient = null) : ICashCountService
 {
     /// <inheritdoc />
     public async Task<CurrentSessionDto> GetCurrentSessionAsync(string userId)
@@ -277,6 +278,16 @@ public class CashCountService(ApplicationDbContext dbContext, IVaultService vaul
                 }
             }
             cashCount.ApprovedAt = DateTimeOffset.UtcNow;
+
+            // Track opening count submission
+            telemetryClient?.TrackEvent("cash_count_submitted", new Dictionary<string, string>
+            {
+                { "Type", "Opening" },
+                { "AgentId", agentId.Value.ToString() },
+                { "SessionId", cashCount.CashSessionId.ToString() },
+                { "TotalAmount", cashCount.TotalAmount.ToString("F2") },
+                { "WalletCount", cashCount.Details.Count.ToString() }
+            });
         }
         else
         {
@@ -314,6 +325,16 @@ public class CashCountService(ApplicationDbContext dbContext, IVaultService vaul
             // Close the session
             cashCount.CashSession!.Status = CashSessionStatus.Closed;
             cashCount.CashSession.ClosedAt = DateTimeOffset.UtcNow;
+
+            // Track closing count submission
+            telemetryClient?.TrackEvent("cash_count_submitted", new Dictionary<string, string>
+            {
+                { "Type", "Closing" },
+                { "AgentId", agentId.Value.ToString() },
+                { "SessionId", cashCount.CashSessionId.ToString() },
+                { "TotalAmount", cashCount.TotalAmount.ToString("F2") },
+                { "WalletCount", cashCount.Details.Count.ToString() }
+            });
         }
 
         await dbContext.SaveChangesAsync();

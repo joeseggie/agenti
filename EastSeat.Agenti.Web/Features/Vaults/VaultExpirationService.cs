@@ -1,11 +1,12 @@
 using EastSeat.Agenti.Web.Features.Vaults;
+using Microsoft.ApplicationInsights;
 
 namespace EastSeat.Agenti.Web.Features.Vaults;
 
 /// <summary>
 /// Background service that periodically expires pending vault transactions after 12 hours.
 /// </summary>
-public class VaultExpirationService(IServiceProvider serviceProvider, ILogger<VaultExpirationService> logger) : BackgroundService
+public class VaultExpirationService(IServiceProvider serviceProvider, ILogger<VaultExpirationService> logger, TelemetryClient? telemetryClient = null) : BackgroundService
 {
     private readonly TimeSpan _checkInterval = TimeSpan.FromMinutes(5);
 
@@ -24,6 +25,13 @@ public class VaultExpirationService(IServiceProvider serviceProvider, ILogger<Va
                 if (expiredCount > 0)
                 {
                     logger.LogInformation("Expired {Count} pending vault transactions.", expiredCount);
+
+                    // Track expired transactions metric
+                    telemetryClient?.TrackMetric("vault_transactions_expired", expiredCount);
+                    telemetryClient?.TrackEvent("vault_expiration_check", new Dictionary<string, string>
+                    {
+                        { "ExpiredCount", expiredCount.ToString() }
+                    });
                 }
 
                 await Task.Delay(_checkInterval, stoppingToken);

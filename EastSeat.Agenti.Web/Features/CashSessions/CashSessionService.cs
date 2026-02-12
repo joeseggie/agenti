@@ -1,4 +1,5 @@
 using EastSeat.Agenti.Web.Data;
+using Microsoft.ApplicationInsights;
 using Microsoft.EntityFrameworkCore;
 
 namespace EastSeat.Agenti.Web.Features.CashSessions;
@@ -6,7 +7,7 @@ namespace EastSeat.Agenti.Web.Features.CashSessions;
 /// <summary>
 /// Service implementation for cash session operations.
 /// </summary>
-public class CashSessionService(ApplicationDbContext dbContext) : ICashSessionService
+public class CashSessionService(ApplicationDbContext dbContext, TelemetryClient? telemetryClient = null) : ICashSessionService
 {
     /// <inheritdoc />
     public async Task<List<CashSessionListItemDto>> GetCashSessionsAsync()
@@ -99,6 +100,15 @@ public class CashSessionService(ApplicationDbContext dbContext) : ICashSessionSe
         session.ClosedAt = DateTimeOffset.UtcNow;
 
         await dbContext.SaveChangesAsync();
+
+        // Track session closure
+        telemetryClient?.TrackEvent("session_closed", new Dictionary<string, string>
+        {
+            { "SessionId", session.Id.ToString() },
+            { "AgentId", session.AgentId.ToString() },
+            { "SessionDate", session.SessionDate.ToString("yyyy-MM-dd") },
+            { "Duration", (session.ClosedAt.Value - session.OpenedAt).ToString() }
+        });
 
         return (true, null);
     }

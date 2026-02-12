@@ -1,9 +1,10 @@
 using EastSeat.Agenti.Web.Data;
+using Microsoft.ApplicationInsights;
 using Microsoft.EntityFrameworkCore;
 
 namespace EastSeat.Agenti.Web.Features.Users;
 
-public class UserAuditCleanupService(IServiceProvider serviceProvider, ILogger<UserAuditCleanupService> logger)
+public class UserAuditCleanupService(IServiceProvider serviceProvider, ILogger<UserAuditCleanupService> logger, TelemetryClient? telemetryClient = null)
     : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -27,6 +28,14 @@ public class UserAuditCleanupService(IServiceProvider serviceProvider, ILogger<U
                     db.UserAuditLogs.RemoveRange(oldLogs);
                     await db.SaveChangesAsync(stoppingToken);
                     logger.LogInformation("UserAuditCleanupService removed {Count} old audit log entries.", oldLogs.Count);
+
+                    // Track cleanup operation
+                    telemetryClient?.TrackMetric("audit_logs_cleaned", oldLogs.Count);
+                    telemetryClient?.TrackEvent("audit_cleanup_completed", new Dictionary<string, string>
+                    {
+                        { "RemovedCount", oldLogs.Count.ToString() },
+                        { "CutoffDate", cutoff.ToString("yyyy-MM-dd") }
+                    });
                 }
             }
             catch (TaskCanceledException)

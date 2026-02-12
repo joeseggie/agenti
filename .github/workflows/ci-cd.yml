@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: ["*"]
 
+permissions:
+  id-token: write
+  contents: read
+  checks: write
+
 env:
   DOTNET_VERSION: "10.0.x"
   AZURE_WEBAPP_NAME: agenti
@@ -176,12 +181,14 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Get ACR login server
         id: acr
         run: |
-          ACR_NAME=$(az acr list --resource-group ${{ env.AZURE_RESOURCE_GROUP }} --query "[0].name" -o tsv)
+          ACR_NAME="${{ vars.AZURE_CONTAINER_REGISTRY }}"
           ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
           echo "name=$ACR_NAME" >> $GITHUB_OUTPUT
           echo "login_server=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT

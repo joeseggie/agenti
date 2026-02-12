@@ -2,6 +2,8 @@ using System.Data;
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Web.Data;
+using Microsoft.ApplicationInsights;
+using Microsoft.ApplicationInsights.DataContracts;
 using Microsoft.EntityFrameworkCore;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure;
 
@@ -10,7 +12,7 @@ namespace EastSeat.Agenti.Web.Features.Vaults;
 /// <summary>
 /// Service implementation for vault operations with pessimistic locking.
 /// </summary>
-public class VaultService(ApplicationDbContext dbContext) : IVaultService
+public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telemetryClient = null) : IVaultService
 {
     private const int PendingExpiryHours = 12;
 
@@ -85,6 +87,16 @@ public class VaultService(ApplicationDbContext dbContext) : IVaultService
             if (result.Success)
             {
                 await tx.CommitAsync(cancellationToken);
+
+                // Track successful vault withdrawal
+                telemetryClient?.TrackEvent("vault_withdrawal_completed", new Dictionary<string, string>
+                {
+                    { "BranchId", branchId.ToString() },
+                    { "SessionId", sessionId.ToString() },
+                    { "Amount", amount.ToString("F2") },
+                    { "UserId", userId },
+                    { "TransactionId", result.TransactionId?.ToString() ?? "N/A" }
+                });
             }
             return result;
         }
@@ -106,6 +118,16 @@ public class VaultService(ApplicationDbContext dbContext) : IVaultService
             if (result.Success)
             {
                 await tx.CommitAsync(cancellationToken);
+
+                // Track successful vault deposit
+                telemetryClient?.TrackEvent("vault_deposit_completed", new Dictionary<string, string>
+                {
+                    { "BranchId", branchId.ToString() },
+                    { "SessionId", sessionId.ToString() },
+                    { "Amount", amount.ToString("F2") },
+                    { "UserId", userId },
+                    { "TransactionId", result.TransactionId?.ToString() ?? "N/A" }
+                });
             }
             return result;
         }
@@ -148,6 +170,17 @@ public class VaultService(ApplicationDbContext dbContext) : IVaultService
 
         dbContext.VaultTransactions.Add(transaction);
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        // Track manual adjustment request
+        telemetryClient?.TrackEvent("vault_adjustment_requested", new Dictionary<string, string>
+        {
+            { "BranchId", branchId.ToString() },
+            { "Amount", amount.ToString("F2") },
+            { "Type", isDeposit ? "Deposit" : "Withdrawal" },
+            { "UserId", userId },
+            { "TransactionId", transaction.Id.ToString() },
+            { "ExpiresAt", transaction.ExpiresAt?.ToString("O") ?? "N/A" }
+        });
 
         return VaultOperationResult.Ok(transaction.Id);
     }
@@ -223,6 +256,17 @@ public class VaultService(ApplicationDbContext dbContext) : IVaultService
         await dbContext.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
 
+        // Track manual adjustment approval
+        telemetryClient?.TrackEvent("vault_adjustment_approved", new Dictionary<string, string>
+        {
+            { "TransactionId", transaction.Id.ToString() },
+            { "Amount", transaction.Amount.ToString("F2") },
+            { "Type", transaction.Type.ToString() },
+            { "ApprovedBy", adminUserId },
+            { "CreatedBy", transaction.CreatedByUserId ?? "Unknown" },
+            { "BalanceAfter", vault.CurrentBalance.ToString("F2") }
+        });
+
         return VaultOperationResult.Ok(transaction.Id);
     }
 
@@ -250,6 +294,17 @@ public class VaultService(ApplicationDbContext dbContext) : IVaultService
         transaction.ApprovedAt = DateTimeOffset.UtcNow;
 
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        // Track manual adjustment rejection
+        telemetryClient?.TrackEvent("vault_adjustment_rejected", new Dictionary<string, string>
+        {
+            { "TransactionId", transaction.Id.ToString() },
+            { "Amount", transaction.Amount.ToString("F2") },
+            { "Type", transaction.Type.ToString() },
+            { "RejectedBy", adminUserId },
+            { "CreatedBy", transaction.CreatedByUserId ?? "Unknown" }
+        });
+
         return VaultOperationResult.Ok(transaction.Id);
     }
 
