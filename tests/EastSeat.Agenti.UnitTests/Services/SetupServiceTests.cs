@@ -20,7 +20,6 @@ public class SetupServiceTests : IDisposable
     private readonly ApplicationDbContext _dbContext;
     private readonly Mock<UserManager<ApplicationUser>> _userManagerMock;
     private readonly Mock<RoleManager<IdentityRole>> _roleManagerMock;
-    private readonly Mock<SignInManager<ApplicationUser>> _signInManagerMock;
     private readonly Mock<ILogger<SetupService>> _loggerMock;
     private readonly SetupService _setupService;
 
@@ -43,22 +42,12 @@ public class SetupServiceTests : IDisposable
         _roleManagerMock = new Mock<RoleManager<IdentityRole>>(
             roleStore.Object, null, null, null, null);
 
-        // Mock SignInManager
-        var contextAccessorMock = new Mock<Microsoft.AspNetCore.Http.IHttpContextAccessor>();
-        var claimsFactoryMock = new Mock<IUserClaimsPrincipalFactory<ApplicationUser>>();
-        _signInManagerMock = new Mock<SignInManager<ApplicationUser>>(
-            _userManagerMock.Object,
-            contextAccessorMock.Object,
-            claimsFactoryMock.Object,
-            null, null, null, null);
-
         _loggerMock = new Mock<ILogger<SetupService>>();
 
         _setupService = new SetupService(
             _dbContext,
             _userManagerMock.Object,
             _roleManagerMock.Object,
-            _signInManagerMock.Object,
             _loggerMock.Object);
     }
 
@@ -363,9 +352,6 @@ public class SetupServiceTests : IDisposable
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.UpdateAsync(It.IsAny<ApplicationUser>()))
             .ReturnsAsync(IdentityResult.Success);
-        _signInManagerMock.Setup(x => x.SignInAsync(It.IsAny<ApplicationUser>(), true, null))
-            .Returns(Task.CompletedTask);
-
         // Act
         await _setupService.CreateInitialAdminAndSetupAsync(
             "admin@test.com", "Password123!", "John", "Doe", "Main Branch");
@@ -386,8 +372,6 @@ public class SetupServiceTests : IDisposable
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.UpdateAsync(It.IsAny<ApplicationUser>()))
             .ReturnsAsync(IdentityResult.Success);
-        _signInManagerMock.Setup(x => x.SignInAsync(It.IsAny<ApplicationUser>(), true, null))
-            .Returns(Task.CompletedTask);
 
         ApplicationUser? createdUser = null;
         _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
@@ -421,9 +405,6 @@ public class SetupServiceTests : IDisposable
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.UpdateAsync(It.IsAny<ApplicationUser>()))
             .ReturnsAsync(IdentityResult.Success);
-        _signInManagerMock.Setup(x => x.SignInAsync(It.IsAny<ApplicationUser>(), true, null))
-            .Returns(Task.CompletedTask);
-
         // Act
         await _setupService.CreateInitialAdminAndSetupAsync(
             "admin@test.com", "Password123!", "John", "Doe", "Head Office");
@@ -446,9 +427,6 @@ public class SetupServiceTests : IDisposable
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.UpdateAsync(It.IsAny<ApplicationUser>()))
             .ReturnsAsync(IdentityResult.Success);
-        _signInManagerMock.Setup(x => x.SignInAsync(It.IsAny<ApplicationUser>(), true, null))
-            .Returns(Task.CompletedTask);
-
         // Act
         await _setupService.CreateInitialAdminAndSetupAsync(
             "admin@test.com", "Password123!", "John", "Doe", "Main Branch");
@@ -472,9 +450,6 @@ public class SetupServiceTests : IDisposable
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.UpdateAsync(It.IsAny<ApplicationUser>()))
             .ReturnsAsync(IdentityResult.Success);
-        _signInManagerMock.Setup(x => x.SignInAsync(It.IsAny<ApplicationUser>(), true, null))
-            .Returns(Task.CompletedTask);
-
         // Act
         await _setupService.CreateInitialAdminAndSetupAsync(
             "admin@test.com", "Password123!", "John", "Doe", "Main Branch");
@@ -483,29 +458,6 @@ public class SetupServiceTests : IDisposable
         var config = await _dbContext.AppConfigs.FirstOrDefaultAsync(c => c.Key == "SetupComplete");
         config.Should().NotBeNull();
         config!.Value.Should().Be("true");
-    }
-
-    [Fact]
-    public async Task CreateInitialAdminAndSetupAsync_SignsInUser_AfterCreation()
-    {
-        // Arrange
-        _roleManagerMock.Setup(x => x.RoleExistsAsync("Admin"))
-            .ReturnsAsync(true);
-        _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
-            .ReturnsAsync(IdentityResult.Success);
-        _userManagerMock.Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), "Admin"))
-            .ReturnsAsync(IdentityResult.Success);
-        _userManagerMock.Setup(x => x.UpdateAsync(It.IsAny<ApplicationUser>()))
-            .ReturnsAsync(IdentityResult.Success);
-        _signInManagerMock.Setup(x => x.SignInAsync(It.IsAny<ApplicationUser>(), true, null))
-            .Returns(Task.CompletedTask);
-
-        // Act
-        await _setupService.CreateInitialAdminAndSetupAsync(
-            "admin@test.com", "Password123!", "John", "Doe", "Main Branch");
-
-        // Assert
-        _signInManagerMock.Verify(x => x.SignInAsync(It.IsAny<ApplicationUser>(), true, null), Times.Once);
     }
 
     [Fact]

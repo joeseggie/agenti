@@ -148,3 +148,15 @@ _NCrunch*/
 scripts/grant_admin_access.sql
 .claude/settings.local.json
 nul
+
+app_logs/*
+app-logs/
+temp-logs.ps1
+reposAgentiapp-logs-fresh.zip
+deploy-fix.zip
+create-zip.ps1
+app-logs.zip
+publish-fix/*
+scripts/*
+scripts/azure/setup-secrets.md
+scripts/azure/*

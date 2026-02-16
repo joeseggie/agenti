@@ -15,21 +15,26 @@ namespace EastSeat.Agenti.UnitTests.Services;
 /// </summary>
 public class ThemeServiceTests : IDisposable
 {
+    private readonly DbContextOptions<ApplicationDbContext> _options;
     private readonly ApplicationDbContext _dbContext;
     private readonly Mock<AuthenticationStateProvider> _authStateProviderMock;
     private readonly ThemeService _themeService;
 
     public ThemeServiceTests()
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+        _options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
             .ConfigureWarnings(x => x.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
-        _dbContext = new ApplicationDbContext(options);
+        _dbContext = new ApplicationDbContext(_options);
         _authStateProviderMock = new Mock<AuthenticationStateProvider>();
 
-        _themeService = new ThemeService(_dbContext, _authStateProviderMock.Object);
+        var dbFactoryMock = new Mock<IDbContextFactory<ApplicationDbContext>>();
+        dbFactoryMock.Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new ApplicationDbContext(_options));
+
+        _themeService = new ThemeService(dbFactoryMock.Object, _authStateProviderMock.Object);
     }
 
     public void Dispose()
@@ -353,6 +358,7 @@ public class ThemeServiceTests : IDisposable
         // Assert
         result.Should().BeTrue();
 
+        _dbContext.ChangeTracker.Clear(); // Clear cache to get fresh data from factory-created context
         var updatedUser = await _dbContext.Users.FindAsync("user-123");
         updatedUser.Should().NotBeNull();
         updatedUser!.ThemePreference.Should().Be(ThemePreferenceConstants.Light);
@@ -385,6 +391,7 @@ public class ThemeServiceTests : IDisposable
         // Assert
         result.Should().BeTrue();
 
+        _dbContext.ChangeTracker.Clear();
         var updatedUser = await _dbContext.Users.FindAsync("user-123");
         updatedUser.Should().NotBeNull();
         updatedUser!.ThemePreference.Should().Be(ThemePreferenceConstants.Dark);
@@ -416,6 +423,7 @@ public class ThemeServiceTests : IDisposable
         // Assert
         result.Should().BeTrue();
 
+        _dbContext.ChangeTracker.Clear();
         var updatedUser = await _dbContext.Users.FindAsync("user-123");
         updatedUser.Should().NotBeNull();
         updatedUser!.ThemePreference.Should().BeNull(); // System preference stored as null

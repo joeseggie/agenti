@@ -14,20 +14,17 @@ public class SetupService : ISetupService
     private readonly ApplicationDbContext _context;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly RoleManager<IdentityRole> _roleManager;
-    private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly ILogger<SetupService> _logger;
 
     public SetupService(
         ApplicationDbContext context,
         UserManager<ApplicationUser> userManager,
         RoleManager<IdentityRole> roleManager,
-        SignInManager<ApplicationUser> signInManager,
         ILogger<SetupService> logger)
     {
         _context = context;
         _userManager = userManager;
         _roleManager = roleManager;
-        _signInManager = signInManager;
         _logger = logger;
     }
 
@@ -273,10 +270,6 @@ public class SetupService : ISetupService
                 await _context.SaveChangesAsync();
                 _logger.LogInformation("Set SetupComplete to true.");
             }
-
-            // Sign in the user so they can continue
-            await _signInManager.SignInAsync(user, isPersistent: true);
-            _logger.LogInformation("Signed in initial admin user: {UserId}", user.Id);
 
             _logger.LogInformation("Initial setup completed successfully for user: {Email}", email);
         }

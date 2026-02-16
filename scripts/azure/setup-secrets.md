@@ -11,12 +11,6 @@ This guide explains how to configure Azure OIDC authentication and GitHub secret
 | `AZURE_SUBSCRIPTION_ID` | Azure subscription ID | Infrastructure & CI/CD workflows |
 | `TEST_DB_PASSWORD` | Password for PostgreSQL test database in CI | Integration & E2E test jobs |
 
-## Required GitHub Variables
-
-| Variable Name | Description | Set After |
-|---------------|-------------|-----------|
-| `AZURE_CONTAINER_REGISTRY` | ACR name (e.g. `agenticrabc123`) | First infrastructure provisioning run |
-
 ## Step-by-Step OIDC Setup
 
 OIDC (OpenID Connect) workload identity federation allows GitHub Actions to authenticate with Azure without storing long-lived credentials. This is the recommended approach over service principal JSON secrets.
@@ -124,34 +118,24 @@ Create two environments with protection rules:
    - **Required reviewers**: Add team members who must approve production deployments
    - **Wait timer**: Optional delay before deployment (e.g. 5 minutes)
 
-### 7. Set the ACR Variable (After First Infrastructure Run)
-
-After running the infrastructure provisioning workflow for the first time:
-
-1. Check the workflow summary for the ACR name
-2. Go to **Settings** > **Secrets and variables** > **Actions** > **Variables** tab
-3. Click **New repository variable**
-4. Name: `AZURE_CONTAINER_REGISTRY`
-5. Value: The ACR name from the infrastructure summary (e.g. `agenticrabc123`)
-
 ## Connection String
 
-The database connection string is configured directly in the Azure Container App as a secret by the infrastructure workflow. It is **not** stored as a GitHub secret.
+The database connection string is configured directly in Azure App Service Configuration by the infrastructure workflow / setup script. It is **not** stored as a GitHub secret.
 
 To retrieve or update it manually:
 
 ```bash
 # View the connection string
-az containerapp secret show \
+az webapp config connection-string list \
     --name agenti \
-    --resource-group agenti-rg \
-    --secret-name db-conn
+    --resource-group agenti-rg
 
 # Update the connection string
-az containerapp secret set \
-    --name agenti \
+az webapp config connection-string set \
     --resource-group agenti-rg \
-    --secrets "db-conn=Server=<postgres-ip>;Port=5432;Database=agenti_prod;User Id=agenti_user;Password=<password>;"
+    --name agenti \
+    --connection-string-type PostgreSQL \
+    --settings DefaultConnection="Server=<server-fqdn>;Port=5432;Database=agenti_prod;User Id=agenti_user;Password=<password>;Ssl Mode=Require;"
 ```
 
 ## Troubleshooting
@@ -183,6 +167,20 @@ az role assignment create \
     --assignee <client-id> \
     --role Contributor \
     --scope /subscriptions/<subscription-id>
+```
+
+### App Service deployment issues
+
+If the app doesn't start after deployment:
+```bash
+# Check app logs
+az webapp log tail --name agenti --resource-group agenti-rg
+
+# Check app status
+az webapp show --name agenti --resource-group agenti-rg --query "state" -o tsv
+
+# Restart the app
+az webapp restart --name agenti --resource-group agenti-rg
 ```
 
 ## Security Best Practices

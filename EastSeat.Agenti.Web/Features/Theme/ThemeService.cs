@@ -6,7 +6,7 @@ namespace EastSeat.Agenti.Web.Features.Theme;
 
 public class ThemeService : IThemeService
 {
-    private readonly ApplicationDbContext _db;
+    private readonly IDbContextFactory<ApplicationDbContext> _dbFactory;
     private readonly AuthenticationStateProvider _authStateProvider;
     private string _effectiveTheme = "light";
     private string _userPreference = ThemePreferenceConstants.System;
@@ -16,10 +16,10 @@ public class ThemeService : IThemeService
     public bool IsDarkMode => _effectiveTheme == "dark";
 
     public ThemeService(
-        ApplicationDbContext db,
+        IDbContextFactory<ApplicationDbContext> dbFactory,
         AuthenticationStateProvider authStateProvider)
     {
-        _db = db;
+        _dbFactory = dbFactory;
         _authStateProvider = authStateProvider;
     }
 
@@ -44,7 +44,8 @@ public class ThemeService : IThemeService
             return;
         }
 
-        var appUser = await _db.Users
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var appUser = await db.Users
             .AsNoTracking()
             .FirstOrDefaultAsync(u => u.Id == userId);
 
@@ -83,14 +84,15 @@ public class ThemeService : IThemeService
 
         if (userId == null) return false; // Anonymous users can't save preferences
 
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user == null) return false;
 
         // Store null for system preference, actual value for light/dark
         user.ThemePreference = preference == ThemePreferenceConstants.System ? null : preference;
         user.UpdatedAt = DateTime.UtcNow;
 
-        await _db.SaveChangesAsync();
+        await db.SaveChangesAsync();
 
         _userPreference = preference;
         _effectiveTheme = ResolveEffectiveTheme(preference, _systemPreference);

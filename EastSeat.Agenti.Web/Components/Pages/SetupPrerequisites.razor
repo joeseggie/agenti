@@ -140,11 +140,13 @@
             );
 
             setupComplete = true;
-            successMessage = "Setup complete! Redirecting to home...";
+            successMessage = "Setup complete! Redirecting to login...";
 
-            // Wait for 2 seconds before redirecting
+            // Wait briefly then redirect to login page (forceLoad: true triggers a
+            // full HTTP navigation which is required because Blazor Server interactive
+            // components cannot set authentication cookies over the SignalR connection)
             await Task.Delay(2000);
-            NavigationManager.NavigateTo("/", forceLoad: true);
+            NavigationManager.NavigateTo("/Account/Login", forceLoad: true);
         }
         catch (NavigationException)
         {

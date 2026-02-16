@@ -14,24 +14,19 @@ on:
         default: "uaenorth"
         type: string
       app_name:
-        description: "Container App name"
+        description: "Web App name"
         required: false
         default: "agenti"
         type: string
-      container_registry:
-        description: "ACR name (leave empty to auto-generate)"
+      postgres_server:
+        description: "PostgreSQL Flexible Server name"
         required: false
-        default: ""
+        default: "agenti-pgserver"
         type: string
-      postgres_container:
-        description: "PostgreSQL container instance name"
+      app_service_plan:
+        description: "App Service Plan name"
         required: false
-        default: "agenti-postgres"
-        type: string
-      container_app_env:
-        description: "Container Apps Environment name"
-        required: false
-        default: "agenti-env"
+        default: "agenti-plan"
         type: string
 
 concurrency:
@@ -41,6 +36,11 @@ concurrency:
 permissions:
   id-token: write
   contents: read
+
+env:
+  DOTNET_VERSION: "10.0.x"
+  POSTGRES_USER: "agenti_user"
+  POSTGRES_DB: "agenti_prod"
 
 jobs:
   provision:
@@ -52,6 +52,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -59,283 +64,166 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Generate credentials and resource names
+      - name: Generate PostgreSQL password
         id: config
         run: |
-          # Generate PostgreSQL password (20 chars + suffix, no special shell chars)
           PG_PASS=$(openssl rand -base64 24 | tr -d '+/=' | head -c 20)
           PG_PASS="${PG_PASS}Ag1!"
           echo "::add-mask::${PG_PASS}"
           echo "pg_password=${PG_PASS}" >> "$GITHUB_OUTPUT"
 
-          # Determine ACR name
-          ACR_INPUT="${{ inputs.container_registry }}"
-          if [ -z "$ACR_INPUT" ]; then
-            SUFFIX=$(cat /dev/urandom | tr -dc 'a-z0-9' | head -c 6)
-            ACR_NAME="agenticr${SUFFIX}"
-          else
-            ACR_NAME="$ACR_INPUT"
-          fi
-          echo "acr_name=${ACR_NAME}" >> "$GITHUB_OUTPUT"
-
       - name: Register required resource providers
         run: |
-          az provider register --namespace Microsoft.ContainerRegistry --wait
-          az provider register --namespace Microsoft.App --wait
-          az provider register --namespace Microsoft.OperationalInsights --wait
+          az provider register --namespace Microsoft.DBforPostgreSQL --wait
+          az provider register --namespace Microsoft.Web --wait
 
-      - name: "[1/7] Create Resource Group"
+      - name: "[1/6] Create Resource Group"
         run: |
           az group create \
             --name "${{ inputs.resource_group }}" \
             --location "${{ inputs.location }}" \
             --output none
 
-      - name: "[2/7] Create Virtual Network and subnets"
-        run: |
-          RG="${{ inputs.resource_group }}"
-          VNET_NAME="agenti-vnet"
-
-          # Create VNet (idempotent)
-          az network vnet create \
-            --resource-group "$RG" \
-            --name "$VNET_NAME" \
-            --address-prefix 10.0.0.0/16 \
-            --output none
-
-          # Create container subnet with ACI delegation (create or update)
-          az network vnet subnet create \
-            --resource-group "$RG" \
-            --vnet-name "$VNET_NAME" \
-            --name container-subnet \
-            --address-prefix 10.0.1.0/24 \
-            --delegations Microsoft.ContainerInstance/containerGroups \
-            --output none 2>/dev/null || \
-          az network vnet subnet update \
-            --resource-group "$RG" \
-            --vnet-name "$VNET_NAME" \
-            --name container-subnet \
-            --delegations Microsoft.ContainerInstance/containerGroups \
-            --output none
-
-          # Create Container Apps subnet (create or update)
-          az network vnet subnet create \
-            --resource-group "$RG" \
-            --vnet-name "$VNET_NAME" \
-            --name containerapp-subnet \
-            --address-prefix 10.0.2.0/24 \
-            --delegations Microsoft.App/environments \
-            --output none 2>/dev/null || \
-          az network vnet subnet update \
-            --resource-group "$RG" \
-            --vnet-name "$VNET_NAME" \
-            --name containerapp-subnet \
-            --delegations Microsoft.App/environments \
-            --output none
-
-      - name: "[3/7] Create PostgreSQL Container Instance"
+      - name: "[2/6] Create PostgreSQL Flexible Server"
         id: postgres
         run: |
           RG="${{ inputs.resource_group }}"
-          PG_NAME="${{ inputs.postgres_container }}"
+          PG_SERVER="${{ inputs.postgres_server }}"
           PG_PASS="${{ steps.config.outputs.pg_password }}"
           LOCATION="${{ inputs.location }}"
 
-          SUBNET_ID=$(az network vnet subnet show \
+          # Check if server already exists
+          EXISTING=$(az postgres flexible-server show \
             --resource-group "$RG" \
-            --vnet-name agenti-vnet \
-            --name container-subnet \
-            --query id -o tsv)
-
-          # Check if container already exists
-          EXISTING=$(az container show \
-            --resource-group "$RG" \
-            --name "$PG_NAME" \
-            --query "ipAddress.ip" -o tsv 2>/dev/null || echo "")
+            --name "$PG_SERVER" \
+            --query "fullyQualifiedDomainName" -o tsv 2>/dev/null || echo "")
 
           if [ -n "$EXISTING" ]; then
-            echo "PostgreSQL container already exists at IP: $EXISTING"
-            echo "postgres_ip=${EXISTING}" >> "$GITHUB_OUTPUT"
+            echo "PostgreSQL server already exists: $EXISTING"
+
+            # Update admin password so the connection string stays in sync
+            az postgres flexible-server update \
+              --resource-group "$RG" \
+              --name "$PG_SERVER" \
+              --admin-password "$PG_PASS" \
+              --output none
+
+            echo "pg_fqdn=${EXISTING}" >> "$GITHUB_OUTPUT"
             echo "reused=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Generate ACI deployment YAML (required for VNet + private IP)
-          cat > /tmp/aci-postgres.yaml <<YAML
-          apiVersion: '2021-10-01'
-          location: ${LOCATION}
-          name: ${PG_NAME}
-          properties:
-            containers:
-            - name: postgres
-              properties:
-                image: postgres:16-alpine
-                resources:
-                  requests:
-                    cpu: 1.0
-                    memoryInGB: 1.5
-                ports:
-                - port: 5432
-                  protocol: TCP
-                environmentVariables:
-                - name: POSTGRES_USER
-                  value: agenti_user
-                - name: POSTGRES_DB
-                  value: agenti_prod
-                - name: POSTGRES_PASSWORD
-                  secureValue: '${PG_PASS}'
-            osType: Linux
-            ipAddress:
-              type: Private
-              ports:
-              - port: 5432
-                protocol: TCP
-            subnetIds:
-            - id: ${SUBNET_ID}
-          type: Microsoft.ContainerInstance/containerGroups
-          YAML
-
-          az container create \
+          az postgres flexible-server create \
             --resource-group "$RG" \
-            --file /tmp/aci-postgres.yaml \
+            --name "$PG_SERVER" \
+            --location "$LOCATION" \
+            --admin-user "${{ env.POSTGRES_USER }}" \
+            --admin-password "$PG_PASS" \
+            --sku-name Standard_B1ms \
+            --tier Burstable \
+            --storage-size 32 \
+            --version 16 \
+            --yes \
             --output none
 
-          rm -f /tmp/aci-postgres.yaml
+          # Allow Azure services to access the server
+          az postgres flexible-server firewall-rule create \
+            --resource-group "$RG" \
+            --name "$PG_SERVER" \
+            --rule-name AllowAzureServices \
+            --start-ip-address 0.0.0.0 \
+            --end-ip-address 0.0.0.0 \
+            --output none
 
-          # Wait for container to get private IP (max 2 minutes)
-          for i in $(seq 1 12); do
-            PG_IP=$(az container show \
-              --resource-group "$RG" \
-              --name "$PG_NAME" \
-              --query "ipAddress.ip" -o tsv 2>/dev/null || echo "")
-            STATE=$(az container show \
-              --resource-group "$RG" \
-              --name "$PG_NAME" \
-              --query "instanceView.state" -o tsv 2>/dev/null || echo "")
-            if [ -n "$PG_IP" ] && [ "$STATE" = "Running" ]; then
-              break
-            fi
-            echo "Waiting for container to start... ($i/12)"
-            sleep 10
-          done
+          # Create the application database
+          az postgres flexible-server db create \
+            --resource-group "$RG" \
+            --server-name "$PG_SERVER" \
+            --database-name "${{ env.POSTGRES_DB }}" \
+            --output none
 
-          if [ -z "$PG_IP" ]; then
-            echo "::error::Failed to get PostgreSQL container IP after 2 minutes"
-            exit 1
-          fi
+          PG_FQDN=$(az postgres flexible-server show \
+            --resource-group "$RG" \
+            --name "$PG_SERVER" \
+            --query "fullyQualifiedDomainName" -o tsv)
 
-          echo "postgres_ip=${PG_IP}" >> "$GITHUB_OUTPUT"
+          echo "pg_fqdn=${PG_FQDN}" >> "$GITHUB_OUTPUT"
           echo "reused=false" >> "$GITHUB_OUTPUT"
 
-      - name: "[4/7] Create Azure Container Registry"
-        id: acr
+      - name: "[3/6] Create App Service Plan"
         run: |
-          RG="${{ inputs.resource_group }}"
-          ACR_NAME="${{ steps.config.outputs.acr_name }}"
-
-          az acr create \
-            --resource-group "$RG" \
-            --name "$ACR_NAME" \
-            --sku Basic \
-            --admin-enabled true \
+          az appservice plan create \
+            --resource-group "${{ inputs.resource_group }}" \
+            --name "${{ inputs.app_service_plan }}" \
+            --location "${{ inputs.location }}" \
+            --sku B1 \
+            --is-linux \
             --output none
 
-          ACR_SERVER=$(az acr show \
-            --resource-group "$RG" \
-            --name "$ACR_NAME" \
-            --query loginServer -o tsv)
-
-          echo "login_server=${ACR_SERVER}" >> "$GITHUB_OUTPUT"
-
-      - name: "[5/7] Build and push Docker image to ACR"
+      - name: "[4/6] Create Web App"
         run: |
-          az acr build \
-            --registry "${{ steps.config.outputs.acr_name }}" \
-            --image agenti-web:${{ github.sha }} \
-            --image agenti-web:latest \
-            --file EastSeat.Agenti.Web/Dockerfile \
-            .
-
-      - name: "[6/7] Create Container Apps Environment"
-        run: |
-          RG="${{ inputs.resource_group }}"
-          ENV_NAME="${{ inputs.container_app_env }}"
-          LOCATION="${{ inputs.location }}"
-
-          SUBNET_ID=$(az network vnet subnet show \
-            --resource-group "$RG" \
-            --vnet-name agenti-vnet \
-            --name containerapp-subnet \
-            --query id -o tsv)
-
-          az containerapp env create \
-            --name "$ENV_NAME" \
-            --resource-group "$RG" \
-            --location "$LOCATION" \
-            --infrastructure-subnet-resource-id "$SUBNET_ID" \
+          az webapp create \
+            --resource-group "${{ inputs.resource_group }}" \
+            --plan "${{ inputs.app_service_plan }}" \
+            --name "${{ inputs.app_name }}" \
+            --runtime "DOTNETCORE:10.0" \
             --output none
 
-      - name: "[7/7] Create Container App"
-        id: app
+          # Enable basic auth on SCM site (required for zip deployment)
+          az resource update \
+            --resource-group "${{ inputs.resource_group }}" \
+            --name scm \
+            --namespace Microsoft.Web \
+            --resource-type basicPublishingCredentialsPolicies \
+            --parent "sites/${{ inputs.app_name }}" \
+            --set properties.allow=true \
+            --output none
+
+      - name: "[5/6] Configure Web App"
         run: |
           RG="${{ inputs.resource_group }}"
-          APP_NAME="${{ inputs.app_name }}"
-          ENV_NAME="${{ inputs.container_app_env }}"
-          ACR_NAME="${{ steps.config.outputs.acr_name }}"
-          ACR_SERVER="${{ steps.acr.outputs.login_server }}"
-          PG_IP="${{ steps.postgres.outputs.postgres_ip }}"
+          APP="${{ inputs.app_name }}"
+          PG_FQDN="${{ steps.postgres.outputs.pg_fqdn }}"
           PG_PASS="${{ steps.config.outputs.pg_password }}"
 
-          # Get ACR credentials
-          ACR_USER=$(az acr credential show --name "$ACR_NAME" --query username -o tsv)
-          ACR_PASS=$(az acr credential show --name "$ACR_NAME" --query "passwords[0].value" -o tsv)
-          echo "::add-mask::${ACR_PASS}"
-
-          CONN_STR="Server=${PG_IP};Port=5432;Database=agenti_prod;User Id=agenti_user;Password=${PG_PASS};"
+          CONN_STR="Server=${PG_FQDN};Port=5432;Database=${{ env.POSTGRES_DB }};User Id=${{ env.POSTGRES_USER }};Password=${PG_PASS};Ssl Mode=Require;"
           echo "::add-mask::${CONN_STR}"
 
-          # Check if Container App already exists
-          EXISTS=$(az containerapp show \
-            --name "$APP_NAME" \
+          # Set connection string (encrypted at rest in App Service Configuration)
+          az webapp config connection-string set \
             --resource-group "$RG" \
-            --query name -o tsv 2>/dev/null || echo "")
+            --name "$APP" \
+            --connection-string-type PostgreSQL \
+            --settings DefaultConnection="$CONN_STR" \
+            --output none
 
-          if [ -n "$EXISTS" ]; then
-            echo "Container App already exists. Updating..."
-            az containerapp update \
-              --name "$APP_NAME" \
-              --resource-group "$RG" \
-              --image "${ACR_SERVER}/agenti-web:${{ github.sha }}" \
-              --output none
-
-            az containerapp secret set \
-              --name "$APP_NAME" \
-              --resource-group "$RG" \
-              --secrets "db-conn=${CONN_STR}" \
-              --output none
-          else
-            echo "Creating new Container App..."
-            az containerapp create \
-              --name "$APP_NAME" \
-              --resource-group "$RG" \
-              --environment "$ENV_NAME" \
-              --image "${ACR_SERVER}/agenti-web:${{ github.sha }}" \
-              --registry-server "$ACR_SERVER" \
-              --registry-username "$ACR_USER" \
-              --registry-password "$ACR_PASS" \
-              --target-port 8080 \
-              --ingress external \
-              --secrets "db-conn=${CONN_STR}" \
-              --env-vars "ConnectionStrings__DefaultConnection=secretref:db-conn" "ASPNETCORE_ENVIRONMENT=Production" \
-              --min-replicas 0 \
-              --max-replicas 1 \
-              --output none
-          fi
-
-          APP_URL=$(az containerapp show \
-            --name "$APP_NAME" \
+          # Set app settings (disable Oryx build since we deploy pre-built binaries)
+          az webapp config appsettings set \
             --resource-group "$RG" \
-            --query "properties.configuration.ingress.fqdn" -o tsv)
+            --name "$APP" \
+            --settings ASPNETCORE_ENVIRONMENT=Production SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+            --output none
+
+      - name: "[6/6] Build and Deploy App"
+        id: deploy
+        run: |
+          dotnet publish EastSeat.Agenti.Web/EastSeat.Agenti.Web.csproj \
+            --configuration Release \
+            --output ./publish
+
+          cd ./publish && zip -r ../publish.zip . && cd ..
+
+          az webapp deploy \
+            --resource-group "${{ inputs.resource_group }}" \
+            --name "${{ inputs.app_name }}" \
+            --src-path publish.zip \
+            --type zip \
+            --output none
+
+          APP_URL=$(az webapp show \
+            --resource-group "${{ inputs.resource_group }}" \
+            --name "${{ inputs.app_name }}" \
+            --query "defaultHostName" -o tsv)
 
           echo "app_url=${APP_URL}" >> "$GITHUB_OUTPUT"
 
@@ -348,25 +236,27 @@ jobs:
           |----------|-------|
           | Resource Group | \`${{ inputs.resource_group }}\` |
           | Location | \`${{ inputs.location }}\` |
-          | Virtual Network | \`agenti-vnet\` |
-          | PostgreSQL Container | \`${{ inputs.postgres_container }}\` (IP: \`${{ steps.postgres.outputs.postgres_ip }}\`) |
-          | Container Registry | \`${{ steps.acr.outputs.login_server }}\` |
-          | Container Apps Environment | \`${{ inputs.container_app_env }}\` |
-          | Container App | \`${{ inputs.app_name }}\` |
-          | **App URL** | **https://${{ steps.app.outputs.app_url }}** |
+          | PostgreSQL Server | \`${{ steps.postgres.outputs.pg_fqdn }}\` |
+          | App Service Plan | \`${{ inputs.app_service_plan }}\` (B1 Linux) |
+          | Web App | \`${{ inputs.app_name }}\` |
+          | **App URL** | **https://${{ steps.deploy.outputs.app_url }}** |
 
           ### Next Steps
 
-          1. **Set the \`AZURE_CONTAINER_REGISTRY\` GitHub variable** to \`${{ steps.config.outputs.acr_name }}\` so the CI/CD pipeline can find the registry.
-             - Go to Settings > Secrets and variables > Actions > Variables > New repository variable
-          2. **Open the App URL** above to complete initial setup (create admin user and branch).
-          3. The PostgreSQL password is stored as a Container App secret (\`db-conn\`). To retrieve it:
-             \`\`\`
-             az containerapp secret show --name ${{ inputs.app_name }} --resource-group ${{ inputs.resource_group }} --secret-name db-conn
-             \`\`\`
+          1. **Open the App URL** above to complete initial setup (create admin user and branch).
+          2. The PostgreSQL password is stored in App Service Configuration (connection string).
+          3. Future deployments happen automatically when pushing to \`main\`.
 
-          > **Note:** PostgreSQL data is ephemeral and will be lost if the container restarts.
-          > For production, migrate to Azure Database for PostgreSQL Flexible Server.
+          ### Cost-Saving Tip
+
+          To stop PostgreSQL when not in use (saves ~\$12-14/month on compute):
+          \`\`\`
+          az postgres flexible-server stop --resource-group ${{ inputs.resource_group }} --name ${{ inputs.postgres_server }}
+          \`\`\`
+          To restart:
+          \`\`\`
+          az postgres flexible-server start --resource-group ${{ inputs.resource_group }} --name ${{ inputs.postgres_server }}
+          \`\`\`
           EOF
 
       - name: Azure logout

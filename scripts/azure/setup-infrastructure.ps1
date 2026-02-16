@@ -5,32 +5,28 @@
 .DESCRIPTION
     Creates all required Azure resources for hosting the Agenti application:
     - Resource Group
-    - Virtual Network for secure communication
-    - Azure Container Instance for PostgreSQL
-    - Azure Container Registry (ACR)
-    - Azure Container Apps Environment
-    - Azure Container App
+    - Azure Database for PostgreSQL Flexible Server
+    - Azure App Service Plan (Linux B1)
+    - Azure App Service Web App (.NET 10)
+    Performs initial code deployment via zip deploy.
 
 .PARAMETER ResourceGroupName
     Name of the Azure Resource Group (default: agenti-rg)
 
 .PARAMETER Location
-    Azure region for resources (default: uaenorth)
+    Azure region for resources (default: northeurope)
 
 .PARAMETER PostgresPassword
     Password for PostgreSQL database. If not provided, a strong password is generated automatically.
 
 .PARAMETER AppName
-    Name of the Container App (default: agenti)
+    Name of the Web App (default: agenti)
 
-.PARAMETER PostgresContainerName
-    Name of the PostgreSQL container instance (default: agenti-postgres)
+.PARAMETER PostgresServerName
+    Name of the PostgreSQL Flexible Server (default: agenti-pgserver)
 
-.PARAMETER ContainerRegistryName
-    Name of the Azure Container Registry. If not provided, a unique name is generated automatically.
-
-.PARAMETER ContainerAppEnvName
-    Name of the Container Apps Environment (default: agenti-env)
+.PARAMETER AppServicePlanName
+    Name of the App Service Plan (default: agenti-plan)
 
 .EXAMPLE
     .\setup-infrastructure.ps1
@@ -45,12 +41,14 @@ param(
     [string]$Location = "uaenorth",
     [string]$PostgresPassword = "",
     [string]$AppName = "agenti",
-    [string]$PostgresContainerName = "agenti-postgres",
-    [string]$ContainerRegistryName = "",
-    [string]$ContainerAppEnvName = "agenti-env"
+    [string]$PostgresServerName = "agenti-pgserver",
+    [string]$AppServicePlanName = "agenti-plan"
 )
 
-$ErrorActionPreference = "Stop"
+# Note: We use "Continue" (not "Stop") because Azure CLI writes deprecation warnings
+# to stderr, which PowerShell 5.1 treats as terminating errors with "Stop".
+# All az CLI errors are caught via Assert-AzSuccess checking $LASTEXITCODE instead.
+$ErrorActionPreference = "Continue"
 
 # --- Helper: check az CLI exit code and fail if non-zero ---
 function Assert-AzSuccess {
@@ -72,20 +70,20 @@ function Show-CleanupMessage {
 
 # --- Generate PostgreSQL password if not provided ---
 if ([string]::IsNullOrWhiteSpace($PostgresPassword)) {
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     $bytes = [byte[]]::new(24)
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $rng.GetBytes($bytes)
+    $rng.Dispose()
     $PostgresPassword = ([Convert]::ToBase64String($bytes) -replace '[+/=]', '').Substring(0, 20) + "Ag1!"
-}
-
-# --- Generate container registry name if not provided ---
-if ([string]::IsNullOrWhiteSpace($ContainerRegistryName)) {
-    $suffix = -join ((97..122) + (48..57) | Get-Random -Count 6 | ForEach-Object { [char]$_ })
-    $ContainerRegistryName = "agenticr$suffix"
 }
 
 # --- Determine repo root (script is at scripts/azure/) ---
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RepoRoot = (Resolve-Path (Join-Path $ScriptDir ".." "..")).Path
+$RepoRoot = (Resolve-Path (Join-Path (Join-Path $ScriptDir "..") "..")).Path
+
+# --- PostgreSQL configuration ---
+$PostgresUser = "agenti_user"
+$PostgresDb = "agenti_prod"
 
 Write-Host "=== Agenti Azure Infrastructure Setup ===" -ForegroundColor Cyan
 Write-Host ""
@@ -128,12 +126,11 @@ Write-Host ""
 
 # Register required resource providers (idempotent, no-ops if already registered)
 Write-Host "Registering required resource providers..." -ForegroundColor Gray
-az provider register --namespace Microsoft.ContainerRegistry --output none 2>$null
-az provider register --namespace Microsoft.App --output none 2>$null
-az provider register --namespace Microsoft.OperationalInsights --output none 2>$null
+az provider register --namespace Microsoft.DBforPostgreSQL --output none 2>$null
+az provider register --namespace Microsoft.Web --output none 2>$null
 
 # Wait for providers to register
-$requiredProviders = @("Microsoft.ContainerRegistry", "Microsoft.App", "Microsoft.OperationalInsights")
+$requiredProviders = @("Microsoft.DBforPostgreSQL", "Microsoft.Web")
 foreach ($provider in $requiredProviders) {
     $maxWait = 120
     $waited = 0
@@ -153,7 +150,7 @@ Write-Host ""
 # ============================================================
 # 1. Create Resource Group
 # ============================================================
-Write-Host "[1/7] Creating Resource Group: $ResourceGroupName..." -ForegroundColor Yellow
+Write-Host "[1/6] Creating Resource Group: $ResourceGroupName..." -ForegroundColor Yellow
 az group create `
     --name $ResourceGroupName `
     --location $Location `
@@ -162,274 +159,196 @@ Assert-AzSuccess "Create Resource Group"
 Write-Host "  Resource Group created." -ForegroundColor Green
 
 # ============================================================
-# 2. Create Virtual Network with delegated subnets
+# 2. Create PostgreSQL Flexible Server + Database
 # ============================================================
-Write-Host "[2/7] Creating Virtual Network..." -ForegroundColor Yellow
-$VNetName = "agenti-vnet"
-$SubnetContainerApp = "containerapp-subnet"
-$SubnetContainer = "container-subnet"
+Write-Host "[2/6] Creating PostgreSQL Flexible Server: $PostgresServerName..." -ForegroundColor Yellow
+Write-Host "  This may take a few minutes..." -ForegroundColor Gray
 
-# Create VNet without inline subnet
-az network vnet create `
+az postgres flexible-server create `
     --resource-group $ResourceGroupName `
-    --name $VNetName `
-    --address-prefix 10.0.0.0/16 `
+    --name $PostgresServerName `
+    --location $Location `
+    --admin-user $PostgresUser `
+    --admin-password $PostgresPassword `
+    --sku-name Standard_B1ms `
+    --tier Burstable `
+    --storage-size 32 `
+    --version 16 `
+    --yes `
     --output none
-Assert-AzSuccess "Create Virtual Network"
+Assert-AzSuccess "Create PostgreSQL Flexible Server"
 
-# Create container subnet with ACI delegation
-az network vnet subnet create `
-    --resource-group $ResourceGroupName `
-    --vnet-name $VNetName `
-    --name $SubnetContainer `
-    --address-prefix 10.0.1.0/24 `
-    --delegations Microsoft.ContainerInstance/containerGroups `
-    --output none 2>$null
-if ($LASTEXITCODE -ne 0) {
-    # Subnet may already exist from a previous run; update delegation instead
-    az network vnet subnet update `
-        --resource-group $ResourceGroupName `
-        --vnet-name $VNetName `
-        --name $SubnetContainer `
-        --delegations Microsoft.ContainerInstance/containerGroups `
-        --output none
-    Assert-AzSuccess "Update container subnet delegation"
-}
-
-# Create Container Apps subnet
-az network vnet subnet create `
-    --resource-group $ResourceGroupName `
-    --vnet-name $VNetName `
-    --name $SubnetContainerApp `
-    --address-prefix 10.0.2.0/24 `
-    --delegations Microsoft.App/environments `
-    --output none 2>$null
-if ($LASTEXITCODE -ne 0) {
-    # Subnet may already exist; update delegation
-    az network vnet subnet update `
-        --resource-group $ResourceGroupName `
-        --vnet-name $VNetName `
-        --name $SubnetContainerApp `
-        --delegations Microsoft.App/environments `
-        --output none
-    Assert-AzSuccess "Update Container Apps subnet delegation"
-}
-
-Write-Host "  Virtual Network created with delegated subnets." -ForegroundColor Green
-
-# ============================================================
-# 3. Create PostgreSQL Container Instance (YAML deployment)
-# ============================================================
-Write-Host "[3/7] Creating PostgreSQL Container Instance..." -ForegroundColor Yellow
-Write-Host "  NOTE: PostgreSQL data is ephemeral (lost on container restart)." -ForegroundColor Gray
-Write-Host "  For production persistence, consider Azure Database for PostgreSQL." -ForegroundColor Gray
-
-# Get subnet ID for container
-$ContainerSubnetId = az network vnet subnet show `
-    --resource-group $ResourceGroupName `
-    --vnet-name $VNetName `
-    --name $SubnetContainer `
-    --query id -o tsv
-Assert-AzSuccess "Get container subnet ID"
-
-# Generate ACI deployment YAML
-# YAML format is required for VNet integration with private IP
-$aciYaml = @"
-apiVersion: '2021-10-01'
-location: $Location
-name: $PostgresContainerName
-properties:
-  containers:
-  - name: postgres
-    properties:
-      image: postgres:16-alpine
-      resources:
-        requests:
-          cpu: 1.0
-          memoryInGB: 1.5
-      ports:
-      - port: 5432
-        protocol: TCP
-      environmentVariables:
-      - name: POSTGRES_USER
-        value: agenti_user
-      - name: POSTGRES_DB
-        value: agenti_prod
-      - name: POSTGRES_PASSWORD
-        secureValue: '$PostgresPassword'
-  osType: Linux
-  ipAddress:
-    type: Private
-    ports:
-    - port: 5432
-      protocol: TCP
-  subnetIds:
-  - id: $ContainerSubnetId
-type: Microsoft.ContainerInstance/containerGroups
-"@
-
-# Write YAML to a temporary file
-$yamlPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "aci-postgres.yaml")
-$aciYaml | Out-File -FilePath $yamlPath -Encoding utf8NoBOM -Force
-
-try {
-    az container create `
-        --resource-group $ResourceGroupName `
-        --file $yamlPath `
-        --output none
-    Assert-AzSuccess "Create PostgreSQL container"
-} finally {
-    Remove-Item -Path $yamlPath -Force -ErrorAction SilentlyContinue
-}
-
-# Wait for container to get a private IP
+# Wait for server to be fully provisioned before creating dependent resources
+Write-Host "  Waiting for server to be fully available..." -ForegroundColor Gray
 $maxRetries = 12
 $retryCount = 0
-$PostgresIP = $null
-
 while ($retryCount -lt $maxRetries) {
-    $containerState = az container show `
+    $serverState = az postgres flexible-server show `
         --resource-group $ResourceGroupName `
-        --name $PostgresContainerName `
-        --query "instanceView.state" -o tsv 2>$null
-
-    $PostgresIP = az container show `
-        --resource-group $ResourceGroupName `
-        --name $PostgresContainerName `
-        --query "ipAddress.ip" -o tsv 2>$null
-
-    if ($PostgresIP -and $containerState -eq "Running") {
-        break
-    }
-
+        --name $PostgresServerName `
+        --query "state" -o tsv 2>$null
+    if ($serverState -eq "Ready") { break }
     $retryCount++
-    Write-Host "  Waiting for container to start... ($retryCount/$maxRetries)" -ForegroundColor Gray
     Start-Sleep -Seconds 10
 }
 
-if (-not $PostgresIP) {
-    Write-Host "ERROR: Failed to get PostgreSQL container IP after $maxRetries attempts." -ForegroundColor Red
-    Write-Host "  Check logs: az container logs --resource-group $ResourceGroupName --name $PostgresContainerName" -ForegroundColor Yellow
-    Show-CleanupMessage
-    exit 1
-}
-
-Write-Host "  PostgreSQL Container created at IP: $PostgresIP" -ForegroundColor Green
-
-# ============================================================
-# 4. Create Azure Container Registry
-# ============================================================
-Write-Host "[4/7] Creating Azure Container Registry..." -ForegroundColor Yellow
-az acr create `
+# Allow Azure services to access the server (required for App Service)
+az postgres flexible-server firewall-rule create `
     --resource-group $ResourceGroupName `
-    --name $ContainerRegistryName `
-    --sku Basic `
-    --admin-enabled true `
+    --name $PostgresServerName `
+    --rule-name AllowAzureServices `
+    --start-ip-address 0.0.0.0 `
+    --end-ip-address 0.0.0.0 `
     --output none
-Assert-AzSuccess "Create Container Registry"
+Assert-AzSuccess "Create PostgreSQL firewall rule"
 
-$AcrLoginServer = az acr show `
+# Create the application database (retry once if server propagation is slow)
+az postgres flexible-server db create `
     --resource-group $ResourceGroupName `
-    --name $ContainerRegistryName `
-    --query loginServer -o tsv
-Assert-AzSuccess "Get ACR login server"
-
-Write-Host "  Container Registry created: $AcrLoginServer" -ForegroundColor Green
-
-# ============================================================
-# 5. Build and push Docker image to ACR
-# ============================================================
-Write-Host "[5/7] Building Docker image in ACR (this may take a few minutes)..." -ForegroundColor Yellow
-
-# Use git remote URL for the build context to avoid Windows NTFS tar issues.
-# Falls back to local directory if no git remote is found.
-$BuildSource = $RepoRoot
-try {
-    Push-Location $RepoRoot
-    $GitRemote = git remote get-url origin 2>$null
-    Pop-Location
-    if ($GitRemote -match "github\.com[:/](.+?)(?:\.git)?$") {
-        $BuildSource = "https://github.com/$($Matches[1]).git"
-        Write-Host "  Building from GitHub: $BuildSource" -ForegroundColor Gray
-    }
-} catch {
-    # No git remote; use local directory
+    --server-name $PostgresServerName `
+    --database-name $PostgresDb `
+    --output none 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  Retrying database creation..." -ForegroundColor Gray
+    Start-Sleep -Seconds 15
+    az postgres flexible-server db create `
+        --resource-group $ResourceGroupName `
+        --server-name $PostgresServerName `
+        --database-name $PostgresDb `
+        --output none
+    Assert-AzSuccess "Create PostgreSQL database"
 }
 
-az acr build `
-    --registry $ContainerRegistryName `
-    --image agenti-web:latest `
-    --file EastSeat.Agenti.Web/Dockerfile `
-    $BuildSource
-Assert-AzSuccess "Build Docker image"
-Write-Host "  Docker image built and pushed to $AcrLoginServer/agenti-web:latest" -ForegroundColor Green
+# Get the server FQDN
+$PostgresFqdn = az postgres flexible-server show `
+    --resource-group $ResourceGroupName `
+    --name $PostgresServerName `
+    --query "fullyQualifiedDomainName" -o tsv
+Assert-AzSuccess "Get PostgreSQL FQDN"
+
+Write-Host "  PostgreSQL Flexible Server created: $PostgresFqdn" -ForegroundColor Green
 
 # ============================================================
-# 6. Create Container Apps Environment
+# 3. Create App Service Plan
 # ============================================================
-Write-Host "[6/7] Creating Container Apps Environment..." -ForegroundColor Yellow
-
-$ContainerAppSubnetId = az network vnet subnet show `
+Write-Host "[3/6] Creating App Service Plan: $AppServicePlanName..." -ForegroundColor Yellow
+az appservice plan create `
     --resource-group $ResourceGroupName `
-    --vnet-name $VNetName `
-    --name $SubnetContainerApp `
-    --query id -o tsv
-Assert-AzSuccess "Get Container Apps subnet ID"
-
-az containerapp env create `
-    --name $ContainerAppEnvName `
-    --resource-group $ResourceGroupName `
+    --name $AppServicePlanName `
     --location $Location `
-    --infrastructure-subnet-resource-id $ContainerAppSubnetId `
+    --sku B1 `
+    --is-linux `
     --output none
-Assert-AzSuccess "Create Container Apps Environment"
-Write-Host "  Container Apps Environment created." -ForegroundColor Green
+Assert-AzSuccess "Create App Service Plan"
+Write-Host "  App Service Plan created (B1 Linux)." -ForegroundColor Green
 
 # ============================================================
-# 7. Create Container App
+# 4. Create Web App
 # ============================================================
-Write-Host "[7/7] Creating Container App..." -ForegroundColor Yellow
-
-$ConnectionString = "Server=$PostgresIP;Port=5432;Database=agenti_prod;User Id=agenti_user;Password=$PostgresPassword;"
-
-# Get ACR credentials
-$AcrUsername = az acr credential show `
+Write-Host "[4/6] Creating Web App: $AppName..." -ForegroundColor Yellow
+az webapp create `
     --resource-group $ResourceGroupName `
-    --name $ContainerRegistryName `
-    --query username -o tsv
-Assert-AzSuccess "Get ACR username"
-
-$AcrPassword = az acr credential show `
-    --resource-group $ResourceGroupName `
-    --name $ContainerRegistryName `
-    --query "passwords[0].value" -o tsv
-Assert-AzSuccess "Get ACR password"
-
-az containerapp create `
+    --plan $AppServicePlanName `
     --name $AppName `
-    --resource-group $ResourceGroupName `
-    --environment $ContainerAppEnvName `
-    --image "$AcrLoginServer/agenti-web:latest" `
-    --registry-server $AcrLoginServer `
-    --registry-username $AcrUsername `
-    --registry-password $AcrPassword `
-    --target-port 8080 `
-    --ingress external `
-    --secrets "db-conn=$ConnectionString" `
-    --env-vars "ConnectionStrings__DefaultConnection=secretref:db-conn" "ASPNETCORE_ENVIRONMENT=Production" `
-    --min-replicas 0 `
-    --max-replicas 1 `
+    --runtime "DOTNETCORE:10.0" `
     --output none
-Assert-AzSuccess "Create Container App"
+Assert-AzSuccess "Create Web App"
 
-# Get the Container App URL
-$AppUrl = az containerapp show `
-    --name $AppName `
+# Enable basic auth on SCM site (required for zip deployment via az CLI)
+az resource update `
     --resource-group $ResourceGroupName `
-    --query "properties.configuration.ingress.fqdn" -o tsv
-Assert-AzSuccess "Get Container App URL"
+    --name scm `
+    --namespace Microsoft.Web `
+    --resource-type basicPublishingCredentialsPolicies `
+    --parent "sites/$AppName" `
+    --set properties.allow=true `
+    --output none
+Assert-AzSuccess "Enable SCM basic auth"
 
-Write-Host "  Container App created." -ForegroundColor Green
+Write-Host "  Web App created." -ForegroundColor Green
+
+# ============================================================
+# 5. Configure Web App
+# ============================================================
+Write-Host "[5/6] Configuring Web App..." -ForegroundColor Yellow
+
+$ConnectionString = "Server=$PostgresFqdn;Port=5432;Database=$PostgresDb;User Id=$PostgresUser;Password=$PostgresPassword;Ssl Mode=Require;"
+
+# Set the connection string (encrypted at rest in App Service Configuration)
+az webapp config connection-string set `
+    --resource-group $ResourceGroupName `
+    --name $AppName `
+    --connection-string-type PostgreSQL `
+    --settings DefaultConnection="$ConnectionString" `
+    --output none
+Assert-AzSuccess "Set connection string"
+
+# Set app settings (disable Oryx build since we deploy pre-built binaries)
+az webapp config appsettings set `
+    --resource-group $ResourceGroupName `
+    --name $AppName `
+    --settings ASPNETCORE_ENVIRONMENT=Production SCM_DO_BUILD_DURING_DEPLOYMENT=false `
+    --output none
+Assert-AzSuccess "Set app settings"
+
+Write-Host "  Web App configured." -ForegroundColor Green
+
+# ============================================================
+# 6. Build and Deploy App
+# ============================================================
+Write-Host "[6/6] Building and deploying application..." -ForegroundColor Yellow
+
+$PublishDir = Join-Path $RepoRoot "publish"
+$ZipPath = Join-Path $RepoRoot "publish.zip"
+
+# Clean previous publish output
+if (Test-Path $PublishDir) { Remove-Item -Path $PublishDir -Recurse -Force }
+if (Test-Path $ZipPath) { Remove-Item -Path $ZipPath -Force }
+
+# Build and publish
+Write-Host "  Building project..." -ForegroundColor Gray
+dotnet publish (Join-Path (Join-Path $RepoRoot "EastSeat.Agenti.Web") "EastSeat.Agenti.Web.csproj") `
+    --configuration Release `
+    --output $PublishDir
+Assert-AzSuccess "dotnet publish"
+
+# Create zip for deployment (using System.IO.Compression to ensure forward-slash
+# paths, which is required for Linux App Service to extract directories correctly)
+Write-Host "  Creating deployment package..." -ForegroundColor Gray
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$PublishDirFull = (Resolve-Path $PublishDir).Path
+$archive = [System.IO.Compression.ZipFile]::Open($ZipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+Get-ChildItem -Path $PublishDirFull -Recurse -File | ForEach-Object {
+    $entryName = $_.FullName.Substring($PublishDirFull.Length + 1).Replace('\', '/')
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+        $archive, $_.FullName, $entryName,
+        [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+}
+$archive.Dispose()
+
+# Deploy via zip deploy
+Write-Host "  Deploying to Azure App Service..." -ForegroundColor Gray
+az webapp deploy `
+    --resource-group $ResourceGroupName `
+    --name $AppName `
+    --src-path $ZipPath `
+    --type zip `
+    --output none
+Assert-AzSuccess "Deploy to App Service"
+
+# Clean up local artifacts
+Remove-Item -Path $PublishDir -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path $ZipPath -Force -ErrorAction SilentlyContinue
+
+# Get the Web App URL
+$AppUrl = az webapp show `
+    --resource-group $ResourceGroupName `
+    --name $AppName `
+    --query "defaultHostName" -o tsv
+Assert-AzSuccess "Get Web App URL"
+
+Write-Host "  Application deployed." -ForegroundColor Green
 
 # ============================================================
 # Summary
@@ -439,29 +358,34 @@ Write-Host "=== Setup Complete ===" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Resources Created:" -ForegroundColor White
 Write-Host "  - Resource Group: $ResourceGroupName"
-Write-Host "  - Virtual Network: $VNetName"
-Write-Host "  - PostgreSQL Container: $PostgresContainerName (IP: $PostgresIP)"
-Write-Host "  - Container Registry: $AcrLoginServer"
-Write-Host "  - Container Apps Environment: $ContainerAppEnvName"
-Write-Host "  - Container App: $AppName"
+Write-Host "  - PostgreSQL Server: $PostgresFqdn"
+Write-Host "  - PostgreSQL Database: $PostgresDb"
+Write-Host "  - App Service Plan: $AppServicePlanName (B1 Linux)"
+Write-Host "  - Web App: $AppName"
 Write-Host ""
 Write-Host "App URL: https://$AppUrl" -ForegroundColor Green
 Write-Host ""
 Write-Host "=== Credentials ===" -ForegroundColor Red
+Write-Host "  PostgreSQL Server: $PostgresFqdn" -ForegroundColor Red
+Write-Host "  PostgreSQL User: $PostgresUser" -ForegroundColor Red
 Write-Host "  PostgreSQL Password: $PostgresPassword" -ForegroundColor Red
-Write-Host "  ACR Login Server: $AcrLoginServer" -ForegroundColor Red
+Write-Host "  PostgreSQL Database: $PostgresDb" -ForegroundColor Red
 Write-Host "  IMPORTANT: Save these credentials securely. They will not be shown again." -ForegroundColor Red
 Write-Host ""
 Write-Host "=== Next Steps ===" -ForegroundColor Yellow
-Write-Host "1. Create a Service Principal for GitHub Actions:"
-Write-Host "   az ad sp create-for-rbac --name 'agenti-github-actions' --role contributor ``"
-Write-Host "       --scopes /subscriptions/$($account.id)/resourceGroups/$ResourceGroupName ``"
-Write-Host "       --json-auth"
+Write-Host "1. Set up OIDC authentication for GitHub Actions:"
+Write-Host "   See scripts/azure/setup-secrets.md for detailed instructions"
 Write-Host ""
-Write-Host "2. Add the JSON output as a GitHub secret named 'AZURE_CREDENTIALS'"
+Write-Host "2. Set these GitHub Secrets:"
+Write-Host "   - AZURE_CLIENT_ID"
+Write-Host "   - AZURE_TENANT_ID"
+Write-Host "   - AZURE_SUBSCRIPTION_ID"
+Write-Host "   - TEST_DB_PASSWORD"
 Write-Host ""
-Write-Host "3. See scripts/azure/setup-secrets.md for detailed instructions"
+Write-Host "3. Open https://$AppUrl to complete initial setup (create admin user and branch)"
 Write-Host ""
-Write-Host "=== Important ===" -ForegroundColor Yellow
-Write-Host "PostgreSQL data is ephemeral and will be lost if the container restarts." -ForegroundColor Yellow
-Write-Host "For production use, migrate to Azure Database for PostgreSQL Flexible Server." -ForegroundColor Yellow
+Write-Host "=== Cost-Saving Tip ===" -ForegroundColor Yellow
+Write-Host "To stop PostgreSQL when not in use (saves ~`$12-14/month on compute):" -ForegroundColor Yellow
+Write-Host "  az postgres flexible-server stop --resource-group $ResourceGroupName --name $PostgresServerName" -ForegroundColor White
+Write-Host "To restart:" -ForegroundColor Yellow
+Write-Host "  az postgres flexible-server start --resource-group $ResourceGroupName --name $PostgresServerName" -ForegroundColor White
