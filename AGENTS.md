@@ -544,6 +544,68 @@ var agents = await _dbContext.Agents
 
 ## Common Development Workflows
 
+### Git Branching Workflow (Required)
+
+**ALWAYS create a new branch for feature implementations.** Do not make changes directly on `main`.
+
+**Branch Creation:**
+```bash
+# Create and switch to a new feature branch
+git checkout -b feature/{feature-name}
+
+# For bug fixes
+git checkout -b fix/{bug-description}
+
+# For refactoring
+git checkout -b refactor/{refactor-description}
+```
+
+**Branch Naming Conventions:**
+- `feature/{feature-name}` - New features (e.g., `feature/agent-wallet-export`)
+- `fix/{bug-description}` - Bug fixes (e.g., `fix/vault-balance-calculation`)
+- `refactor/{description}` - Code refactoring (e.g., `refactor/cash-session-service`)
+
+**Workflow:**
+1. Create a new branch from `main`
+2. Make your changes with atomic commits
+3. Ensure all tests pass
+4. Merge into `main` when feature is complete
+
+**Merging to Main:**
+```bash
+# Ensure you're on your feature branch and it's up to date
+git checkout feature/{feature-name}
+git pull origin main
+
+# Switch to main and merge
+git checkout main
+git merge feature/{feature-name}
+
+# Push to remote
+git push origin main
+
+# Delete the feature branch (optional)
+git branch -d feature/{feature-name}
+```
+
+**Commit Message Format:**
+```
+type: short description
+
+Optional longer description explaining what and why.
+```
+
+Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
+
+**Example:**
+```
+feat: add wallet export functionality
+
+Adds CSV export for agent wallets with date range filtering.
+```
+
+---
+
 ### Adding a New Feature Slice
 
 1. **Create Feature Folder:**

@@ -255,6 +255,41 @@ All feature services registered as `Scoped` (per HTTP request lifetime in Blazor
 
 ## Common Development Tasks
 
+### Git Branching Workflow (Required)
+
+**ALWAYS create a new branch for feature implementations.** Do not make changes directly on `main`.
+
+```bash
+# Create and switch to a new feature branch
+git checkout -b feature/{feature-name}
+
+# For bug fixes
+git checkout -b fix/{bug-description}
+
+# For refactoring
+git checkout -b refactor/{refactor-description}
+```
+
+**Workflow:**
+1. Create a new branch from `main`
+2. Make your changes with atomic commits
+3. Ensure all tests pass (`dotnet test`)
+4. Merge into `main` when feature is complete
+
+**Merging to Main:**
+```bash
+# Ensure your branch is up to date with main
+git pull origin main
+
+# Switch to main and merge
+git checkout main
+git merge feature/{feature-name}
+
+# Push and clean up
+git push origin main
+git branch -d feature/{feature-name}
+```
+
 ### Adding a New Feature Slice
 
 1. Create folder: `Features/{FeatureName}/`
