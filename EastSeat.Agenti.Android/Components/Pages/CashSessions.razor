@@ -1,0 +1,95 @@
+@page "/cash-sessions"
+@inject IAuthService AuthService
+@inject ICashSessionService CashSessionService
+@inject NavigationManager Nav
+
+@if (!AuthService.CurrentUser.IsAuthenticated)
+{
+    <div class="redirect-message">Redirecting to login...</div>
+}
+else
+{
+    <div class="page-header">
+        <h2>Cash Sessions</h2>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="loading-container">
+            <div class="spinner"></div>
+            <p>Loading sessions...</p>
+        </div>
+    }
+    else if (_sessions.Count == 0)
+    {
+        <div class="empty-state">
+            <p>No cash sessions found.</p>
+        </div>
+    }
+    else
+    {
+        @foreach (var session in _sessions)
+        {
+            <div class="session-card" @onclick="() => ViewSessionDetail(session.Id)">
+                <div class="session-card-header">
+                    <span class="session-date">@session.SessionDate.ToString("dd MMM yyyy")</span>
+                    <span class="session-badge" style="background-color: @session.StatusColor">
+                        @session.Status
+                    </span>
+                </div>
+                <div class="session-card-body">
+                    <div class="session-info-row">
+                        <span class="info-label">Agent</span>
+                        <span class="info-value">@session.AgentName (@session.AgentCode)</span>
+                    </div>
+                    <div class="session-info-row">
+                        <span class="info-label">Opening</span>
+                        <span class="info-value">UGX @session.OpeningTotal.ToString("N2")</span>
+                    </div>
+                    @if (session.ClosingTotal.HasValue)
+                    {
+                        <div class="session-info-row">
+                            <span class="info-label">Closing</span>
+                            <span class="info-value">UGX @session.ClosingTotal.Value.ToString("N2")</span>
+                        </div>
+                        @if (session.Variance.HasValue && session.Variance != 0)
+                        {
+                            <div class="session-info-row">
+                                <span class="info-label">Variance</span>
+                                <span class="info-value @(session.Variance > 0 ? "text-success" : "text-danger")">
+                                    UGX @session.Variance.Value.ToString("N2")
+                                </span>
+                            </div>
+                        }
+                    }
+                </div>
+                <div class="session-card-footer">
+                    <span class="text-muted">Opened: @session.OpenedAt.ToString("dd MMM yyyy HH:mm")</span>
+                </div>
+            </div>
+        }
+    }
+}
+
+@code {
+    private List<CashSessionListItemDto> _sessions = [];
+    private bool _isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthService.CurrentUser.IsAuthenticated)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        _isLoading = true;
+        _sessions = await CashSessionService.GetCashSessionsAsync();
+        _isLoading = false;
+    }
+
+    private void ViewSessionDetail(long sessionId)
+    {
+        Nav.NavigateTo($"/cash-sessions/{sessionId}");
+    }
+}

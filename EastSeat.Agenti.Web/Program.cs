@@ -42,6 +42,9 @@ builder.Host.UseSerilog();
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+// Add API controllers for mobile app
+builder.Services.AddControllers();
+
 // Add MudBlazor services
 builder.Services.AddMudServices();
 
@@ -243,6 +246,9 @@ app.Use(async (context, next) =>
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+// Map API controllers for mobile app
+app.MapControllers();
 
 // Add additional endpoints required by the Identity /Account Razor components.
 app.MapAdditionalIdentityEndpoints();

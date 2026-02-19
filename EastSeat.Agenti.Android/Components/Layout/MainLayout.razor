@@ -1,0 +1,65 @@
+﻿@inherits LayoutComponentBase
+@inject IAuthService AuthService
+@inject NavigationManager Nav
+
+<div class="app-layout">
+    @if (AuthService.CurrentUser.IsAuthenticated)
+    {
+        <header class="app-header">
+            <div class="header-left">
+                <span class="app-title">Agenti</span>
+            </div>
+            <div class="header-right">
+                <button class="btn-icon" @onclick="HandleLogoutAsync" title="Logout">⏻</button>
+            </div>
+        </header>
+
+        <main class="app-content">
+            @Body
+        </main>
+
+        <nav class="bottom-nav">
+            <NavLink href="/" Match="NavLinkMatch.All" class="bottom-nav-item">
+                <span class="nav-icon">🏠</span>
+                <span class="nav-label">Home</span>
+            </NavLink>
+            <NavLink href="/cash-sessions" class="bottom-nav-item">
+                <span class="nav-icon">📅</span>
+                <span class="nav-label">Sessions</span>
+            </NavLink>
+            <NavLink href="/cash-count/opening" class="bottom-nav-item">
+                <span class="nav-icon">📋</span>
+                <span class="nav-label">Count</span>
+            </NavLink>
+        </nav>
+    }
+    else
+    {
+        <main class="app-content app-content-full">
+            @Body
+        </main>
+    }
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        AuthService.AuthStateChanged += OnAuthStateChanged;
+    }
+
+    private void OnAuthStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleLogoutAsync()
+    {
+        await AuthService.LogoutAsync();
+        Nav.NavigateTo("/login");
+    }
+
+    public void Dispose()
+    {
+        AuthService.AuthStateChanged -= OnAuthStateChanged;
+    }
+}

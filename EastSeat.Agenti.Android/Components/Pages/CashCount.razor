@@ -1,0 +1,178 @@
+@page "/cash-count/{CountType}"
+@inject IAuthService AuthService
+@inject ICashCountService CashCountService
+@inject NavigationManager Nav
+
+@if (!AuthService.CurrentUser.IsAuthenticated)
+{
+    <div class="redirect-message">Redirecting to login...</div>
+}
+else
+{
+    <div class="page-header">
+        <button class="btn-back" @onclick='() => Nav.NavigateTo("/")'>← Back</button>
+        <h2>@(IsOpening ? "Opening Count" : "Closing Count")</h2>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="loading-container">
+            <div class="spinner"></div>
+            <p>Loading form...</p>
+        </div>
+    }
+    else if (_currentSession != null && !_currentSession.CanPerformOpeningCount && IsOpening)
+    {
+        <div class="info-card">
+            <p>@(!_currentSession.HasOpeningCount
+                ? "No active session. Complete a previous closing count first."
+                : "Opening count already submitted for today.")</p>
+            <button class="btn-secondary" @onclick='() => Nav.NavigateTo("/")'>Back to Dashboard</button>
+        </div>
+    }
+    else if (_currentSession != null && !_currentSession.CanPerformClosingCount && !IsOpening)
+    {
+        <div class="info-card">
+            <p>@(!_currentSession.HasOpeningCount
+                ? "Please complete an opening count first."
+                : "Closing count already submitted for today.")</p>
+            <button class="btn-secondary" @onclick='() => Nav.NavigateTo("/")'>Back to Dashboard</button>
+        </div>
+    }
+    else if (_form == null)
+    {
+        <div class="error-card">
+            <p>Unable to load count form. Please check your connection.</p>
+            <button class="btn-secondary" @onclick="LoadFormAsync">Retry</button>
+        </div>
+    }
+    else
+    {
+        @if (!string.IsNullOrEmpty(_errorMessage))
+        {
+            <div class="error-banner">@_errorMessage</div>
+        }
+
+        @if (!string.IsNullOrEmpty(_successMessage))
+        {
+            <div class="success-banner">@_successMessage</div>
+        }
+
+        <div class="count-summary-bar">
+            <span>Total: UGX @_form.TotalAmount.ToString("N2")</span>
+            @if (_form.TotalVariance != 0)
+            {
+                <span class="@(_form.TotalVariance > 0 ? "text-success" : "text-danger")">
+                    Variance: UGX @_form.TotalVariance.ToString("N2")
+                </span>
+            }
+        </div>
+
+        @foreach (var entry in _form.WalletEntries)
+        {
+            <div class="wallet-count-card">
+                <div class="wallet-count-header">
+                    <span class="wallet-count-name">@entry.WalletName</span>
+                    <span class="wallet-count-type">@entry.WalletTypeName</span>
+                </div>
+                @if (!IsOpening)
+                {
+                    <div class="wallet-count-expected">
+                        Expected: UGX @entry.ExpectedBalance.ToString("N2")
+                    </div>
+                }
+                <div class="form-group">
+                    <label>Counted Amount (UGX)</label>
+                    <input type="number" class="form-control" step="0.01" min="0"
+                           value="@entry.CountedAmount"
+                           @onchange="e => UpdateWalletAmount(entry, e)" />
+                </div>
+                @if (entry.HasDiscrepancy && !IsOpening)
+                {
+                    <div class="discrepancy-warning">
+                        ⚠️ Discrepancy: UGX @entry.Variance.ToString("N2")
+                    </div>
+                }
+            </div>
+        }
+
+        <button class="btn-primary btn-submit" @onclick="HandleSubmitAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span>Submitting...</span>
+            }
+            else
+            {
+                <span>Submit @(IsOpening ? "Opening" : "Closing") Count</span>
+            }
+        </button>
+    }
+}
+
+@code {
+    [Parameter]
+    public string CountType { get; set; } = "opening";
+
+    private bool IsOpening => CountType.Equals("opening", StringComparison.OrdinalIgnoreCase);
+
+    private CashCountFormModel? _form;
+    private CurrentSessionDto? _currentSession;
+    private string _errorMessage = string.Empty;
+    private string _successMessage = string.Empty;
+    private bool _isLoading = true;
+    private bool _isSubmitting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthService.CurrentUser.IsAuthenticated)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        await LoadFormAsync();
+    }
+
+    private async Task LoadFormAsync()
+    {
+        _isLoading = true;
+        _errorMessage = string.Empty;
+
+        _currentSession = await CashCountService.GetCurrentSessionAsync();
+        _form = await CashCountService.InitializeCashCountFormAsync(IsOpening);
+
+        _isLoading = false;
+    }
+
+    private void UpdateWalletAmount(WalletCountEntryDto entry, ChangeEventArgs e)
+    {
+        if (decimal.TryParse(e.Value?.ToString(), out var amount))
+        {
+            entry.CountedAmount = amount;
+        }
+    }
+
+    private async Task HandleSubmitAsync()
+    {
+        if (_form == null) return;
+
+        _isSubmitting = true;
+        _errorMessage = string.Empty;
+        _successMessage = string.Empty;
+
+        var result = await CashCountService.SubmitCashCountAsync(_form);
+
+        if (result.Success)
+        {
+            _successMessage = $"{(IsOpening ? "Opening" : "Closing")} count submitted successfully.";
+            await Task.Delay(1500);
+            Nav.NavigateTo("/");
+        }
+        else
+        {
+            _errorMessage = result.ErrorMessage ?? "Failed to submit cash count.";
+        }
+
+        _isSubmitting = false;
+    }
+}

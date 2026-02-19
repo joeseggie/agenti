@@ -1,0 +1,81 @@
+@page "/login"
+@inject IAuthService AuthService
+@inject NavigationManager Nav
+
+<div class="login-container">
+    <div class="login-card">
+        <div class="login-header">
+            <img src="icon-192.png" alt="Agenti Logo" class="login-logo" onerror="this.style.display='none'" />
+            <h1>Agenti</h1>
+            <p class="login-subtitle">Banking Agency ERP</p>
+        </div>
+
+        <EditForm Model="@_loginModel" OnValidSubmit="HandleLoginAsync">
+            <DataAnnotationsValidator />
+
+            @if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                <div class="error-banner">@_errorMessage</div>
+            }
+
+            <div class="form-group">
+                <label for="email">Email</label>
+                <InputText id="email" class="form-control" @bind-Value="_loginModel.Email"
+                           placeholder="Enter your email" autocomplete="email" />
+                <ValidationMessage For="@(() => _loginModel.Email)" />
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <InputText id="password" type="password" class="form-control"
+                           @bind-Value="_loginModel.Password"
+                           placeholder="Enter your password" autocomplete="current-password" />
+                <ValidationMessage For="@(() => _loginModel.Password)" />
+            </div>
+
+            <button type="submit" class="btn-primary" disabled="@_isLoading">
+                @if (_isLoading)
+                {
+                    <span>Signing in...</span>
+                }
+                else
+                {
+                    <span>Sign In</span>
+                }
+            </button>
+        </EditForm>
+    </div>
+</div>
+
+@code {
+    private readonly LoginRequest _loginModel = new();
+    private string _errorMessage = string.Empty;
+    private bool _isLoading;
+
+    protected override void OnInitialized()
+    {
+        if (AuthService.CurrentUser.IsAuthenticated)
+        {
+            Nav.NavigateTo("/");
+        }
+    }
+
+    private async Task HandleLoginAsync()
+    {
+        _isLoading = true;
+        _errorMessage = string.Empty;
+
+        var result = await AuthService.LoginAsync(_loginModel);
+
+        if (result.Success)
+        {
+            Nav.NavigateTo("/");
+        }
+        else
+        {
+            _errorMessage = result.ErrorMessage ?? "Login failed.";
+        }
+
+        _isLoading = false;
+    }
+}

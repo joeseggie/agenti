@@ -1,0 +1,142 @@
+@page "/cash-sessions/{SessionId:long}"
+@inject IAuthService AuthService
+@inject ICashSessionService CashSessionService
+@inject NavigationManager Nav
+
+@if (!AuthService.CurrentUser.IsAuthenticated)
+{
+    <div class="redirect-message">Redirecting to login...</div>
+}
+else
+{
+    <div class="page-header">
+        <button class="btn-back" @onclick='() => Nav.NavigateTo("/cash-sessions")'>← Back</button>
+        <h2>Session Detail</h2>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="loading-container">
+            <div class="spinner"></div>
+            <p>Loading session...</p>
+        </div>
+    }
+    else if (_session == null)
+    {
+        <div class="error-card">
+            <p>Session not found.</p>
+        </div>
+    }
+    else
+    {
+        <div class="detail-card">
+            <div class="detail-row">
+                <span class="detail-label">Date</span>
+                <span class="detail-value">@_session.SessionDate.ToString("dd MMM yyyy")</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Agent</span>
+                <span class="detail-value">@_session.AgentName (@_session.AgentCode)</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Status</span>
+                <span class="detail-value">@_session.Status</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Opened</span>
+                <span class="detail-value">@_session.OpenedAt.ToString("dd MMM yyyy HH:mm")</span>
+            </div>
+            @if (_session.ClosedAt.HasValue)
+            {
+                <div class="detail-row">
+                    <span class="detail-label">Closed</span>
+                    <span class="detail-value">@_session.ClosedAt.Value.ToString("dd MMM yyyy HH:mm")</span>
+                </div>
+            }
+        </div>
+
+        <!-- Opening Count -->
+        @if (_session.OpeningCount != null)
+        {
+            <div class="section-header">
+                <h3>Opening Count</h3>
+            </div>
+            <div class="count-summary-card">
+                <div class="detail-row">
+                    <span class="detail-label">Total</span>
+                    <span class="detail-value">UGX @_session.OpeningCount.TotalAmount.ToString("N2")</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Submitted</span>
+                    <span class="detail-value">
+                        @(_session.OpeningCount.SubmittedAt?.ToString("dd MMM yyyy HH:mm") ?? "Not submitted")
+                    </span>
+                </div>
+                @foreach (var entry in _session.OpeningCount.WalletEntries)
+                {
+                    <div class="wallet-entry-row">
+                        <span>@entry.WalletName</span>
+                        <span>UGX @entry.Amount.ToString("N2")</span>
+                    </div>
+                }
+            </div>
+        }
+
+        <!-- Closing Count -->
+        @if (_session.ClosingCount != null)
+        {
+            <div class="section-header">
+                <h3>Closing Count</h3>
+            </div>
+            <div class="count-summary-card">
+                <div class="detail-row">
+                    <span class="detail-label">Total</span>
+                    <span class="detail-value">UGX @_session.ClosingCount.TotalAmount.ToString("N2")</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Submitted</span>
+                    <span class="detail-value">
+                        @(_session.ClosingCount.SubmittedAt?.ToString("dd MMM yyyy HH:mm") ?? "Not submitted")
+                    </span>
+                </div>
+                @foreach (var entry in _session.ClosingCount.WalletEntries)
+                {
+                    <div class="wallet-entry-row">
+                        <span>@entry.WalletName</span>
+                        <span>UGX @entry.Amount.ToString("N2")</span>
+                    </div>
+                }
+            </div>
+        }
+
+        <!-- Variance Summary -->
+        @if (_session.Variance.HasValue)
+        {
+            <div class="variance-card @(_session.Variance == 0 ? "variance-ok" : "variance-error")">
+                <span class="variance-label">Variance</span>
+                <span class="variance-value">UGX @_session.Variance.Value.ToString("N2")</span>
+            </div>
+        }
+    }
+}
+
+@code {
+    [Parameter]
+    public long SessionId { get; set; }
+
+    private CashSessionDetailDto? _session;
+    private bool _isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthService.CurrentUser.IsAuthenticated)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        _isLoading = true;
+        _session = await CashSessionService.GetCashSessionDetailAsync(SessionId);
+        _isLoading = false;
+    }
+}

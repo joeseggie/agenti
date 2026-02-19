@@ -1,0 +1,123 @@
+@page "/"
+@inject IAuthService AuthService
+@inject IDashboardService DashboardService
+@inject NavigationManager Nav
+
+@if (!AuthService.CurrentUser.IsAuthenticated)
+{
+    <div class="redirect-message">Redirecting to login...</div>
+}
+else
+{
+    <div class="page-header">
+        <h2>Dashboard</h2>
+        <p class="welcome-text">Welcome, @AuthService.CurrentUser.FullName</p>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="loading-container">
+            <div class="spinner"></div>
+            <p>Loading dashboard...</p>
+        </div>
+    }
+    else if (_dashboard == null)
+    {
+        <div class="error-card">
+            <p>Unable to load dashboard. Please check your connection.</p>
+            <button class="btn-secondary" @onclick="LoadDashboardAsync">Retry</button>
+        </div>
+    }
+    else
+    {
+        <!-- Session Status -->
+        <div class="status-card" style="border-left-color: @_dashboard.SessionStatus.StatusColor">
+            <div class="status-card-header">
+                <span class="status-label">Session Status</span>
+                <span class="status-badge" style="background-color: @_dashboard.SessionStatus.StatusColor">
+                    @_dashboard.SessionStatus.StatusDisplay
+                </span>
+            </div>
+            @if (_dashboard.SessionStatus.HasActiveSession)
+            {
+                <p class="session-date">@_dashboard.SessionStatus.SessionDate?.ToString("dd MMM yyyy")</p>
+            }
+        </div>
+
+        <!-- Total Balance -->
+        <div class="balance-card">
+            <p class="balance-label">Total Balance</p>
+            <p class="balance-amount">@_dashboard.Currency @_dashboard.TotalBalance.ToString("N2")</p>
+        </div>
+
+        <!-- Wallet Balances -->
+        @if (_dashboard.HasWallets)
+        {
+            <div class="section-header">
+                <h3>Wallets</h3>
+            </div>
+
+            @foreach (var wallet in _dashboard.Wallets)
+            {
+                <div class="wallet-card">
+                    <div class="wallet-icon">@wallet.WalletTypeIcon</div>
+                    <div class="wallet-info">
+                        <p class="wallet-name">@wallet.WalletName</p>
+                        <p class="wallet-type">@wallet.WalletTypeName</p>
+                    </div>
+                    <div class="wallet-balance">
+                        <p class="balance-text">@wallet.Currency @wallet.Balance.ToString("N2")</p>
+                    </div>
+                </div>
+            }
+        }
+        else
+        {
+            <div class="empty-state">
+                <p>No wallets assigned. Contact your administrator.</p>
+            </div>
+        }
+
+        <!-- Quick Actions -->
+        <div class="section-header">
+            <h3>Quick Actions</h3>
+        </div>
+        <div class="quick-actions">
+            <button class="action-btn" @onclick='() => Nav.NavigateTo("/cash-count/opening")'>
+                <span class="action-icon">📋</span>
+                <span>Opening Count</span>
+            </button>
+            <button class="action-btn" @onclick='() => Nav.NavigateTo("/cash-count/closing")'>
+                <span class="action-icon">✅</span>
+                <span>Closing Count</span>
+            </button>
+            <button class="action-btn" @onclick='() => Nav.NavigateTo("/cash-sessions")'>
+                <span class="action-icon">📅</span>
+                <span>Sessions</span>
+            </button>
+        </div>
+    }
+}
+
+@code {
+    private DashboardViewModel? _dashboard;
+    private bool _isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthService.CurrentUser.IsAuthenticated)
+        {
+            Nav.NavigateTo("/login");
+            return;
+        }
+
+        await LoadDashboardAsync();
+    }
+
+    private async Task LoadDashboardAsync()
+    {
+        _isLoading = true;
+        _dashboard = await DashboardService.GetDashboardAsync();
+        _isLoading = false;
+    }
+}
