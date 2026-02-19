@@ -1,6 +1,7 @@
 using EastSeat.Agenti.Web.Api;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Dashboard;
+using EastSeat.Agenti.Shared.Domain.Enums;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -83,7 +84,7 @@ public class MobileDashboardControllerTests
             SessionStatus = new SessionStatusDto
             {
                 HasActiveSession = true,
-                Status = EastSeat.Agenti.Shared.Domain.Enums.CashSessionStatus.Open
+                Status = CashSessionStatus.Open
             }
         };
 

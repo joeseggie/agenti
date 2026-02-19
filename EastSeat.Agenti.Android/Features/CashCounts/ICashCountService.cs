@@ -11,7 +11,7 @@ public interface ICashCountService
     Task<CurrentSessionDto?> GetCurrentSessionAsync();
 
     /// <summary>
-    /// Initialises the cash count form for an opening or closing count.
+    /// Initializes the cash count form for an opening or closing count.
     /// </summary>
     Task<CashCountFormModel?> InitializeCashCountFormAsync(bool isOpening);
 
