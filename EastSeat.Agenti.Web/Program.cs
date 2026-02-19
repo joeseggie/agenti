@@ -18,8 +18,13 @@ using EastSeat.Agenti.Web.Features.Vaults;
 using EastSeat.Agenti.Web.Features.Users;
 using EastSeat.Agenti.Web.Features.Setup;
 using EastSeat.Agenti.Web.Features.Theme;
+using EastSeat.Agenti.Web.Features.Api;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using MudBlazor.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -50,12 +55,27 @@ builder.Services.AddScoped<IdentityUserAccessor>();
 builder.Services.AddScoped<IdentityRedirectManager>();
 builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
 
-builder.Services.AddAuthentication(options =>
+var authBuilder = builder.Services.AddAuthentication(options =>
     {
         options.DefaultScheme = IdentityConstants.ApplicationScheme;
         options.DefaultSignInScheme = IdentityConstants.ExternalScheme;
-    })
-    .AddIdentityCookies();
+    });
+
+authBuilder.AddIdentityCookies();
+authBuilder.AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
+{
+    var jwtKey = builder.Configuration["Jwt:Key"] ?? string.Empty;
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "EastSeat.Agenti",
+        ValidAudience = builder.Configuration["Jwt:Audience"] ?? "EastSeat.Agenti.Android",
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+    };
+});
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
@@ -125,14 +145,65 @@ builder.Services.AddHostedService<UserAuditCleanupService>();
 
 // Add authorization policies
 builder.Services.AddAuthorizationBuilder()
-    .AddPolicy("VaultView", policy => policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString()))
-    .AddPolicy("VaultAccess", policy => policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString()))
-    .AddPolicy("VaultAdjust", policy => policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString()))
-    .AddPolicy("VaultApprove", policy => policy.RequireRole(UserRole.Admin.ToString()))
+    .AddPolicy("VaultView", policy =>
+        policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString())
+              .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme))
+    .AddPolicy("VaultAccess", policy =>
+        policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString())
+              .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme))
+    .AddPolicy("VaultAdjust", policy =>
+        policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString())
+              .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme))
+    .AddPolicy("VaultApprove", policy =>
+        policy.RequireRole(UserRole.Admin.ToString())
+              .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme))
     // Admin-only user management access
-    .AddPolicy("UserManagement", policy => policy.RequireRole(UserRole.Admin.ToString()));
+    .AddPolicy("UserManagement", policy =>
+        policy.RequireRole(UserRole.Admin.ToString())
+              .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme));
+
+// Add REST API support
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Agenti API",
+        Version = "v1",
+        Description = "REST API for the Agenti banking ERP system, supporting the Android mobile application."
+    });
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Enter your JWT bearer token."
+    });
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+            },
+            []
+        }
+    });
+});
 
 var app = builder.Build();
+
+// Validate JWT key is configured (required for the Android API)
+var jwtKey = app.Configuration["Jwt:Key"];
+if (string.IsNullOrWhiteSpace(jwtKey))
+{
+    var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
+    startupLogger.LogWarning(
+        "JWT key is not configured. The REST API (/api/*) will not function. " +
+        "Set the 'Jwt__Key' environment variable or configure it in appsettings.");
+}
 
 // Apply pending migrations on startup (for production deployments)
 using (var scope = app.Services.CreateScope())
@@ -184,6 +255,12 @@ using (var scope = app.Services.CreateScope())
 if (app.Environment.IsDevelopment())
 {
     app.UseMigrationsEndPoint();
+    app.UseSwagger();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Agenti API v1");
+        options.RoutePrefix = "api/docs";
+    });
 }
 else
 {
@@ -202,6 +279,37 @@ app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
 
+// Map REST API endpoints (for Android app)
+var apiGroup = app.MapGroup("/api");
+
+apiGroup.MapGroup("/auth")
+    .WithTags("Authentication")
+    .MapAuthApi();
+
+apiGroup.MapGroup("/dashboard")
+    .WithTags("Dashboard")
+    .MapDashboardApi();
+
+apiGroup.MapGroup("/agents")
+    .WithTags("Agents")
+    .MapAgentsApi();
+
+apiGroup.MapGroup("/cash-counts")
+    .WithTags("Cash Counts")
+    .MapCashCountsApi();
+
+apiGroup.MapGroup("/cash-sessions")
+    .WithTags("Cash Sessions")
+    .MapCashSessionsApi();
+
+apiGroup.MapGroup("/vault")
+    .WithTags("Vault")
+    .MapVaultApi();
+
+apiGroup.MapGroup("/wallet-types")
+    .WithTags("Wallet Types")
+    .MapWalletTypesApi();
+
 // Redirect to setup page if setup is incomplete
 // Use a separate scope to avoid DbContext concurrency with Blazor components
 var setupCompleteFlag = false;
@@ -216,6 +324,7 @@ app.Use(async (context, next) =>
                        path.StartsWith("/js", StringComparison.OrdinalIgnoreCase) ||
                        path.StartsWith("/lib", StringComparison.OrdinalIgnoreCase) ||
                        path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase);
+    var isApiPath = path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
 
     if (!setupCompleteFlag)
     {
@@ -224,7 +333,7 @@ app.Use(async (context, next) =>
         setupCompleteFlag = await setupService.IsSetupCompleteAsync();
     }
 
-    if (!setupCompleteFlag && !isSetupPage && !isStaticAsset)
+    if (!setupCompleteFlag && !isSetupPage && !isStaticAsset && !isApiPath)
     {
         var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
         logger.LogInformation("Setup incomplete. Redirecting to setup page from {Path}", path);

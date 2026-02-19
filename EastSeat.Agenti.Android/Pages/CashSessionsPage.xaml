@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:models="clr-namespace:EastSeat.Agenti.Android.Models"
+             x:Class="EastSeat.Agenti.Android.Pages.CashSessionsPage"
+             Title="Cash Sessions">
+
+    <RefreshView x:Name="RefreshView" Refreshing="OnRefreshing">
+        <Grid RowDefinitions="*">
+
+            <CollectionView x:Name="SessionsCollectionView"
+                            SelectionMode="None">
+                <CollectionView.EmptyView>
+                    <Label Text="No sessions found."
+                           TextColor="{AppThemeBinding Light=#9E9E9E, Dark=#757575}"
+                           FontSize="16"
+                           HorizontalOptions="Center"
+                           VerticalOptions="Center"
+                           Margin="32" />
+                </CollectionView.EmptyView>
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="models:CashSessionListItem">
+                        <Border StrokeThickness="1"
+                                Stroke="{AppThemeBinding Light=#E0E0E0, Dark=#424242}"
+                                BackgroundColor="{AppThemeBinding Light=White, Dark=#1E1E1E}"
+                                StrokeShape="RoundRectangle 8"
+                                Padding="16"
+                                Margin="8,4">
+                            <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+
+                                <!-- Agent name and session date -->
+                                <Label Grid.Row="0" Grid.Column="0"
+                                       Text="{Binding AgentName}"
+                                       FontSize="16"
+                                       FontAttributes="Bold"
+                                       TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}" />
+
+                                <Label Grid.Row="0" Grid.Column="1"
+                                       Text="{Binding Status}"
+                                       FontSize="13"
+                                       FontAttributes="Bold"
+                                       TextColor="#1976D2"
+                                       HorizontalOptions="End" />
+
+                                <Label Grid.Row="1" Grid.Column="0"
+                                       Text="{Binding AgentCode}"
+                                       FontSize="13"
+                                       TextColor="#1976D2" />
+
+                                <Label Grid.Row="1" Grid.Column="1"
+                                       Text="{Binding OpeningTotal, StringFormat='UGX {0:N0}'}"
+                                       FontSize="14"
+                                       TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}"
+                                       HorizontalOptions="End" />
+
+                                <Label Grid.Row="2" Grid.ColumnSpan="2"
+                                       Text="{Binding OpenedAt, StringFormat='{0:MMM dd, yyyy}'}"
+                                       FontSize="12"
+                                       TextColor="{AppThemeBinding Light=#9E9E9E, Dark=#757575}"
+                                       Margin="0,4,0,0" />
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+
+            <!-- Loading overlay -->
+            <ActivityIndicator x:Name="LoadingIndicator"
+                               Color="#1976D2"
+                               IsRunning="False"
+                               IsVisible="False"
+                               HorizontalOptions="Center"
+                               VerticalOptions="Center" />
+        </Grid>
+    </RefreshView>
+</ContentPage>

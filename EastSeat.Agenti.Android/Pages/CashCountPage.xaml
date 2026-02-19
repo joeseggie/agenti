@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:models="clr-namespace:EastSeat.Agenti.Android.Models"
+             x:Class="EastSeat.Agenti.Android.Pages.CashCountPage"
+             Title="Cash Count">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="16" Spacing="12">
+
+            <!-- Loading indicator -->
+            <ActivityIndicator x:Name="LoadingIndicator"
+                               Color="#1976D2"
+                               IsRunning="False"
+                               IsVisible="False" />
+
+            <!-- Error message -->
+            <Label x:Name="ErrorLabel"
+                   TextColor="#D32F2F"
+                   FontSize="14"
+                   IsVisible="False" />
+
+            <!-- Session status card -->
+            <Border StrokeThickness="1"
+                    Stroke="{AppThemeBinding Light=#E0E0E0, Dark=#424242}"
+                    BackgroundColor="{AppThemeBinding Light=White, Dark=#1E1E1E}"
+                    StrokeShape="RoundRectangle 12"
+                    Padding="16">
+                <VerticalStackLayout>
+                    <Label Text="Current Session"
+                           FontSize="14"
+                           TextColor="{AppThemeBinding Light=#757575, Dark=#BDBDBD}" />
+                    <Label x:Name="SessionStatusLabel"
+                           Text="Loading..."
+                           FontSize="18"
+                           FontAttributes="Bold"
+                           TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}" />
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- Action buttons -->
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                <Button Grid.Column="0"
+                        x:Name="OpeningCountButton"
+                        Text="Opening Count"
+                        BackgroundColor="#43A047"
+                        TextColor="White"
+                        CornerRadius="8"
+                        HeightRequest="52"
+                        FontAttributes="Bold"
+                        IsEnabled="False"
+                        Clicked="OnOpeningCountClicked" />
+                <Button Grid.Column="1"
+                        x:Name="ClosingCountButton"
+                        Text="Closing Count"
+                        BackgroundColor="#E53935"
+                        TextColor="White"
+                        CornerRadius="8"
+                        HeightRequest="52"
+                        FontAttributes="Bold"
+                        IsEnabled="False"
+                        Clicked="OnClosingCountClicked" />
+            </Grid>
+
+            <!-- Count title -->
+            <Label x:Name="CountTitleLabel"
+                   Text="Cash Count Form"
+                   FontSize="18"
+                   FontAttributes="Bold"
+                   TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}"
+                   IsVisible="False"
+                   Margin="0,8,0,0" />
+
+            <!-- Wallet entries list -->
+            <CollectionView x:Name="WalletEntriesView"
+                            IsVisible="False"
+                            SelectionMode="None">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="models:WalletCountEntry">
+                        <Border StrokeThickness="1"
+                                Stroke="{AppThemeBinding Light=#E0E0E0, Dark=#424242}"
+                                BackgroundColor="{AppThemeBinding Light=White, Dark=#1E1E1E}"
+                                StrokeShape="RoundRectangle 8"
+                                Padding="16"
+                                Margin="0,4">
+                            <VerticalStackLayout Spacing="8">
+                                <Label Text="{Binding WalletName}"
+                                       FontSize="16"
+                                       FontAttributes="Bold"
+                                       TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}" />
+                                <Label Text="{Binding WalletTypeName}"
+                                       FontSize="13"
+                                       TextColor="{AppThemeBinding Light=#757575, Dark=#BDBDBD}" />
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                                    <VerticalStackLayout Grid.Column="0">
+                                        <Label Text="Expected"
+                                               FontSize="12"
+                                               TextColor="{AppThemeBinding Light=#9E9E9E, Dark=#757575}" />
+                                        <Label Text="{Binding ExpectedBalance, StringFormat='{0:N0}'}"
+                                               FontSize="15"
+                                               TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}" />
+                                    </VerticalStackLayout>
+                                    <VerticalStackLayout Grid.Column="1">
+                                        <Label Text="Counted"
+                                               FontSize="12"
+                                               TextColor="{AppThemeBinding Light=#9E9E9E, Dark=#757575}" />
+                                        <Entry Text="{Binding CountedAmount}"
+                                               Keyboard="Numeric"
+                                               FontSize="15" />
+                                    </VerticalStackLayout>
+                                </Grid>
+                            </VerticalStackLayout>
+                        </Border>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+
+            <!-- Submit button -->
+            <Button x:Name="SubmitButton"
+                    Text="Submit Count"
+                    BackgroundColor="#1976D2"
+                    TextColor="White"
+                    CornerRadius="8"
+                    HeightRequest="52"
+                    FontAttributes="Bold"
+                    IsVisible="False"
+                    Clicked="OnSubmitClicked"
+                    Margin="0,8" />
+
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>
