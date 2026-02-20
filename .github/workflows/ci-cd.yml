@@ -32,6 +32,9 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Install MAUI Android workload
+        run: dotnet workload install maui-android
+
       - name: Restore dependencies
         run: dotnet restore
 
@@ -63,7 +66,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore tests/EastSeat.Agenti.UnitTests/EastSeat.Agenti.UnitTests.csproj
 
       - name: Run unit tests
         run: dotnet test tests/EastSeat.Agenti.UnitTests/EastSeat.Agenti.UnitTests.csproj --configuration Release --logger trx --results-directory TestResults --collect:"XPlat Code Coverage" --settings coverlet.runsettings
@@ -106,7 +109,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore tests/EastSeat.Agenti.IntegrationTests/EastSeat.Agenti.IntegrationTests.csproj
 
       - name: Run integration tests
         run: dotnet test tests/EastSeat.Agenti.IntegrationTests/EastSeat.Agenti.IntegrationTests.csproj --configuration Release --logger trx --results-directory TestResults
@@ -151,7 +154,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore tests/EastSeat.Agenti.E2ETests/EastSeat.Agenti.E2ETests.csproj
 
       - name: Run E2E tests
         run: dotnet test tests/EastSeat.Agenti.E2ETests/EastSeat.Agenti.E2ETests.csproj --configuration Release --logger trx --results-directory TestResults
