@@ -29,17 +29,23 @@ using Microsoft.OpenApi.Models;
 var builder = WebApplication.CreateBuilder(args);
 
 // Configure Serilog
-Log.Logger = new LoggerConfiguration()
+var serilogConfig = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Information)
     .Enrich.FromLogContext()
     .Enrich.WithProperty("Application", "Agenti")
-    .WriteTo.Console()
-    .WriteTo.ApplicationInsights(
-        builder.Configuration["ApplicationInsights:ConnectionString"] ?? string.Empty,
-        TelemetryConverter.Traces)
-    .CreateLogger();
+    .WriteTo.Console();
+
+var serilogAiConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"];
+if (!string.IsNullOrEmpty(serilogAiConnectionString))
+{
+    serilogConfig = serilogConfig.WriteTo.ApplicationInsights(
+        serilogAiConnectionString,
+        TelemetryConverter.Traces);
+}
+
+Log.Logger = serilogConfig.CreateLogger();
 
 builder.Host.UseSerilog();
 
