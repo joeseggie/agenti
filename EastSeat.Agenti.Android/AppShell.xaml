@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Shell
+    x:Class="EastSeat.Agenti.Android.AppShell"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:pages="clr-namespace:EastSeat.Agenti.Android.Pages"
+    Title="Agenti"
+    FlyoutBehavior="Flyout"
+    Shell.BackgroundColor="#1976D2"
+    Shell.ForegroundColor="White"
+    Shell.TitleColor="White">
+
+    <!-- Dashboard Tab -->
+    <TabBar>
+        <Tab Title="Dashboard" Icon="dashboard.png">
+            <ShellContent
+                Route="dashboard"
+                ContentTemplate="{DataTemplate pages:DashboardPage}" />
+        </Tab>
+
+        <Tab Title="Agents" Icon="agents.png">
+            <ShellContent
+                Route="agents"
+                ContentTemplate="{DataTemplate pages:AgentsPage}" />
+        </Tab>
+
+        <Tab Title="Sessions" Icon="sessions.png">
+            <ShellContent
+                Route="sessions"
+                ContentTemplate="{DataTemplate pages:CashSessionsPage}" />
+        </Tab>
+
+        <Tab Title="Cash Count" Icon="cashcount.png">
+            <ShellContent
+                Route="cashcount"
+                ContentTemplate="{DataTemplate pages:CashCountPage}" />
+        </Tab>
+    </TabBar>
+
+</Shell>
