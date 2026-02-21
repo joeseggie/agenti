@@ -392,6 +392,7 @@ Expired 3 pending vault transactions.
 
 ## Additional Resources
 
+- [AZURE_LOGS_QUERYING.md](AZURE_LOGS_QUERYING.md) — Detailed guide for accessing, viewing, and querying Agenti logs in the Azure Portal (KQL query library)
 - [Application Insights Documentation](https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview)
 - [Serilog Sinks for Application Insights](https://github.com/serilog-contrib/serilog-sinks-applicationinsights)
 - [Azure Container Apps Monitoring](https://learn.microsoft.com/azure/container-apps/observability)
