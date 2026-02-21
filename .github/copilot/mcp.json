@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "azd": {
+      "type": "stdio",
+      "command": "azd",
+      "args": ["mcp"]
+    }
+  }
+}
