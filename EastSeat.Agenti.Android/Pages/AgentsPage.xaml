@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:models="clr-namespace:EastSeat.Agenti.Android.Models"
+             x:Class="EastSeat.Agenti.Android.Pages.AgentsPage"
+             Title="Agents">
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- Search bar -->
+        <SearchBar x:Name="SearchBar"
+                   Grid.Row="0"
+                   Placeholder="Search agents..."
+                   TextChanged="OnSearchChanged"
+                   Margin="8" />
+
+        <RefreshView Grid.Row="1" x:Name="RefreshView" Refreshing="OnRefreshing">
+            <CollectionView x:Name="AgentsCollectionView"
+                            SelectionMode="Single"
+                            SelectionChanged="OnAgentSelected">
+                <CollectionView.EmptyView>
+                    <VerticalStackLayout HorizontalOptions="Center"
+                                         VerticalOptions="Center"
+                                         Margin="32">
+                        <Label Text="No agents found."
+                               TextColor="{AppThemeBinding Light=#9E9E9E, Dark=#757575}"
+                               FontSize="16"
+                               HorizontalOptions="Center" />
+                    </VerticalStackLayout>
+                </CollectionView.EmptyView>
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="models:AgentListItem">
+                        <Border StrokeThickness="1"
+                                Stroke="{AppThemeBinding Light=#E0E0E0, Dark=#424242}"
+                                BackgroundColor="{AppThemeBinding Light=White, Dark=#1E1E1E}"
+                                StrokeShape="RoundRectangle 8"
+                                Padding="16"
+                                Margin="8,4">
+                            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                                <!-- Agent name and code -->
+                                <VerticalStackLayout Grid.Column="0" Grid.RowSpan="2">
+                                    <Label Text="{Binding FullName}"
+                                           FontSize="16"
+                                           FontAttributes="Bold"
+                                           TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}" />
+                                    <Label Text="{Binding Code}"
+                                           FontSize="13"
+                                           TextColor="#1976D2" />
+                                    <Label Text="{Binding Email}"
+                                           FontSize="13"
+                                           TextColor="{AppThemeBinding Light=#757575, Dark=#BDBDBD}" />
+                                </VerticalStackLayout>
+
+                                <!-- Balance and wallet count -->
+                                <VerticalStackLayout Grid.Column="1"
+                                                     Grid.Row="0"
+                                                     HorizontalOptions="End">
+                                    <Label Text="{Binding TotalBalance, StringFormat='UGX {0:N0}'}"
+                                           FontSize="16"
+                                           FontAttributes="Bold"
+                                           TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}"
+                                           HorizontalOptions="End" />
+                                    <Label Text="{Binding WalletCount, StringFormat='{0} wallet(s)'}"
+                                           FontSize="12"
+                                           TextColor="{AppThemeBinding Light=#9E9E9E, Dark=#757575}"
+                                           HorizontalOptions="End" />
+                                </VerticalStackLayout>
+
+                                <!-- Active status badge -->
+                                <Border Grid.Column="1"
+                                        Grid.Row="1"
+                                        HorizontalOptions="End"
+                                        VerticalOptions="End"
+                                        BackgroundColor="{Binding IsActive, Converter={StaticResource BoolToColorConverter}}"
+                                        StrokeThickness="0"
+                                        StrokeShape="RoundRectangle 12"
+                                        Padding="8,4">
+                                    <Label Text="{Binding IsActive, Converter={StaticResource BoolToStatusConverter}}"
+                                           TextColor="White"
+                                           FontSize="11"
+                                           FontAttributes="Bold" />
+                                </Border>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+        </RefreshView>
+
+        <!-- Loading overlay -->
+        <ActivityIndicator x:Name="LoadingIndicator"
+                           Grid.RowSpan="2"
+                           Color="#1976D2"
+                           IsRunning="False"
+                           IsVisible="False"
+                           HorizontalOptions="Center"
+                           VerticalOptions="Center" />
+
+    </Grid>
+</ContentPage>

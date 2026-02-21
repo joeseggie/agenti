@@ -92,12 +92,14 @@ package-lock.json
 
 ### Configuration and Secrets ###
 # Sensitive Configuration Files
-appsettings.json
 appsettings.*.json
 *.env
 *.pem
 *.cert
 *.key
+
+# Allow the base appsettings.json (no secrets - empty placeholders only)
+!appsettings.json
 
 ### System and OS Files ###
 # Windows
@@ -120,6 +122,12 @@ Dockerfile.local
 .terraform/
 *.tfstate
 *.tfstate.*
+
+### MAUI / Android Build Artifacts ###
+*.aab
+*.apk
+EastSeat.Agenti.Android/bin/
+EastSeat.Agenti.Android/obj/
 
 ### Miscellaneous ###
 # Python (if used in scripts or tools)

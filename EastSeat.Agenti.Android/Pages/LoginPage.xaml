@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="EastSeat.Agenti.Android.Pages.LoginPage"
+             Title="Agenti – Sign In"
+             BackgroundColor="{AppThemeBinding Light=#F5F5F5, Dark=#121212}"
+             Shell.NavBarIsVisible="False">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="32,64,32,32" Spacing="0">
+
+            <!-- Logo / App name -->
+            <Label Text="Agenti"
+                   FontSize="40"
+                   FontAttributes="Bold"
+                   TextColor="#1976D2"
+                   HorizontalOptions="Center"
+                   Margin="0,0,0,8" />
+
+            <Label Text="Banking Agency ERP"
+                   FontSize="16"
+                   TextColor="{AppThemeBinding Light=#757575, Dark=#BDBDBD}"
+                   HorizontalOptions="Center"
+                   Margin="0,0,0,48" />
+
+            <!-- Email field -->
+            <Label Text="Email Address"
+                   FontSize="14"
+                   FontAttributes="Bold"
+                   TextColor="{AppThemeBinding Light=#424242, Dark=#E0E0E0}"
+                   Margin="0,0,0,6" />
+
+            <Border StrokeThickness="1"
+                    Stroke="{AppThemeBinding Light=#BDBDBD, Dark=#424242}"
+                    BackgroundColor="{AppThemeBinding Light=White, Dark=#1E1E1E}"
+                    StrokeShape="RoundRectangle 8"
+                    Padding="12,0"
+                    Margin="0,0,0,16">
+                <Entry x:Name="EmailEntry"
+                       Placeholder="you@example.com"
+                       Keyboard="Email"
+                       ReturnType="Next"
+                       FontSize="16" />
+            </Border>
+
+            <!-- Password field -->
+            <Label Text="Password"
+                   FontSize="14"
+                   FontAttributes="Bold"
+                   TextColor="{AppThemeBinding Light=#424242, Dark=#E0E0E0}"
+                   Margin="0,0,0,6" />
+
+            <Border StrokeThickness="1"
+                    Stroke="{AppThemeBinding Light=#BDBDBD, Dark=#424242}"
+                    BackgroundColor="{AppThemeBinding Light=White, Dark=#1E1E1E}"
+                    StrokeShape="RoundRectangle 8"
+                    Padding="12,0"
+                    Margin="0,0,0,8">
+                <Entry x:Name="PasswordEntry"
+                       Placeholder="Password"
+                       IsPassword="True"
+                       ReturnType="Done"
+                       FontSize="16"
+                       ReturnCommand="{Binding LoginCommand}" />
+            </Border>
+
+            <!-- Error message -->
+            <Label x:Name="ErrorLabel"
+                   TextColor="#D32F2F"
+                   FontSize="14"
+                   IsVisible="False"
+                   Margin="0,0,0,16" />
+
+            <!-- Sign-in button -->
+            <Button x:Name="LoginButton"
+                    Text="Sign In"
+                    BackgroundColor="#1976D2"
+                    TextColor="White"
+                    CornerRadius="8"
+                    FontSize="16"
+                    FontAttributes="Bold"
+                    HeightRequest="52"
+                    Margin="0,16,0,0"
+                    Clicked="OnLoginClicked" />
+
+            <!-- Loading indicator -->
+            <ActivityIndicator x:Name="LoadingIndicator"
+                                Color="#1976D2"
+                                IsRunning="False"
+                                IsVisible="False"
+                                Margin="0,16,0,0" />
+
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

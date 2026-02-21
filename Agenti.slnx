@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="EastSeat.Agenti.Web\EastSeat.Agenti.Web.csproj" Type="Classic C#" />
+  <Project Path="EastSeat.Agenti.Android\EastSeat.Agenti.Android.csproj" Type="Classic C#" />
   <Project Path="tests\EastSeat.Agenti.UnitTests\EastSeat.Agenti.UnitTests.csproj" Type="Classic C#" />
   <Project Path="tests\EastSeat.Agenti.IntegrationTests\EastSeat.Agenti.IntegrationTests.csproj" Type="Classic C#" />
   <Project Path="tests\EastSeat.Agenti.E2ETests\EastSeat.Agenti.E2ETests.csproj" Type="Classic C#" />
