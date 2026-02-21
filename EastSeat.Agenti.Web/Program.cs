@@ -242,9 +242,24 @@ using (var scope = app.Services.CreateScope())
 
         if (!isSetupComplete)
         {
-            logger.LogInformation("Setup is required. Cleaning up database for fresh start...");
-            await setupService.CleanupDatabaseAsync();
-            logger.LogInformation("Database cleanup completed. Setup flow will be triggered.");
+            // Only clean up if this is truly a fresh database (no data at all).
+            // Check that no users exist to confirm it's not a transient failure.
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var hasAnyUsers = await db.Users.AnyAsync();
+
+            if (hasAnyUsers)
+            {
+                logger.LogWarning(
+                    "Setup appears incomplete but users exist in the database. " +
+                    "Skipping cleanup to protect existing data. " +
+                    "Manually verify setup status if needed.");
+            }
+            else
+            {
+                logger.LogInformation("Setup is required on a fresh database. Cleaning up for fresh start...");
+                await setupService.CleanupDatabaseAsync();
+                logger.LogInformation("Database cleanup completed. Setup flow will be triggered.");
+            }
         }
         else
         {
@@ -253,7 +268,7 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Error during startup setup check.");
+        logger.LogError(ex, "Error during startup setup check. Continuing without cleanup to protect data.");
     }
 }
 
