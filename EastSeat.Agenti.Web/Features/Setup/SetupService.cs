@@ -54,8 +54,8 @@ public class SetupService : ISetupService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error checking setup status.");
-            return false;
+            _logger.LogError(ex, "Error checking setup status. Assuming setup is complete to protect existing data.");
+            return true;
         }
     }
 
