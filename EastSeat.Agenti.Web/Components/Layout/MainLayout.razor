@@ -21,7 +21,11 @@
                     Color="Color.Inherit"
                     OnClick="@ToggleTheme"
                     Title="@(_isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode")" />
-                <MudText Class="mr-4">@context.User.Identity?.Name</MudText>
+                <MudButton Href="/profile" Variant="Variant.Text" Color="Color.Inherit"
+                    StartIcon="@Icons.Material.Filled.Person" Class="mr-4" Style="text-transform:none"
+                    Title="View my profile">
+                    @context.User.Identity?.Name
+                </MudButton>
                 <form action="Account/Logout" method="post">
                     <AntiforgeryToken />
                     <input type="hidden" name="ReturnUrl" value="/" />

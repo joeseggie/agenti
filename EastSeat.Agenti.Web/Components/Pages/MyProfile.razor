@@ -1,0 +1,85 @@
+@page "/profile"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Web.Features.Users
+@attribute [Authorize]
+@inject IUserService UserService
+@inject AuthenticationStateProvider Auth
+
+<PageTitle>My Profile</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <MudText Typo="Typo.h5" Class="mb-4">My Profile</MudText>
+
+    @if (_loading)
+    {
+        <MudProgressCircular Indeterminate="true" />
+    }
+    else if (_user is null)
+    {
+        <MudAlert Severity="Severity.Error">Unable to load profile.</MudAlert>
+    }
+    else
+    {
+        <MudCard>
+            <MudCardContent>
+                <MudGrid>
+                    <MudItem xs="12" md="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">First Name</MudText>
+                        <MudText Typo="Typo.body1">@_user.FirstName</MudText>
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Last Name</MudText>
+                        <MudText Typo="Typo.body1">@_user.LastName</MudText>
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Email</MudText>
+                        <MudText Typo="Typo.body1">@_user.Email</MudText>
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Phone</MudText>
+                        <MudText Typo="Typo.body1">@(_user.PhoneNumber ?? "—")</MudText>
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Role</MudText>
+                        <MudText Typo="Typo.body1">@_user.Role</MudText>
+                    </MudItem>
+                    <MudItem xs="12" md="6">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Status</MudText>
+                        <MudChip T="string" Size="Size.Small"
+                                 Color="@(_user.IsActive ? Color.Success : Color.Error)">
+                            @(_user.IsActive ? "Active" : "Inactive")
+                        </MudChip>
+                    </MudItem>
+                </MudGrid>
+            </MudCardContent>
+        </MudCard>
+    }
+</MudContainer>
+
+@code {
+    private UserDetailDto? _user;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var authState = await Auth.GetAuthenticationStateAsync();
+            var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+            if (!string.IsNullOrEmpty(userId))
+            {
+                _user = await UserService.GetByIdAsync(userId);
+            }
+        }
+        catch
+        {
+            // Leave _user as null so the "Unable to load profile." message is shown.
+            _user = null;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}
