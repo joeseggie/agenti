@@ -70,7 +70,7 @@ var authBuilder = builder.Services.AddAuthentication(options =>
 authBuilder.AddIdentityCookies();
 authBuilder.AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
 {
-    var jwtKey = builder.Configuration["Jwt:Key"] ?? string.Empty;
+    var jwtKey = builder.Configuration["Jwt:Key"];
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
@@ -79,7 +79,9 @@ authBuilder.AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
         ValidateIssuerSigningKey = true,
         ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "EastSeat.Agenti",
         ValidAudience = builder.Configuration["Jwt:Audience"] ?? "EastSeat.Agenti.Android",
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+        IssuerSigningKey = string.IsNullOrWhiteSpace(jwtKey)
+            ? null
+            : new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
     };
 });
 
