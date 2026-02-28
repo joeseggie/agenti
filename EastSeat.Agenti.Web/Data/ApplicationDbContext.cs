@@ -299,7 +299,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.UserId).IsRequired().HasMaxLength(450);
-            entity.Property(e => e.PerformedByUserId).IsRequired().HasMaxLength(450);
+            entity.Property(e => e.PerformedByUserId).IsRequired(false).HasMaxLength(450);
             entity.Property(e => e.Action)
                 .IsRequired()
                 .HasConversion<string>()

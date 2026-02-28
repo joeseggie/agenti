@@ -15,8 +15,8 @@ public class UserAuditLog
     public string? OldValue { get; set; }
     public string? NewValue { get; set; }
 
-    // Actor who performed the action
-    public string PerformedByUserId { get; set; } = string.Empty;
+    // Actor who performed the action (null for system-initiated actions)
+    public string? PerformedByUserId { get; set; }
     public ApplicationUser? PerformedByUser { get; set; }
 
     public DateTimeOffset PerformedAt { get; set; } = DateTimeOffset.UtcNow;

@@ -57,7 +57,7 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
             .FirstOrDefaultAsync(cancellationToken);
     }
 
-    public async Task<CreateUserResult> CreateUserAsync(CreateUserModel model, string performedByUserId, CancellationToken cancellationToken = default)
+    public async Task<CreateUserResult> CreateUserAsync(CreateUserModel model, string? performedByUserId, CancellationToken cancellationToken = default)
     {
         if (model is null) return CreateUserResult.Error("Invalid request");
 
@@ -157,7 +157,7 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         return token;
     }
 
-    public async Task<ServiceResult> UpdateProfileAsync(UserFormModel model, string performedByUserId, CancellationToken cancellationToken = default)
+    public async Task<ServiceResult> UpdateProfileAsync(UserFormModel model, string? performedByUserId, CancellationToken cancellationToken = default)
     {
         if (model is null) return new(false, "Invalid request");
 
@@ -174,7 +174,7 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         return new(true);
     }
 
-    public async Task<ServiceResult> ChangeRoleAsync(string userId, UserRole newRole, string performedByUserId, CancellationToken cancellationToken = default)
+    public async Task<ServiceResult> ChangeRoleAsync(string userId, UserRole newRole, string? performedByUserId, CancellationToken cancellationToken = default)
     {
         if (userId == performedByUserId)
             return new(false, "You cannot change your own role.");
@@ -233,7 +233,7 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         return new(true);
     }
 
-    public async Task<ServiceResult> DeactivateAsync(string userId, string performedByUserId, CancellationToken cancellationToken = default)
+    public async Task<ServiceResult> DeactivateAsync(string userId, string? performedByUserId, CancellationToken cancellationToken = default)
     {
         if (userId == performedByUserId)
             return new(false, "You cannot deactivate your own account.");
@@ -267,7 +267,7 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         return new(true);
     }
 
-    public async Task<ServiceResult> ReactivateAsync(string userId, string performedByUserId, CancellationToken cancellationToken = default)
+    public async Task<ServiceResult> ReactivateAsync(string userId, string? performedByUserId, CancellationToken cancellationToken = default)
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
         if (user is null) return new(false, "User not found");
@@ -290,7 +290,7 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         return new(true);
     }
 
-    public async Task<ServiceResult> DeleteAsync(string userId, string performedByUserId, CancellationToken cancellationToken = default)
+    public async Task<ServiceResult> DeleteAsync(string userId, string? performedByUserId, CancellationToken cancellationToken = default)
     {
         if (userId == performedByUserId)
             return new(false, "You cannot delete your own account.");
@@ -328,7 +328,7 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         return new(true);
     }
 
-    public async Task<ResetPasswordResult> ResetPasswordAsync(string userId, string performedByUserId, CancellationToken cancellationToken = default)
+    public async Task<ResetPasswordResult> ResetPasswordAsync(string userId, string? performedByUserId, CancellationToken cancellationToken = default)
     {
         if (userId == performedByUserId)
             return ResetPasswordResult.Error("You cannot reset your own password.");

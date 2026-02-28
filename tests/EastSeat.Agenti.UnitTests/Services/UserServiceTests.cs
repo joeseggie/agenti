@@ -273,6 +273,42 @@ public class UserServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateUserAsync_WithNullPerformedByUserId_CreatesUserWithNullAuditActor()
+    {
+        // Arrange
+        var branch = new Branch { Id = 1, Name = "Test Branch", CreatedAt = DateTimeOffset.UtcNow };
+        _dbContext.Branches.Add(branch);
+        await _dbContext.SaveChangesAsync();
+
+        _userManagerMock.Setup(x => x.FindByEmailAsync(It.IsAny<string>()))
+            .ReturnsAsync((ApplicationUser?)null);
+        _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
+            .ReturnsAsync(IdentityResult.Success);
+        _userManagerMock.Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
+            .ReturnsAsync(IdentityResult.Success);
+
+        var model = new CreateUserModel
+        {
+            Email = "new@test.com",
+            FirstName = "Test",
+            LastName = "User",
+            BranchId = 1
+        };
+
+        // Act - passing null performedByUserId (e.g., when authentication context is unavailable)
+        var result = await _userService.CreateUserAsync(model, null);
+
+        // Assert
+        result.Success.Should().BeTrue();
+
+        // Verify audit log was created with null PerformedByUserId (no FK violation)
+        var auditLog = await _dbContext.UserAuditLogs.FirstOrDefaultAsync();
+        auditLog.Should().NotBeNull();
+        auditLog!.Action.Should().Be(UserAuditAction.Created);
+        auditLog.PerformedByUserId.Should().BeNull();
+    }
+
+    [Fact]
     public async Task CreateUserAsync_WhenUserManagerFails_ReturnsError()
     {
         // Arrange
