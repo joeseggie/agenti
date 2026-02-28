@@ -62,14 +62,24 @@
 
     protected override async Task OnInitializedAsync()
     {
-        var authState = await Auth.GetAuthenticationStateAsync();
-        var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-
-        if (!string.IsNullOrEmpty(userId))
+        try
         {
-            _user = await UserService.GetByIdAsync(userId);
-        }
+            var authState = await Auth.GetAuthenticationStateAsync();
+            var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
-        _loading = false;
+            if (!string.IsNullOrEmpty(userId))
+            {
+                _user = await UserService.GetByIdAsync(userId);
+            }
+        }
+        catch
+        {
+            // Leave _user as null so the "Unable to load profile." message is shown.
+            _user = null;
+        }
+        finally
+        {
+            _loading = false;
+        }
     }
 }
