@@ -42,8 +42,8 @@ public static class AuthEndpoints
             if (string.IsNullOrWhiteSpace(jwtKey))
             {
                 logger.LogError("JWT key is not configured. Cannot generate authentication token.");
-                return Results.Problem(
-                    detail: "Authentication is temporarily unavailable. Please contact support.",
+                return Results.Json(
+                    ApiResponse<LoginResponse>.Fail("Authentication is temporarily unavailable. Please contact support."),
                     statusCode: StatusCodes.Status500InternalServerError);
             }
 
