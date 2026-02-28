@@ -364,10 +364,8 @@ public class SetupServiceTests : IDisposable
     public async Task CreateInitialAdminAndSetupAsync_CreatesUser_WithCorrectProperties()
     {
         // Arrange
-        _roleManagerMock.Setup(x => x.RoleExistsAsync("Admin"))
+        _roleManagerMock.Setup(x => x.RoleExistsAsync(It.IsAny<string>()))
             .ReturnsAsync(true);
-        _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
-            .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), "Admin"))
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.UpdateAsync(It.IsAny<ApplicationUser>()))
@@ -397,7 +395,7 @@ public class SetupServiceTests : IDisposable
     public async Task CreateInitialAdminAndSetupAsync_CreatesBranch_WithCorrectName()
     {
         // Arrange
-        _roleManagerMock.Setup(x => x.RoleExistsAsync("Admin"))
+        _roleManagerMock.Setup(x => x.RoleExistsAsync(It.IsAny<string>()))
             .ReturnsAsync(true);
         _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
             .ReturnsAsync(IdentityResult.Success);
@@ -419,7 +417,7 @@ public class SetupServiceTests : IDisposable
     public async Task CreateInitialAdminAndSetupAsync_AssignsAdminRole_ToUser()
     {
         // Arrange
-        _roleManagerMock.Setup(x => x.RoleExistsAsync("Admin"))
+        _roleManagerMock.Setup(x => x.RoleExistsAsync(It.IsAny<string>()))
             .ReturnsAsync(true);
         _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
             .ReturnsAsync(IdentityResult.Success);
@@ -442,7 +440,7 @@ public class SetupServiceTests : IDisposable
         _dbContext.AppConfigs.Add(new AppConfig { Key = "SetupComplete", Value = "false" });
         await _dbContext.SaveChangesAsync();
 
-        _roleManagerMock.Setup(x => x.RoleExistsAsync("Admin"))
+        _roleManagerMock.Setup(x => x.RoleExistsAsync(It.IsAny<string>()))
             .ReturnsAsync(true);
         _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
             .ReturnsAsync(IdentityResult.Success);
@@ -464,7 +462,7 @@ public class SetupServiceTests : IDisposable
     public async Task CreateInitialAdminAndSetupAsync_WhenUserCreationFails_ThrowsException()
     {
         // Arrange
-        _roleManagerMock.Setup(x => x.RoleExistsAsync("Admin"))
+        _roleManagerMock.Setup(x => x.RoleExistsAsync(It.IsAny<string>()))
             .ReturnsAsync(true);
         _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
             .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "User creation failed" }));
