@@ -80,8 +80,8 @@ public class AuthEndpointsTests
     [Fact]
     public void SymmetricSecurityKey_WithValidKey_DoesNotThrow()
     {
-        // Arrange
-        var validKey = "ThisIsASecureJwtKey32CharsLong!X";
+        // Arrange - 32-character key (256 bits for HS256)
+        var validKey = "ThisIsASecureJwtKey32CharsLong!!";
 
         // Act
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(validKey));
