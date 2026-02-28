@@ -30,7 +30,6 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                 type: "character varying(450)",
                 maxLength: 450,
                 nullable: false,
-                defaultValue: "",
                 oldClrType: typeof(string),
                 oldType: "character varying(450)",
                 oldMaxLength: 450,
