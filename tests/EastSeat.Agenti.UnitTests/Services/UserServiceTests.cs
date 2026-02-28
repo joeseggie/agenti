@@ -18,6 +18,7 @@ public class UserServiceTests : IDisposable
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly Mock<UserManager<ApplicationUser>> _userManagerMock;
+    private readonly Mock<RoleManager<IdentityRole>> _roleManagerMock;
     private readonly UserService _userService;
 
     public UserServiceTests()
@@ -34,7 +35,12 @@ public class UserServiceTests : IDisposable
         _userManagerMock = new Mock<UserManager<ApplicationUser>>(
             userStore.Object, null, null, null, null, null, null, null, null);
 
-        _userService = new UserService(_dbContext, _userManagerMock.Object);
+        // Mock RoleManager
+        var roleStore = new Mock<IRoleStore<IdentityRole>>();
+        _roleManagerMock = new Mock<RoleManager<IdentityRole>>(
+            roleStore.Object, null, null, null, null);
+
+        _userService = new UserService(_dbContext, _userManagerMock.Object, _roleManagerMock.Object);
     }
 
     public void Dispose()
@@ -197,7 +203,8 @@ public class UserServiceTests : IDisposable
             Email = "existing@test.com",
             FirstName = "Test",
             LastName = "User",
-            BranchId = 1
+            BranchId = 1,
+            Role = UserRole.Agent
         };
 
         // Act
@@ -220,7 +227,8 @@ public class UserServiceTests : IDisposable
             Email = "new@test.com",
             FirstName = "Test",
             LastName = "User",
-            BranchId = 999 // Non-existent branch
+            BranchId = 999, // Non-existent branch
+            Role = UserRole.Agent
         };
 
         // Act
@@ -245,6 +253,8 @@ public class UserServiceTests : IDisposable
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
             .ReturnsAsync(IdentityResult.Success);
+        _roleManagerMock.Setup(x => x.RoleExistsAsync("Agent"))
+            .ReturnsAsync(true);
 
         var model = new CreateUserModel
         {
@@ -252,7 +262,8 @@ public class UserServiceTests : IDisposable
             FirstName = "Test",
             LastName = "User",
             PhoneNumber = "1234567890",
-            BranchId = 1
+            BranchId = 1,
+            Role = UserRole.Agent
         };
 
         // Act
@@ -273,6 +284,81 @@ public class UserServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateUserAsync_WithAdminRole_CreatesUserWithAdminRole()
+    {
+        // Arrange
+        var branch = new Branch { Id = 1, Name = "Test Branch", CreatedAt = DateTimeOffset.UtcNow };
+        _dbContext.Branches.Add(branch);
+        await _dbContext.SaveChangesAsync();
+
+        _userManagerMock.Setup(x => x.FindByEmailAsync(It.IsAny<string>()))
+            .ReturnsAsync((ApplicationUser?)null);
+        _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
+            .ReturnsAsync(IdentityResult.Success);
+        _userManagerMock.Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), "Admin"))
+            .ReturnsAsync(IdentityResult.Success);
+        _roleManagerMock.Setup(x => x.RoleExistsAsync("Admin"))
+            .ReturnsAsync(true);
+
+        var model = new CreateUserModel
+        {
+            Email = "admin@test.com",
+            FirstName = "Admin",
+            LastName = "User",
+            BranchId = 1,
+            Role = UserRole.Admin
+        };
+
+        // Act
+        var result = await _userService.CreateUserAsync(model, "super-admin");
+
+        // Assert
+        result.Success.Should().BeTrue();
+        _userManagerMock.Verify(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), "Admin"), Times.Once);
+
+        var auditLog = await _dbContext.UserAuditLogs.FirstOrDefaultAsync();
+        auditLog.Should().NotBeNull();
+        auditLog!.NewValue.Should().Contain("Admin");
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_WhenRoleDoesNotExist_CreatesRoleAndAssigns()
+    {
+        // Arrange
+        var branch = new Branch { Id = 1, Name = "Test Branch", CreatedAt = DateTimeOffset.UtcNow };
+        _dbContext.Branches.Add(branch);
+        await _dbContext.SaveChangesAsync();
+
+        _userManagerMock.Setup(x => x.FindByEmailAsync(It.IsAny<string>()))
+            .ReturnsAsync((ApplicationUser?)null);
+        _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
+            .ReturnsAsync(IdentityResult.Success);
+        _userManagerMock.Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), "Agent"))
+            .ReturnsAsync(IdentityResult.Success);
+        _roleManagerMock.Setup(x => x.RoleExistsAsync("Agent"))
+            .ReturnsAsync(false);
+        _roleManagerMock.Setup(x => x.CreateAsync(It.Is<IdentityRole>(r => r.Name == "Agent")))
+            .ReturnsAsync(IdentityResult.Success);
+
+        var model = new CreateUserModel
+        {
+            Email = "new@test.com",
+            FirstName = "Test",
+            LastName = "User",
+            BranchId = 1,
+            Role = UserRole.Agent
+        };
+
+        // Act
+        var result = await _userService.CreateUserAsync(model, "admin-123");
+
+        // Assert
+        result.Success.Should().BeTrue();
+        _roleManagerMock.Verify(x => x.CreateAsync(It.Is<IdentityRole>(r => r.Name == "Agent")), Times.Once);
+        _userManagerMock.Verify(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), "Agent"), Times.Once);
+    }
+
+    [Fact]
     public async Task CreateUserAsync_WhenUserManagerFails_ReturnsError()
     {
         // Arrange
@@ -290,7 +376,8 @@ public class UserServiceTests : IDisposable
             Email = "new@test.com",
             FirstName = "Test",
             LastName = "User",
-            BranchId = 1
+            BranchId = 1,
+            Role = UserRole.Agent
         };
 
         // Act
