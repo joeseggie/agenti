@@ -1,8 +1,4 @@
-using System.IdentityModel.Tokens.Jwt;
 using System.Text;
-using EastSeat.Agenti.Web.Data;
-using EastSeat.Agenti.Web.Features.Api;
-using EastSeat.Agenti.Shared.Domain.Enums;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
