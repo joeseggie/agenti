@@ -10,31 +10,25 @@
     Shell.ForegroundColor="White"
     Shell.TitleColor="White">
 
-    <!-- Dashboard Tab -->
-    <TabBar>
+    <!-- Primary navigation (Tabs inside a FlyoutItem) -->
+    <FlyoutItem Title="Dashboard" Icon="dashboard.png">
         <Tab Title="Dashboard" Icon="dashboard.png">
-            <ShellContent
-                Route="dashboard"
-                ContentTemplate="{DataTemplate pages:DashboardPage}" />
+            <ShellContent Route="dashboard" ContentTemplate="{DataTemplate pages:DashboardPage}" />
         </Tab>
-
-        <Tab Title="Agents" Icon="agents.png">
-            <ShellContent
-                Route="agents"
-                ContentTemplate="{DataTemplate pages:AgentsPage}" />
-        </Tab>
-
-        <Tab Title="Sessions" Icon="sessions.png">
-            <ShellContent
-                Route="sessions"
-                ContentTemplate="{DataTemplate pages:CashSessionsPage}" />
-        </Tab>
-
         <Tab Title="Cash Count" Icon="cashcount.png">
-            <ShellContent
-                Route="cashcount"
-                ContentTemplate="{DataTemplate pages:CashCountPage}" />
+            <ShellContent Route="cashcount" ContentTemplate="{DataTemplate pages:CashCountPage}" />
         </Tab>
-    </TabBar>
+        <Tab Title="Sessions" Icon="sessions.png">
+            <ShellContent Route="sessions" ContentTemplate="{DataTemplate pages:CashSessionsPage}" />
+        </Tab>
+    </FlyoutItem>
+
+    <!-- Profile navigation -->
+    <FlyoutItem Title="Profile" Icon="profile.png">
+        <ShellContent Route="profile" ContentTemplate="{DataTemplate pages:ProfilePage}" />
+    </FlyoutItem>
+
+    <!-- Logout -->
+    <MenuItem Text="Logout" Command="{Binding LogoutCommand}" />
 
 </Shell>
