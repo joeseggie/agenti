@@ -22,7 +22,7 @@
                     OnClick="@ToggleTheme"
                     Title="@(_isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode")" />
                 <MudButton Href="/profile" Variant="Variant.Text" Color="Color.Inherit"
-                    StartIcon="@Icons.Material.Filled.Person" Class="mr-4 text-transform-none"
+                    StartIcon="@Icons.Material.Filled.Person" Class="mr-4" Style="text-transform:none"
                     Title="View my profile">
                     @context.User.Identity?.Name
                 </MudButton>
