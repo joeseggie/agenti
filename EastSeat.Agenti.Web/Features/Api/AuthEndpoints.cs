@@ -38,6 +38,15 @@ public static class AuthEndpoints
             if (!passwordValid)
                 return Results.Unauthorized();
 
+            var jwtKey = configuration["Jwt:Key"];
+            if (string.IsNullOrWhiteSpace(jwtKey))
+            {
+                logger.LogError("JWT key is not configured. Cannot generate authentication token.");
+                return Results.Problem(
+                    detail: "Authentication is temporarily unavailable. Please contact support.",
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+
             var token = GenerateJwtToken(user, configuration);
             var response = new LoginResponse
             {
@@ -62,8 +71,9 @@ public static class AuthEndpoints
 
     private static (string Token, int ExpiresIn) GenerateJwtToken(ApplicationUser user, IConfiguration configuration)
     {
-        var jwtKey = configuration["Jwt:Key"]
-            ?? throw new InvalidOperationException("JWT Key is not configured.");
+        var jwtKey = configuration["Jwt:Key"];
+        if (string.IsNullOrWhiteSpace(jwtKey))
+            throw new InvalidOperationException("JWT Key is not configured.");
         var issuer = configuration["Jwt:Issuer"] ?? "EastSeat.Agenti";
         var audience = configuration["Jwt:Audience"] ?? "EastSeat.Agenti.Android";
         var expiryMinutes = configuration.GetValue<int>("Jwt:ExpiryMinutes", 60);
