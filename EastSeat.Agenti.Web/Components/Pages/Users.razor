@@ -5,7 +5,6 @@
 @inject EastSeat.Agenti.Web.Data.ApplicationDbContext DbContext
 @inject NavigationManager Nav
 @inject ISnackbar Snackbar
-@inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
 <h3>Users</h3>
@@ -58,84 +57,54 @@
             <MudText Typo="Typo.h6">Create New User</MudText>
         </TitleContent>
         <DialogContent>
-            @if (showSuccessDialog)
-            {
-                <div>
-                    <MudText Typo="Typo.h6" Class="mb-2">User Created Successfully</MudText>
-                    <MudText Class="mb-4">The user has been created with the following credentials:</MudText>
-                    
-                    <div class="mb-4">
-                        <MudText Typo="Typo.subtitle2" Class="mb-1"><strong>Temporary Password:</strong></MudText>
-                        <MudTextField ReadOnly="true" Value="@creationResult?.TemporaryPassword" 
-                            Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Outlined.FileCopy"
-                            OnAdornmentClick="@(() => CopyToClipboard(creationResult?.TemporaryPassword ?? string.Empty))"
-                            />
-                        <MudText Typo="Typo.caption" Class="mt-1">Click the copy icon to copy the password</MudText>
-                    </div>
+            <MudForm @ref="formRef" @bind-IsValid="@isFormValid" ValidationDelay="0">
+                <MudTextField @bind-Value="createUserModel.FirstName" Label="First Name"
+                    Required="true" RequiredError="First name is required" Class="mb-2" />
 
-                    <div class="mb-4">
-                        <MudText Typo="Typo.subtitle2" Class="mb-1"><strong>Invite Link:</strong></MudText>
-                        <MudTextField ReadOnly="true" Value="@GetInviteLink()" 
-                            Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Outlined.FileCopy"
-                            OnAdornmentClick="@(() => CopyToClipboard(GetInviteLink()))"
-                            HelperText="Share this link with the user" />
-                    </div>
+                <MudTextField @bind-Value="createUserModel.LastName" Label="Last Name"
+                    Required="true" RequiredError="Last name is required" Class="mb-2" />
 
-                    <MudAlert Severity="Severity.Warning" Class="mb-4">
-                        <MudText>Share both the temporary password and invite link with the user. They can use either to set up their account.</MudText>
-                    </MudAlert>
-                </div>
-            }
-            else
-            {
-                <MudForm @ref="formRef" @bind-IsValid="@isFormValid" ValidationDelay="0">
-                    <MudTextField @bind-Value="createUserModel.FirstName" Label="First Name"
-                        Required="true" RequiredError="First name is required" Class="mb-2" />
+                <MudTextField @bind-Value="createUserModel.Email" Label="Email" InputType="InputType.Email"
+                    Required="true" RequiredError="Email is required" Class="mb-2" />
 
-                    <MudTextField @bind-Value="createUserModel.LastName" Label="Last Name"
-                        Required="true" RequiredError="Last name is required" Class="mb-2" />
+                <MudTextField @bind-Value="createUserModel.PhoneNumber" Label="Phone Number"
+                    Placeholder="(Optional)" Class="mb-2" />
 
-                    <MudTextField @bind-Value="createUserModel.Email" Label="Email" InputType="InputType.Email"
-                        Required="true" RequiredError="Email is required" Class="mb-2" />
-
-                    <MudTextField @bind-Value="createUserModel.PhoneNumber" Label="Phone Number"
-                        Placeholder="(Optional)" Class="mb-2" />
-
-                    <MudSelect @bind-Value="createUserModel.BranchId" Label="Branch"
-                        Required="true" RequiredError="Branch is required" Class="mb-2">
-                        @foreach (var branch in branches)
-                        {
-                            <MudSelectItem Value="@branch.Id">@branch.Name</MudSelectItem>
-                        }
-                    </MudSelect>
-
-                    @if (!string.IsNullOrEmpty(dialogError))
+                <MudSelect @bind-Value="createUserModel.BranchId" Label="Branch"
+                    Required="true" RequiredError="Branch is required" Class="mb-2">
+                    @foreach (var branch in branches)
                     {
-                        <MudAlert Severity="Severity.Error" Class="mb-2">@dialogError</MudAlert>
+                        <MudSelectItem Value="@branch.Id">@branch.Name</MudSelectItem>
                     }
-                </MudForm>
-            }
+                </MudSelect>
+
+                <MudSelect @bind-Value="createUserModel.Role" Label="Role"
+                    Required="true" RequiredError="Role is required" Class="mb-2">
+                    @foreach (var role in Enum.GetValues<EastSeat.Agenti.Shared.Domain.Enums.UserRole>())
+                    {
+                        <MudSelectItem Value="@role">@role</MudSelectItem>
+                    }
+                </MudSelect>
+
+                @if (!string.IsNullOrEmpty(dialogError))
+                {
+                    <MudAlert Severity="Severity.Error" Class="mb-2">@dialogError</MudAlert>
+                }
+            </MudForm>
         </DialogContent>
         <DialogActions>
-            @if (!showSuccessDialog)
-            {
-                <MudButton OnClick="CloseCreateUserDialog">Cancel</MudButton>
-                <MudButton Color="Color.Primary" OnClick="SubmitCreateUser" Disabled="@(!isFormValid || isSubmitting)">
-                    @if (isSubmitting)
-                    {
-                        <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
-                        <MudText Class="ms-2">Creating...</MudText>
-                    }
-                    else
-                    {
-                        <span>Create User</span>
-                    }
-                </MudButton>
-            }
-            else
-            {
-                <MudButton Color="Color.Primary" OnClick="CloseCreateUserDialog">Done</MudButton>
-            }
+            <MudButton OnClick="CloseCreateUserDialog">Cancel</MudButton>
+            <MudButton Color="Color.Primary" OnClick="SubmitCreateUser" Disabled="@(!isFormValid || isSubmitting)">
+                @if (isSubmitting)
+                {
+                    <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                    <MudText Class="ms-2">Creating...</MudText>
+                }
+                else
+                {
+                    <span>Create User</span>
+                }
+            </MudButton>
         </DialogActions>
     </MudDialog>
 }
@@ -146,13 +115,11 @@
     private string? search;
     private string? currentUserId;
     private bool showCreateDialog;
-    private bool showSuccessDialog;
     private MudForm? formRef;
     private EastSeat.Agenti.Web.Features.Users.CreateUserModel createUserModel = new();
     private string? dialogError;
     private bool isFormValid;
     private bool isSubmitting;
-    private EastSeat.Agenti.Web.Features.Users.CreateUserResult? creationResult;
 
     protected override async Task OnInitializedAsync()
     {
@@ -195,7 +162,6 @@
     private void OpenCreateUserDialog()
     {
         showCreateDialog = true;
-        showSuccessDialog = false;
         dialogError = null;
         createUserModel = new();
         StateHasChanged();
@@ -204,7 +170,6 @@
     private void CloseCreateUserDialog()
     {
         showCreateDialog = false;
-        showSuccessDialog = false;
         dialogError = null;
         createUserModel = new();
         StateHasChanged();
@@ -222,17 +187,26 @@
 
         try
         {
-            creationResult = await UserService.CreateUserAsync(createUserModel, currentUserId);
+            var performedByUserId = currentUserId ?? "system";
+            
+            var result = await UserService.CreateUserAsync(createUserModel, performedByUserId);
 
-            if (creationResult!.Success)
+            if (result.Success)
             {
-                showSuccessDialog = true;
+                CloseCreateUserDialog();
                 await LoadUsers();
-                StateHasChanged();
+                Snackbar.Add(
+                    $"User created successfully. Temporary password: {result.TemporaryPassword}",
+                    Severity.Success,
+                    config =>
+                    {
+                        config.VisibleStateDuration = 10000;
+                        config.ShowCloseIcon = true;
+                    });
             }
             else
             {
-                dialogError = creationResult.Message ?? "An error occurred while creating the user.";
+                dialogError = result.Message ?? "An error occurred while creating the user.";
             }
         }
         catch (Exception ex)
@@ -242,25 +216,6 @@
         finally
         {
             isSubmitting = false;
-        }
-    }
-
-    private string GetInviteLink()
-    {
-        var baseUrl = "http://localhost:5000";
-        return $"{baseUrl}/invite?token={Uri.EscapeDataString(creationResult?.InviteToken ?? string.Empty)}";
-    }
-
-    private async Task CopyToClipboard(string text)
-    {
-        try
-        {
-            await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
-            Snackbar.Add("Copied to clipboard", Severity.Success);
-        }
-        catch (Exception ex)
-        {
-            Snackbar.Add($"Failed to copy to clipboard: {ex.Message}", Severity.Error);
         }
     }
 }

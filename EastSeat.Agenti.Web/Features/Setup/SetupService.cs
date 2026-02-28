@@ -185,17 +185,20 @@ public class SetupService : ISetupService
                 return;
             }
 
-            // Ensure Admin role exists (Identity handles its own transaction)
-            if (!await _roleManager.RoleExistsAsync("Admin"))
+            // Ensure all roles exist (Identity handles its own transaction)
+            foreach (var roleName in new[] { "Admin", "Supervisor", "Agent" })
             {
-                var roleResult = await _roleManager.CreateAsync(new IdentityRole("Admin"));
-                if (!roleResult.Succeeded)
+                if (!await _roleManager.RoleExistsAsync(roleName))
                 {
-                    var errors = string.Join(", ", roleResult.Errors.Select(e => e.Description));
-                    _logger.LogError("Failed to create Admin role: {Errors}", errors);
-                    throw new ApplicationException($"Failed to create Admin role: {errors}");
+                    var roleResult = await _roleManager.CreateAsync(new IdentityRole(roleName));
+                    if (!roleResult.Succeeded)
+                    {
+                        var errors = string.Join(", ", roleResult.Errors.Select(e => e.Description));
+                        _logger.LogError("Failed to create {RoleName} role: {Errors}", roleName, errors);
+                        throw new ApplicationException($"Failed to create {roleName} role: {errors}");
+                    }
+                    _logger.LogInformation("Created {RoleName} role.", roleName);
                 }
-                _logger.LogInformation("Created Admin role.");
             }
 
             // Create user (Identity handles its own transaction)

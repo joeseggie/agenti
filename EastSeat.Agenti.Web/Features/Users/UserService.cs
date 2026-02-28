@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace EastSeat.Agenti.Web.Features.Users;
 
-public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> userManager) : IUserService
+public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager) : IUserService
 {
     public async Task<List<UserListItemDto>> GetAllAsync(string? search = null, CancellationToken cancellationToken = default)
     {
@@ -82,7 +82,7 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
             FirstName = model.FirstName.Trim(),
             LastName = model.LastName.Trim(),
             PhoneNumber = model.PhoneNumber,
-            Role = UserRole.Agent,
+            Role = model.Role,
             BranchId = model.BranchId,
             IsActive = true,
             CreatedAt = DateTime.UtcNow
@@ -95,8 +95,27 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
             return CreateUserResult.Error($"Failed to create user: {errors}");
         }
 
-        // Assign Agent role
-        await userManager.AddToRoleAsync(newUser, UserRole.Agent.ToString());
+        // Ensure the role exists in Identity before assigning
+        var roleName = model.Role.ToString();
+        if (!await roleManager.RoleExistsAsync(roleName))
+        {
+            var roleResult = await roleManager.CreateAsync(new IdentityRole(roleName));
+            if (!roleResult.Succeeded)
+            {
+                await userManager.DeleteAsync(newUser);
+                var errors = string.Join(", ", roleResult.Errors.Select(e => e.Description));
+                return CreateUserResult.Error($"Failed to create role '{roleName}': {errors}");
+            }
+        }
+
+        // Assign role
+        var addRoleResult = await userManager.AddToRoleAsync(newUser, roleName);
+        if (!addRoleResult.Succeeded)
+        {
+            await userManager.DeleteAsync(newUser);
+            var errors = string.Join(", ", addRoleResult.Errors.Select(e => e.Description));
+            return CreateUserResult.Error($"Failed to assign role '{roleName}': {errors}");
+        }
 
         // Generate invite token
         var inviteToken = GenerateInviteToken(newUser.Id);
@@ -107,7 +126,7 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
             UserId = newUser.Id,
             Action = UserAuditAction.Created,
             OldValue = null,
-            NewValue = "Created with role Agent",
+            NewValue = $"Created with role {model.Role}",
             PerformedByUserId = performedByUserId,
             PerformedAt = DateTimeOffset.UtcNow
         });
