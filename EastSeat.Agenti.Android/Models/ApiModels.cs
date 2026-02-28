@@ -220,14 +220,26 @@ public class CurrentSessionInfo
     [JsonPropertyName("sessionId")]
     public long? SessionId { get; set; }
 
+    [JsonPropertyName("sessionDate")]
+    public DateOnly? SessionDate { get; set; }
+
     [JsonPropertyName("statusText")]
     public string StatusText { get; set; } = "No Active Session";
+
+    [JsonPropertyName("statusColor")]
+    public string StatusColor { get; set; } = "warning";
 
     [JsonPropertyName("canPerformOpeningCount")]
     public bool CanPerformOpeningCount { get; set; }
 
     [JsonPropertyName("canPerformClosingCount")]
     public bool CanPerformClosingCount { get; set; }
+
+    [JsonPropertyName("hasOpeningCount")]
+    public bool HasOpeningCount { get; set; }
+
+    [JsonPropertyName("hasClosingCount")]
+    public bool HasClosingCount { get; set; }
 }
 
 public class CashCountForm
