@@ -75,6 +75,7 @@ public static class MauiProgram
         builder.Services.AddTransient<AgentsPage>();
         builder.Services.AddTransient<CashCountPage>();
         builder.Services.AddTransient<CashSessionsPage>();
+        builder.Services.AddTransient<ProfilePage>();
 
         // ── Shell ────────────────────────────────────────────────────────────
         builder.Services.AddSingleton<AppShell>();
