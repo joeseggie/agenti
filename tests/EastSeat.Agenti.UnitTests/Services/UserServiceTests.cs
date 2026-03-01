@@ -281,6 +281,14 @@ public class UserServiceTests : IDisposable
         auditLog.Should().NotBeNull();
         auditLog!.Action.Should().Be(UserAuditAction.Created);
         auditLog.PerformedByUserId.Should().Be("admin-123");
+
+        // Verify agent record was automatically created for Agent role
+        var agent = await _dbContext.Agents.FirstOrDefaultAsync();
+        agent.Should().NotBeNull();
+        agent!.UserId.Should().Be(result.UserId);
+        agent.BranchId.Should().Be(1);
+        agent.IsActive.Should().BeTrue();
+        agent.Code.Should().Be("TEUS");
     }
 
     [Fact]
@@ -356,6 +364,46 @@ public class UserServiceTests : IDisposable
         result.Success.Should().BeTrue();
         _roleManagerMock.Verify(x => x.CreateAsync(It.Is<IdentityRole>(r => r.Name == "Agent")), Times.Once);
         _userManagerMock.Verify(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), "Agent"), Times.Once);
+
+        // Verify agent record was automatically created
+        var agent = await _dbContext.Agents.FirstOrDefaultAsync();
+        agent.Should().NotBeNull();
+        agent!.UserId.Should().Be(result.UserId);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_WithNonAgentRole_DoesNotCreateAgentRecord()
+    {
+        // Arrange
+        var branch = new Branch { Id = 1, Name = "Test Branch", CreatedAt = DateTimeOffset.UtcNow };
+        _dbContext.Branches.Add(branch);
+        await _dbContext.SaveChangesAsync();
+
+        _userManagerMock.Setup(x => x.FindByEmailAsync(It.IsAny<string>()))
+            .ReturnsAsync((ApplicationUser?)null);
+        _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
+            .ReturnsAsync(IdentityResult.Success);
+        _userManagerMock.Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), "Admin"))
+            .ReturnsAsync(IdentityResult.Success);
+        _roleManagerMock.Setup(x => x.RoleExistsAsync("Admin"))
+            .ReturnsAsync(true);
+
+        var model = new CreateUserModel
+        {
+            Email = "admin@test.com",
+            FirstName = "Admin",
+            LastName = "User",
+            BranchId = 1,
+            Role = UserRole.Admin
+        };
+
+        // Act
+        var result = await _userService.CreateUserAsync(model, "super-admin");
+
+        // Assert
+        result.Success.Should().BeTrue();
+        var agentCount = await _dbContext.Agents.CountAsync();
+        agentCount.Should().Be(0);
     }
 
     [Fact]
