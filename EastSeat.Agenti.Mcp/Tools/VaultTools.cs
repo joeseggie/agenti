@@ -38,33 +38,59 @@ public class VaultTools
 
         var lines = new List<string>();
 
+        // Precompute today's date range once
+        var today = DateTimeOffset.UtcNow.Date;
+        var todayStart = new DateTimeOffset(today, TimeSpan.Zero);
+        var todayEnd = todayStart.AddDays(1);
+
+        // Collect all vault IDs to batch queries
+        var vaultIds = vaults.Select(v => v.Id).ToList();
+
+        // Batch query: today's transactions for all relevant vaults
+        var allTodayTransactions = await db.VaultTransactions
+            .Where(vt => vaultIds.Contains(vt.VaultId) &&
+                         vt.CreatedAt >= todayStart &&
+                         vt.CreatedAt < todayEnd)
+            .ToListAsync();
+
+        var todayByVault = allTodayTransactions
+            .GroupBy(vt => vt.VaultId)
+            .ToDictionary(
+                g => g.Key,
+                g =>
+                (
+                    Deposits: g.Where(vt => vt.Type == Shared.Domain.Enums.VaultTransactionType.Closing ||
+                                            vt.Type == Shared.Domain.Enums.VaultTransactionType.ManualDeposit)
+                                .Sum(vt => vt.Amount),
+                    Withdrawals: g.Where(vt => vt.Type == Shared.Domain.Enums.VaultTransactionType.Opening ||
+                                               vt.Type == Shared.Domain.Enums.VaultTransactionType.ManualWithdrawal)
+                                  .Sum(vt => vt.Amount)
+                ));
+
+        // Batch query: pending transaction counts for all relevant vaults
+        var pendingCounts = await db.VaultTransactions
+            .Where(vt => vaultIds.Contains(vt.VaultId) &&
+                         vt.Status == Shared.Domain.Enums.VaultTransactionStatus.Pending)
+            .GroupBy(vt => vt.VaultId)
+            .Select(g => new { VaultId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.VaultId, x => x.Count);
+
         foreach (var vault in vaults)
         {
-            var today = DateTimeOffset.UtcNow.Date;
-            var todayStart = new DateTimeOffset(today, TimeSpan.Zero);
-            var todayEnd = todayStart.AddDays(1);
+            // Lookup today's summary for this vault
+            if (!todayByVault.TryGetValue(vault.Id, out var todaySummary))
+            {
+                todaySummary = (Deposits: 0m, Withdrawals: 0m);
+            }
 
-            var todayTransactions = await db.VaultTransactions
-                .Where(vt => vt.VaultId == vault.Id &&
-                             vt.CreatedAt >= todayStart &&
-                             vt.CreatedAt < todayEnd)
-                .ToListAsync();
+            var todayDeposits = todaySummary.Deposits;
+            var todayWithdrawals = todaySummary.Withdrawals;
 
-            var todayDeposits = todayTransactions
-                .Where(vt => vt.Type == Shared.Domain.Enums.VaultTransactionType.Closing ||
-                             vt.Type == Shared.Domain.Enums.VaultTransactionType.ManualDeposit)
-                .Sum(vt => vt.Amount);
-
-            var todayWithdrawals = todayTransactions
-                .Where(vt => vt.Type == Shared.Domain.Enums.VaultTransactionType.Opening ||
-                             vt.Type == Shared.Domain.Enums.VaultTransactionType.ManualWithdrawal)
-                .Sum(vt => vt.Amount);
-
-            var pendingCount = await db.VaultTransactions
-                .Where(vt => vt.VaultId == vault.Id &&
-                             vt.Status == Shared.Domain.Enums.VaultTransactionStatus.Pending)
-                .CountAsync();
-
+            // Lookup pending count for this vault
+            if (!pendingCounts.TryGetValue(vault.Id, out var pendingCount))
+            {
+                pendingCount = 0;
+            }
             lines.Add($"🏦 Vault for Branch: {vault.Branch?.Name ?? vault.BranchId.ToString()} (ID: {vault.BranchId})");
             lines.Add($"  Current Balance: {vault.CurrentBalance:N2}");
             lines.Add($"  Today's Deposits: {todayDeposits:N2}");
