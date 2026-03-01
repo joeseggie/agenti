@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using ModelContextProtocol.Server;
 using EastSeat.Agenti.Mcp.Configuration;
 using EastSeat.Agenti.Mcp.Data;
+using EastSeat.Agenti.Shared.Domain.Enums;
 
 namespace EastSeat.Agenti.Mcp.Tools;
 
@@ -59,7 +60,7 @@ public class AgentTools
 
             if (!string.IsNullOrWhiteSpace(walletType))
             {
-                if (Enum.TryParse<Shared.Domain.Enums.WalletTypeEnum>(walletType, ignoreCase: true, out var parsedType))
+                if (Enum.TryParse<WalletTypeEnum>(walletType, ignoreCase: true, out var parsedType))
                     wallets = wallets.Where(w => w.WalletType?.Type == parsedType).ToList();
             }
 
