@@ -33,6 +33,15 @@ if (string.IsNullOrWhiteSpace(config.ConnectionString))
     Environment.Exit(1);
 }
 
+// Enforce branch isolation safety model:
+// When the server is not allowed to query all branches, a valid BranchId must be configured.
+if (!config.CanQueryAllBranches && (config.BranchId == null || config.BranchId <= 0))
+{
+    Console.Error.WriteLine("ERROR: Invalid branch configuration for Agenti MCP server.");
+    Console.Error.WriteLine("When CanQueryAllBranches is false, a valid BranchId (> 0) must be configured.");
+    Console.Error.WriteLine("Set AGENTI__McpServer__BranchId (or the appropriate config key) to a positive integer.");
+    Environment.Exit(1);
+}
 // Configure read-only database context with connection string and Npgsql settings
 ReadOnlyDbContext.Configure(config.ConnectionString, config.CommandTimeoutSeconds, maxRetryCount: 2);
 
