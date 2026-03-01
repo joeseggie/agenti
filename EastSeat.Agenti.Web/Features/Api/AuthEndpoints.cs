@@ -41,11 +41,22 @@ public static class AuthEndpoints
 
             var user = await userManager.FindByEmailAsync(request.Email);
 
-            // Always verify password to prevent timing-based user enumeration.
-            // When user is null, CheckPasswordAsync is skipped but the overall
-            // response time remains similar due to the telemetry/DB write below.
-            var passwordValid = user is not null &&
-                await userManager.CheckPasswordAsync(user, request.Password);
+            // Mitigate timing-based user enumeration by performing a dummy password verification
+            // even when the user is not found.
+            bool passwordValid;
+            if (user is not null)
+            {
+                passwordValid = await userManager.CheckPasswordAsync(user, request.Password);
+            }
+            else
+            {
+                // Use a constant dummy hash to consume roughly the same amount of time as a real check.
+                // This value should be any valid Identity password hash; the result is intentionally ignored.
+                const string dummyHash = "AQAAAAEAACcQAAAAEJ1nK1z0zSxN1W/7M7lT9BMG3c0kF4xHCV2+DummyHashForTimingOnly==";
+                var dummyUser = new ApplicationUser();
+                _ = userManager.PasswordHasher.VerifyHashedPassword(dummyUser, dummyHash, request.Password);
+                passwordValid = false;
+            }
 
             stopwatch.Stop();
             var durationMs = stopwatch.Elapsed.TotalMilliseconds;
