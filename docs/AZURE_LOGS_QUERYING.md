@@ -16,6 +16,7 @@ This guide explains how to access, view, and query the logs produced by the Agen
   - [HTTP Requests & API](#http-requests--api)
   - [Exceptions & Errors](#exceptions--errors)
   - [Database (SQL) Performance](#database-sql-performance)
+  - [Authentication & Login](#authentication--login)
   - [User Activity](#user-activity)
 - [Live Metrics Stream](#live-metrics-stream)
 - [Creating a Custom Dashboard](#creating-a-custom-dashboard)
@@ -596,6 +597,133 @@ dependencies
     by name
 | order by AvgDuration desc
 | take 20
+```
+
+---
+
+### Authentication & Login
+
+These are custom events emitted by `LoginTelemetryService` for both Blazor web and API sign-in flows.
+
+#### All login events (success + failure, last 24 hours)
+
+```kql
+customEvents
+| where timestamp > ago(24h)
+| where name in ("login_succeeded", "login_failed")
+| project
+    timestamp,
+    name,
+    Email       = tostring(customDimensions["Email"]),
+    LoginMethod = tostring(customDimensions["LoginMethod"]),
+    IpAddress   = tostring(customDimensions["IpAddress"]),
+    UserAgent   = tostring(customDimensions["UserAgent"])
+| order by timestamp desc
+```
+
+#### Successful logins with user details
+
+```kql
+customEvents
+| where timestamp > ago(7d)
+| where name == "login_succeeded"
+| project
+    timestamp,
+    UserId      = tostring(customDimensions["UserId"]),
+    Email       = tostring(customDimensions["Email"]),
+    Role        = tostring(customDimensions["Role"]),
+    BranchId    = tostring(customDimensions["BranchId"]),
+    LoginMethod = tostring(customDimensions["LoginMethod"]),
+    IpAddress   = tostring(customDimensions["IpAddress"])
+| order by timestamp desc
+```
+
+#### Failed logins by failure reason
+
+```kql
+customEvents
+| where timestamp > ago(7d)
+| where name == "login_failed"
+| summarize Count = count() by
+    FailureReason = tostring(customDimensions["FailureReason"])
+| order by Count desc
+```
+
+#### Failed logins grouped by IP address (brute-force detection)
+
+```kql
+customEvents
+| where timestamp > ago(24h)
+| where name == "login_failed"
+| summarize
+    FailureCount = count(),
+    Emails = make_set(tostring(customDimensions["Email"]))
+    by IpAddress = tostring(customDimensions["IpAddress"])
+| where FailureCount > 5
+| order by FailureCount desc
+```
+
+#### Suspicious: multiple failed logins for the same email in 10 minutes
+
+```kql
+customEvents
+| where timestamp > ago(1d)
+| where name == "login_failed"
+| summarize count() by
+    bin(timestamp, 10m),
+    Email = tostring(customDimensions["Email"])
+| where count_ > 3
+| order by timestamp desc
+```
+
+#### Login latency percentiles (p50, p95, p99)
+
+```kql
+customMetrics
+| where timestamp > ago(24h)
+| where name == "login_duration_ms"
+| summarize
+    P50 = percentile(value, 50),
+    P95 = percentile(value, 95),
+    P99 = percentile(value, 99),
+    Avg = avg(value),
+    Count = count()
+    by bin(timestamp, 1h)
+| order by timestamp desc
+```
+
+#### Logins by method (Blazor Web vs API)
+
+```kql
+customEvents
+| where timestamp > ago(7d)
+| where name in ("login_succeeded", "login_failed")
+| summarize
+    SuccessCount = countif(name == "login_succeeded"),
+    FailureCount = countif(name == "login_failed")
+    by LoginMethod = tostring(customDimensions["LoginMethod"])
+```
+
+#### JWT tokens issued per day
+
+```kql
+customEvents
+| where timestamp > ago(30d)
+| where name == "jwt_token_issued"
+| summarize TokenCount = count() by bin(timestamp, 1d)
+| order by timestamp desc
+```
+
+#### Login activity by branch
+
+```kql
+customEvents
+| where timestamp > ago(7d)
+| where name == "login_succeeded"
+| summarize LoginCount = count() by
+    BranchId = tostring(customDimensions["BranchId"]),
+    LoginMethod = tostring(customDimensions["LoginMethod"])
+| order by LoginCount desc
 ```
 
 ---

@@ -1,14 +1,17 @@
 ﻿@page "/Account/Login"
 
 @using System.ComponentModel.DataAnnotations
+@using System.Diagnostics
 @using Microsoft.AspNetCore.Authentication
 @using Microsoft.AspNetCore.Identity
 @using EastSeat.Agenti.Web.Data
+@using EastSeat.Agenti.Web.Features.Users
 
 @inject SignInManager<ApplicationUser> SignInManager
 @inject ILogger<Login> Logger
 @inject NavigationManager NavigationManager
 @inject IdentityRedirectManager RedirectManager
+@inject ILoginTelemetryService LoginTelemetry
 
 <PageTitle>Log in</PageTitle>
 
@@ -150,17 +153,31 @@
         _isLoggingIn = true;
         errorMessage = null;
 
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = HttpContext.Request.Headers.UserAgent.ToString();
+        const string loginMethod = "BlazorWeb";
+
         Logger.LogInformation("LoginUser called - Email: {Email}, RememberMe: {RememberMe}", Input.Email, Input.RememberMe);
-        // This doesn't count login failures towards account lockout
-        // To enable password failures to trigger account lockout, set lockoutOnFailure: true
+
+        var stopwatch = Stopwatch.StartNew();
         var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure:
         false);
+        stopwatch.Stop();
+        var durationMs = stopwatch.Elapsed.TotalMilliseconds;
 
         Logger.LogInformation("Sign in result - Succeeded: {Succeeded}, RequiresTwoFactor: {RequiresTwoFactor}, IsLockedOut: {IsLockedOut}, IsNotAllowed: {IsNotAllowed}",
         result.Succeeded, result.RequiresTwoFactor, result.IsLockedOut, result.IsNotAllowed);
 
         if (result.Succeeded)
         {
+            var user = await SignInManager.UserManager.FindByEmailAsync(Input.Email);
+            if (user is not null)
+            {
+                await LoginTelemetry.RecordLoginSuccessAsync(
+                    user.Id, Input.Email, loginMethod, ipAddress, userAgent,
+                    user.Role.ToString(), user.BranchId, durationMs);
+            }
+
             Logger.LogInformation("User logged in successfully. Redirecting to: {ReturnUrl}", ReturnUrl ?? "/");
             RedirectManager.RedirectTo(ReturnUrl);
         }
@@ -175,16 +192,25 @@
         }
         else if (result.IsLockedOut)
         {
+            await LoginTelemetry.RecordLoginFailureAsync(
+                Input.Email, "AccountLockedOut", loginMethod, ipAddress, userAgent, durationMs);
+
             Logger.LogWarning("User account locked out.");
             RedirectManager.RedirectTo("Account/Lockout");
         }
         else if (result.IsNotAllowed)
         {
+            await LoginTelemetry.RecordLoginFailureAsync(
+                Input.Email, "AccountNotAllowed", loginMethod, ipAddress, userAgent, durationMs);
+
             Logger.LogWarning("User is not allowed to sign in. Email might not be confirmed.");
             errorMessage = "Error: Your account is not allowed to sign in. Please confirm your email.";
         }
         else
         {
+            await LoginTelemetry.RecordLoginFailureAsync(
+                Input.Email, "InvalidCredentials", loginMethod, ipAddress, userAgent, durationMs);
+
             Logger.LogWarning("Invalid login attempt for email: {Email}", Input.Email);
             errorMessage = "Error: Invalid login attempt.";
         }
