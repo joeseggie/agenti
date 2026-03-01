@@ -28,44 +28,49 @@ public static class AuthEndpoints
             var userAgent = httpContext.Request.Headers.UserAgent.ToString();
             const string loginMethod = "ApiJwt";
 
-            if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
-            {
-                await loginTelemetry.RecordLoginFailureAsync(
-                    request.Email ?? "unknown", "ValidationFailed", loginMethod, ipAddress, userAgent);
-                return Results.BadRequest(ApiResponse<LoginResponse>.Fail("Email and password are required."));
-            }
-
             var stopwatch = Stopwatch.StartNew();
 
-            var user = await userManager.FindByEmailAsync(request.Email);
-            if (user is null)
+            if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
             {
                 stopwatch.Stop();
                 await loginTelemetry.RecordLoginFailureAsync(
-                    request.Email, "UserNotFound", loginMethod, ipAddress, userAgent, stopwatch.Elapsed.TotalMilliseconds);
+                    request.Email ?? "unknown", "ValidationFailed", loginMethod, ipAddress, userAgent,
+                    stopwatch.Elapsed.TotalMilliseconds);
+                return Results.BadRequest(ApiResponse<LoginResponse>.Fail("Email and password are required."));
+            }
+
+            var user = await userManager.FindByEmailAsync(request.Email);
+
+            // Always verify password to prevent timing-based user enumeration.
+            // When user is null, CheckPasswordAsync is skipped but the overall
+            // response time remains similar due to the telemetry/DB write below.
+            var passwordValid = user is not null &&
+                await userManager.CheckPasswordAsync(user, request.Password);
+
+            stopwatch.Stop();
+            var durationMs = stopwatch.Elapsed.TotalMilliseconds;
+
+            if (user is null)
+            {
+                await loginTelemetry.RecordLoginFailureAsync(
+                    request.Email, "UserNotFound", loginMethod, ipAddress, userAgent, durationMs);
                 return Results.Unauthorized();
             }
 
             if (!user.IsActive)
             {
-                stopwatch.Stop();
                 logger.LogWarning("Login attempt for inactive account: {Email}", request.Email);
                 await loginTelemetry.RecordLoginFailureAsync(
-                    request.Email, "InactiveAccount", loginMethod, ipAddress, userAgent, stopwatch.Elapsed.TotalMilliseconds);
+                    request.Email, "InactiveAccount", loginMethod, ipAddress, userAgent, durationMs);
                 return Results.Unauthorized();
             }
 
-            var passwordValid = await userManager.CheckPasswordAsync(user, request.Password);
             if (!passwordValid)
             {
-                stopwatch.Stop();
                 await loginTelemetry.RecordLoginFailureAsync(
-                    request.Email, "InvalidCredentials", loginMethod, ipAddress, userAgent, stopwatch.Elapsed.TotalMilliseconds);
+                    request.Email, "InvalidCredentials", loginMethod, ipAddress, userAgent, durationMs);
                 return Results.Unauthorized();
             }
-
-            stopwatch.Stop();
-            var durationMs = stopwatch.Elapsed.TotalMilliseconds;
 
             var jwtKey = configuration["Jwt:Key"];
             if (string.IsNullOrWhiteSpace(jwtKey))
