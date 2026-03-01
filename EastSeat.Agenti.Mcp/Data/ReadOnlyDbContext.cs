@@ -24,28 +24,12 @@ public class ReadOnlyDbContext : ApplicationDbContext
         _maxRetryCount = maxRetryCount;
     }
 
-    public ReadOnlyDbContext(DbContextOptions<ReadOnlyDbContext> options)
-        : base(CreateBaseOptions())
+    public ReadOnlyDbContext(DbContextOptions<ApplicationDbContext> options)
+        : base(options)
     {
         ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
         ChangeTracker.AutoDetectChangesEnabled = false;
     }
-
-    /// <summary>
-    /// Build ApplicationDbContext options using the statically configured connection string
-    /// with all Npgsql settings (timeout, retry) preserved.
-    /// </summary>
-    private static DbContextOptions<ApplicationDbContext> CreateBaseOptions()
-    {
-        var builder = new DbContextOptionsBuilder<ApplicationDbContext>();
-        builder.UseNpgsql(_connectionString, npgsql =>
-        {
-            npgsql.CommandTimeout(_commandTimeout);
-            npgsql.EnableRetryOnFailure(maxRetryCount: _maxRetryCount);
-        });
-        return builder.Options;
-    }
-
     public override int SaveChanges()
     {
         throw new InvalidOperationException(
