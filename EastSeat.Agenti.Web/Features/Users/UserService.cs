@@ -1,3 +1,4 @@
+using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.AspNetCore.Identity;
@@ -118,6 +119,38 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
             return CreateUserResult.Error($"Failed to assign role '{roleName}': {errors}");
         }
 
+        // If the role is Agent, automatically create an Agent record
+        if (model.Role == UserRole.Agent)
+        {
+            using var agentTransaction = await db.Database.BeginTransactionAsync(cancellationToken);
+            try
+            {
+                var agentCode = await GenerateUniqueAgentCodeAsync(newUser.FirstName, newUser.LastName, cancellationToken);
+                var agent = new Agent
+                {
+                    UserId = newUser.Id,
+                    Code = agentCode,
+                    BranchId = model.BranchId,
+                    IsActive = true,
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+                db.Agents.Add(agent);
+                await db.SaveChangesAsync(cancellationToken);
+
+                newUser.AgentId = agent.Id;
+                newUser.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync(cancellationToken);
+
+                await agentTransaction.CommitAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                await agentTransaction.RollbackAsync();
+                await userManager.DeleteAsync(newUser);
+                return CreateUserResult.Error($"Failed to create agent record: {ex.Message}");
+            }
+        }
+
         // Generate invite token
         var inviteToken = GenerateInviteToken(newUser.Id);
 
@@ -179,6 +212,53 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
 
     private static string? NormalizeUserId(string? userId) =>
         string.IsNullOrWhiteSpace(userId) ? null : userId;
+
+    /// <summary>
+    /// Generates a unique 4-letter uppercase code from the user's first and last name.
+    /// Format: First 2 letters of FirstName + First 2 letters of LastName (e.g., "JODO" for John Doe).
+    /// If the code already exists, appends a numeric or letter suffix.
+    /// </summary>
+    private async Task<string> GenerateUniqueAgentCodeAsync(string firstName, string lastName, CancellationToken cancellationToken = default)
+    {
+        var cleanFirst = new string(firstName.Where(char.IsLetter).ToArray()).ToUpperInvariant();
+        var cleanLast = new string(lastName.Where(char.IsLetter).ToArray()).ToUpperInvariant();
+
+        var firstPart = cleanFirst.Length >= 2 ? cleanFirst[..2] : cleanFirst.PadRight(2, 'X');
+        var lastPart = cleanLast.Length >= 2 ? cleanLast[..2] : cleanLast.PadRight(2, 'X');
+
+        var baseCode = firstPart + lastPart;
+
+        if (!await db.Agents.AnyAsync(a => a.Code == baseCode, cancellationToken))
+        {
+            return baseCode;
+        }
+
+        var prefix = baseCode[..3];
+        var existingCodes = await db.Agents
+            .Where(a => a.Code.StartsWith(prefix))
+            .Select(a => a.Code)
+            .ToListAsync(cancellationToken);
+
+        for (int i = 1; i <= 9; i++)
+        {
+            var candidateCode = prefix + i.ToString();
+            if (!existingCodes.Contains(candidateCode))
+            {
+                return candidateCode;
+            }
+        }
+
+        for (char c = 'A'; c <= 'Z'; c++)
+        {
+            var candidateCode = prefix + c;
+            if (!existingCodes.Contains(candidateCode))
+            {
+                return candidateCode;
+            }
+        }
+
+        return prefix + DateTime.UtcNow.Ticks.ToString()[^1];
+    }
 
     public async Task<ServiceResult> UpdateProfileAsync(UserFormModel model, string? performedByUserId, CancellationToken cancellationToken = default)
     {
