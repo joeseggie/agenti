@@ -143,6 +143,7 @@ builder.Services.AddScoped<IAgentService, AgentService>();
 builder.Services.AddScoped<IWalletTypeService, WalletTypeService>();
 builder.Services.AddScoped<IVaultService, VaultService>();
 builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<ILoginTelemetryService, LoginTelemetryService>();
 builder.Services.AddScoped<ISetupService, SetupService>();
 builder.Services.AddScoped<IThemeService, ThemeService>();
 
