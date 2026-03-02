@@ -12,9 +12,10 @@ namespace EastSeat.Agenti.Mcp.Tools;
 public class TrendTools
 {
     /// <summary>
-    /// Safety limit for trend aggregation queries to prevent loading excessive data from production.
+    /// Hard ceiling for trend aggregation queries regardless of operator configuration.
     /// </summary>
     private const int MaxTrendRows = 10000;
+
     [McpServerTool(Name = "query_trends"),
      Description("Aggregate analytics across the Agenti system. " +
                  "Supports metrics: daily_totals, agent_performance, wallet_type_volume, discrepancy_rate, vault_flow. " +
@@ -45,21 +46,22 @@ public class TrendTools
             return "Error: Date range cannot exceed 1 year. Please narrow your query.";
 
         var effectiveBranchId = config.CanQueryAllBranches ? branchId : config.BranchId;
+        var limit = Math.Min(config.MaxRows, MaxTrendRows);
 
         return metric.ToLowerInvariant() switch
         {
-            "daily_totals" => await DailyTotals(db, from, to, groupBy, agentCode, effectiveBranchId),
-            "agent_performance" => await AgentPerformance(db, from, to, agentCode, effectiveBranchId),
-            "wallet_type_volume" => await WalletTypeVolume(db, from, to, agentCode, effectiveBranchId),
-            "discrepancy_rate" => await DiscrepancyRate(db, from, to, groupBy, agentCode, effectiveBranchId),
-            "vault_flow" => await VaultFlow(db, from, to, groupBy, effectiveBranchId),
+            "daily_totals" => await DailyTotals(db, from, to, groupBy, agentCode, effectiveBranchId, limit),
+            "agent_performance" => await AgentPerformance(db, from, to, agentCode, effectiveBranchId, limit),
+            "wallet_type_volume" => await WalletTypeVolume(db, from, to, agentCode, effectiveBranchId, limit),
+            "discrepancy_rate" => await DiscrepancyRate(db, from, to, groupBy, agentCode, effectiveBranchId, limit),
+            "vault_flow" => await VaultFlow(db, from, to, groupBy, effectiveBranchId, limit),
             _ => "Error: Invalid metric. Choose from: daily_totals, agent_performance, wallet_type_volume, discrepancy_rate, vault_flow"
         };
     }
 
     private static async Task<string> DailyTotals(
         ReadOnlyDbContext db, DateOnly from, DateOnly to, string groupBy,
-        string? agentCode, long? branchId)
+        string? agentCode, long? branchId, int limit)
     {
         var fromOffset = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
         var toOffset = new DateTimeOffset(to.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero);
@@ -88,7 +90,7 @@ public class TrendTools
                 Count = g.Count()
             })
             .OrderBy(g => g.Date)
-            .Take(MaxTrendRows)
+            .Take(limit)
             .ToListAsync();
 
         // Re-group by week/month if needed (in-memory, on already-aggregated data)
@@ -123,7 +125,7 @@ public class TrendTools
 
     private static async Task<string> AgentPerformance(
         ReadOnlyDbContext db, DateOnly from, DateOnly to,
-        string? agentCode, long? branchId)
+        string? agentCode, long? branchId, int limit)
     {
         var sessionQuery = db.CashSessions
             .Include(s => s.Agent).ThenInclude(a => a!.User)
@@ -136,7 +138,7 @@ public class TrendTools
         if (!string.IsNullOrWhiteSpace(agentCode))
             sessionQuery = sessionQuery.Where(s => s.Agent != null && s.Agent.Code == agentCode.ToUpper());
 
-        var sessions = await sessionQuery.Take(MaxTrendRows).ToListAsync();
+        var sessions = await sessionQuery.Take(limit).ToListAsync();
 
         var agentStats = sessions
             .Where(s => s.Agent != null)
@@ -178,7 +180,7 @@ public class TrendTools
 
     private static async Task<string> WalletTypeVolume(
         ReadOnlyDbContext db, DateOnly from, DateOnly to,
-        string? agentCode, long? branchId)
+        string? agentCode, long? branchId, int limit)
     {
         var fromOffset = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
         var toOffset = new DateTimeOffset(to.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero);
@@ -196,7 +198,7 @@ public class TrendTools
                 t.CashSession != null && t.CashSession.Agent != null &&
                 t.CashSession.Agent.Code == agentCode.ToUpper());
 
-        var transactions = await query.Take(MaxTrendRows).ToListAsync();
+        var transactions = await query.Take(limit).ToListAsync();
 
         // Aggregate by wallet type (from both sides of transactions)
         var walletVolumes = new Dictionary<string, (decimal Volume, int Count)>();
@@ -234,7 +236,7 @@ public class TrendTools
 
     private static async Task<string> DiscrepancyRate(
         ReadOnlyDbContext db, DateOnly from, DateOnly to, string groupBy,
-        string? agentCode, long? branchId)
+        string? agentCode, long? branchId, int limit)
     {
         var sessionQuery = db.CashSessions
             .Include(s => s.Discrepancies)
@@ -246,7 +248,7 @@ public class TrendTools
         if (!string.IsNullOrWhiteSpace(agentCode))
             sessionQuery = sessionQuery.Where(s => s.Agent != null && s.Agent.Code == agentCode.ToUpper());
 
-        var sessions = await sessionQuery.Take(MaxTrendRows).ToListAsync();
+        var sessions = await sessionQuery.Take(limit).ToListAsync();
 
         var grouped = sessions
             .GroupBy(s => GroupDate(s.OpenedAt.DateTime, groupBy))
@@ -277,7 +279,7 @@ public class TrendTools
     }
 
     private static async Task<string> VaultFlow(
-        ReadOnlyDbContext db, DateOnly from, DateOnly to, string groupBy, long? branchId)
+        ReadOnlyDbContext db, DateOnly from, DateOnly to, string groupBy, long? branchId, int limit)
     {
         var fromOffset = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
         var toOffset = new DateTimeOffset(to.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero);
@@ -292,7 +294,7 @@ public class TrendTools
 
         var transactions = await query
             .Select(vt => new { vt.Type, vt.Amount, vt.CreatedAt })
-            .Take(MaxTrendRows)
+            .Take(limit)
             .ToListAsync();
 
         var grouped = transactions
