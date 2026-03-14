@@ -120,6 +120,9 @@ public class TrendTools
             sb.AppendLine($"{g.Period} | {g.Deposits:N2} | {g.Withdrawals:N2} | {g.Transfers:N2} | {g.Total:N2} | {g.Count}");
         }
 
+        if (dailyAggregates.Count == limit)
+            sb.AppendLine($"(Results limited to {limit} rows. Some periods may be incomplete.)");
+
         return sb.ToString();
     }
 
@@ -174,6 +177,9 @@ public class TrendTools
 
         if (agentStats.Count == 0)
             return "No agent performance data found for the specified period.";
+
+        if (sessions.Count == limit)
+            sb.AppendLine($"(Results limited to {limit} rows. Some periods may be incomplete.)");
 
         return sb.ToString();
     }
@@ -231,6 +237,9 @@ public class TrendTools
             sb.AppendLine($"{kv.Key} | {kv.Value.Volume:N2} | {kv.Value.Count}");
         }
 
+        if (transactions.Count == limit)
+            sb.AppendLine($"(Results limited to {limit} rows. Some periods may be incomplete.)");
+
         return sb.ToString();
     }
 
@@ -274,6 +283,9 @@ public class TrendTools
             var rate = g.TotalSessions > 0 ? (double)g.SessionsWithDiscrepancy / g.TotalSessions * 100 : 0;
             sb.AppendLine($"{g.Period} | {g.TotalSessions} | {g.SessionsWithDiscrepancy} | {rate:F1}% | {g.TotalVariance:N2}");
         }
+
+        if (sessions.Count == limit)
+            sb.AppendLine($"(Results limited to {limit} rows. Some periods may be incomplete.)");
 
         return sb.ToString();
     }
@@ -327,6 +339,9 @@ public class TrendTools
             var sign = netFlow >= 0 ? "+" : "";
             sb.AppendLine($"{g.Period} | {g.Inflow:N2} | {g.Outflow:N2} | {sign}{netFlow:N2} | {g.TransactionCount}");
         }
+
+        if (transactions.Count == limit)
+            sb.AppendLine($"(Results limited to {limit} rows. Some periods may be incomplete.)");
 
         return sb.ToString();
     }
