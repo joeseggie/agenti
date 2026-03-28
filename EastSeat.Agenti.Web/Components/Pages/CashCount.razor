@@ -193,19 +193,19 @@
 
                                                         <MudDivider Class="my-3" />
                                                         <MudGrid>
-                                                            <MudItem xs="4">
+                                                            <MudItem xs="6" sm="4">
                                                                 <MudText Typo="Typo.body2">Notes Total:</MudText>
                                                                 <MudText Typo="Typo.body1">
                                                                     UGX @wallet.Denominations.NotesTotal.ToString("N0")
                                                                 </MudText>
                                                             </MudItem>
-                                                            <MudItem xs="4">
+                                                            <MudItem xs="6" sm="4">
                                                                 <MudText Typo="Typo.body2">Coins Total:</MudText>
                                                                 <MudText Typo="Typo.body1">
                                                                     UGX @wallet.Denominations.CoinsTotal.ToString("N0")
                                                                 </MudText>
                                                             </MudItem>
-                                                            <MudItem xs="4">
+                                                            <MudItem xs="12" sm="4">
                                                                 <MudText Typo="Typo.body2">Grand Total:</MudText>
                                                                 <MudText Typo="Typo.h6" Color="Color.Primary">
                                                                     UGX @wallet.Denominations.Total.ToString("N0")
@@ -266,19 +266,19 @@
                                             </MudText>
                                         </MudItem>
                                     }
-                                    <MudItem xs="6" sm="@(_countForm.IsOpening ? 6 : 3)" Class="d-flex align-center justify-end">
-                                        <MudButtonGroup Variant="Variant.Filled" OverrideStyles="false">
-                                            <MudButton Color="Color.Default" OnClick="SaveCount" Disabled="_isSaving">
+                                    <MudItem xs="12" sm="@(_countForm.IsOpening ? 6 : 3)" Class="d-flex align-center justify-end">
+                                        <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2" Justify="Justify.FlexEnd">
+                                            <MudButton Variant="Variant.Filled" Color="Color.Default" OnClick="SaveCount" Disabled="_isSaving">
                                                 @if (_isSaving)
                                                 {
                                                     <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
                                                 }
                                                 Save Draft
                                             </MudButton>
-                                            <MudButton Color="Color.Primary" OnClick="SubmitCount" Disabled="_isSaving">
+                                            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SubmitCount" Disabled="_isSaving">
                                                 Submit
                                             </MudButton>
-                                        </MudButtonGroup>
+                                        </MudStack>
                                     </MudItem>
                                 </MudGrid>
                             </MudPaper>

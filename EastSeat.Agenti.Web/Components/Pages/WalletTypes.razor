@@ -51,7 +51,8 @@
     {
         <MudGrid Class="mt-4">
             <MudItem xs="12">
-                <MudTable Items="@_walletTypes" Hover="true" Striped="true" Dense="true" Elevation="2">
+                <MudTable Items="@_walletTypes" Hover="true" Striped="true" Dense="true" Elevation="2"
+                    Breakpoint="Breakpoint.Md">
                     <HeaderContent>
                         <MudTh>Name</MudTh>
                         <MudTh>Type</MudTh>
@@ -120,13 +121,11 @@
 </MudContainer>
 
 <!-- Wallet Type Form Dialog -->
-@if (_showDialog)
-{
-    <MudOverlay Visible="true" DarkBackground="true" ZIndex="9999" OnClick="CloseDialog" />
-    <MudPaper Class="pa-4"
-        Style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10000; width: 500px; max-width: 90vw;">
-        <MudText Typo="Typo.h6" Class="mb-4">@(_form.Id.HasValue ? "Edit Wallet Type" : "Add Wallet Type")</MudText>
-
+<MudDialog @bind-Visible="_showDialog" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_form.Id.HasValue ? "Edit Wallet Type" : "Add Wallet Type")</MudText>
+    </TitleContent>
+    <DialogContent>
         <MudGrid>
             <MudItem xs="12">
                 <MudTextField @bind-Value="_form.Name" Label="Name" Variant="Variant.Outlined" Required="true"
@@ -138,10 +137,10 @@
             <MudItem xs="12" sm="6">
                 <MudSelect T="WalletTypeEnum" @bind-Value="_form.Type" Label="Type" Variant="Variant.Outlined"
                     AnchorOrigin="Origin.BottomCenter">
-                    <MudSelectItem T="WalletTypeEnum" Value="WalletTypeEnum.Cash">💵 Cash</MudSelectItem>
-                    <MudSelectItem T="WalletTypeEnum" Value="WalletTypeEnum.MobileMoney">📱 Mobile Money</MudSelectItem>
-                    <MudSelectItem T="WalletTypeEnum" Value="WalletTypeEnum.Bank">🏦 Bank</MudSelectItem>
-                    <MudSelectItem T="WalletTypeEnum" Value="WalletTypeEnum.Custom">💰 Custom</MudSelectItem>
+                    <MudSelectItem T="WalletTypeEnum" Value="WalletTypeEnum.Cash">Cash</MudSelectItem>
+                    <MudSelectItem T="WalletTypeEnum" Value="WalletTypeEnum.MobileMoney">Mobile Money</MudSelectItem>
+                    <MudSelectItem T="WalletTypeEnum" Value="WalletTypeEnum.Bank">Bank</MudSelectItem>
+                    <MudSelectItem T="WalletTypeEnum" Value="WalletTypeEnum.Custom">Custom</MudSelectItem>
                 </MudSelect>
             </MudItem>
             <MudItem xs="12" sm="6" Class="d-flex align-center">
@@ -151,18 +150,18 @@
                 <MudSwitch @bind-Value="_form.IsActive" Label="Active" Color="Color.Success" />
             </MudItem>
         </MudGrid>
-        <div class="d-flex justify-end gap-2 mt-4">
-            <MudButton OnClick="CloseDialog" Color="Color.Default">Cancel</MudButton>
-            <MudButton OnClick="SaveWalletType" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
-                @if (_isSaving)
-                {
-                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
-                }
-                Save
-            </MudButton>
-        </div>
-    </MudPaper>
-}
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseDialog" Color="Color.Default">Cancel</MudButton>
+        <MudButton OnClick="SaveWalletType" Color="Color.Primary" Variant="Variant.Filled" Disabled="@_isSaving">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Save
+        </MudButton>
+    </DialogActions>
+</MudDialog>
 
 @code {
     private List<WalletTypeListItemDto> _walletTypes = [];

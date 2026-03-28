@@ -63,7 +63,8 @@
                             </CardHeaderContent>
                         </MudCardHeader>
                         <MudCardContent>
-                            <MudTable Items="@_pendingTransactions" Hover="true" Striped="true">
+                            <MudTable Items="@_pendingTransactions" Hover="true" Striped="true"
+                                Breakpoint="Breakpoint.Md">
                                 <HeaderContent>
                                     <MudTh>Created By</MudTh>
                                     <MudTh>Type</MudTh>
@@ -73,22 +74,22 @@
                                     <MudTh>Actions</MudTh>
                                 </HeaderContent>
                                 <RowTemplate Context="trx">
-                                    <MudTd>@trx.CreatedBy</MudTd>
-                                    <MudTd>
+                                    <MudTd DataLabel="Created By">@trx.CreatedBy</MudTd>
+                                    <MudTd DataLabel="Type">
                                         <MudChip T="string" Color="@GetTransactionTypeColor(trx.Type)"
                                             Icon="@GetTransactionTypeIcon(trx.Type)" Size="Size.Small">
                                             @GetTransactionTypeLabel(trx.Type)
                                         </MudChip>
                                     </MudTd>
-                                    <MudTd>
+                                    <MudTd DataLabel="Amount">
                                         <MudText
                                             Color="@(trx.Type == VaultTransactionType.ManualDeposit ? Color.Success : Color.Error)">
                                             @(trx.Type == VaultTransactionType.ManualDeposit ? "+" :
                                                                                 "-")UGX @trx.Amount.ToString("N0")
                                         </MudText>
                                     </MudTd>
-                                    <MudTd>@trx.Notes</MudTd>
-                                    <MudTd>
+                                    <MudTd DataLabel="Notes">@trx.Notes</MudTd>
+                                    <MudTd DataLabel="Expires In">
                                         @if (trx.ExpiresAt.HasValue)
                                         {
                                             var timeRemaining = trx.ExpiresAt.Value - DateTimeOffset.UtcNow;
@@ -111,7 +112,7 @@
                                             }
                                         }
                                     </MudTd>
-                                    <MudTd>
+                                    <MudTd DataLabel="Actions">
                                         <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Success"
                                             OnClick="@(() => ApproveTransaction(trx.Id))"
                                             Disabled="@(trx.ExpiresAt.HasValue && trx.ExpiresAt.Value <= DateTimeOffset.UtcNow)">
@@ -140,7 +141,8 @@
             <MudCardContent>
                 @if (_transactions.Any())
                 {
-                    <MudTable Items="@_transactions" Hover="true" Striped="true">
+                    <MudTable Items="@_transactions" Hover="true" Striped="true"
+                        Breakpoint="Breakpoint.Md">
                         <HeaderContent>
                             <MudTh>Date</MudTh>
                             <MudTh>Type</MudTh>
@@ -151,34 +153,34 @@
                             <MudTh>Approved By</MudTh>
                         </HeaderContent>
                         <RowTemplate Context="trx">
-                            <MudTd>@trx.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
-                            <MudTd>
+                            <MudTd DataLabel="Date">@trx.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+                            <MudTd DataLabel="Type">
                                 <MudChip T="string" Color="@GetTransactionTypeColor(trx.Type)"
                                     Icon="@GetTransactionTypeIcon(trx.Type)" Size="Size.Small">
                                     @GetTransactionTypeLabel(trx.Type)
                                 </MudChip>
                             </MudTd>
-                            <MudTd>
+                            <MudTd DataLabel="Status">
                                 <MudChip T="string" Color="@GetStatusColor(trx.Status)" Size="Size.Small">
                                     @GetStatusLabel(trx.Status)
                                 </MudChip>
                             </MudTd>
-                            <MudTd>
+                            <MudTd DataLabel="Amount">
                                 <MudText
                                     Color="@(trx.Type == VaultTransactionType.ManualDeposit || trx.Type == VaultTransactionType.Closing ? Color.Success : Color.Error)">
                                     @(trx.Type == VaultTransactionType.ManualDeposit || trx.Type == VaultTransactionType.Closing
                                                                 ? "+" : "-")UGX @trx.Amount.ToString("N0")
                                 </MudText>
                             </MudTd>
-                            <MudTd>
+                            <MudTd DataLabel="Balance After">
                                 @if (trx.BalanceAfter.HasValue)
                                 {
                                     <MudText Color="Color.Primary" Typo="Typo.body2">UGX @trx.BalanceAfter.Value.ToString("N0")
                                     </MudText>
                                 }
                             </MudTd>
-                            <MudTd>@trx.CreatedBy</MudTd>
-                            <MudTd>@(trx.ApprovedBy ?? "-")</MudTd>
+                            <MudTd DataLabel="Created By">@trx.CreatedBy</MudTd>
+                            <MudTd DataLabel="Approved By">@(trx.ApprovedBy ?? "-")</MudTd>
                         </RowTemplate>
                     </MudTable>
                 }
