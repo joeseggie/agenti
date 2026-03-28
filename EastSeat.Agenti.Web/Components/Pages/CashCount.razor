@@ -162,40 +162,70 @@
                     @if (context.SupportsDenominations && _expandedWalletIds.Contains(context.WalletId) && context.Denominations != null)
                     {
                         <MudTr>
-                            <td colspan="100" class="pa-4" style="background: var(--mud-palette-background-grey);">
-                                <MudText Typo="Typo.subtitle2" Class="mb-2">Notes</MudText>
-                                <MudStack Row="true" Spacing="2" Class="mb-3" Wrap="Wrap.Wrap">
-                                    @foreach (var denom in UgxDenominations.Notes)
-                                    {
-                                        var denomKey = denom.ToString();
-                                        <MudNumericField T="int"
-                                            Label="@($"{denom:N0}")"
-                                            Value="@context.Denominations.Notes[denomKey]"
-                                            ValueChanged="@((int v) => OnDenominationChanged(context, denomKey, v, true))"
-                                            Min="0" Variant="Variant.Outlined" Margin="Margin.Dense"
-                                            Style="max-width: 100px;" HideSpinButtons="true" />
-                                    }
-                                </MudStack>
-
-                                <MudText Typo="Typo.subtitle2" Class="mb-2">Coins</MudText>
-                                <MudStack Row="true" Spacing="2" Class="mb-3" Wrap="Wrap.Wrap">
-                                    @foreach (var denom in UgxDenominations.Coins)
-                                    {
-                                        var denomKey = denom.ToString();
-                                        <MudNumericField T="int"
-                                            Label="@($"{denom:N0}")"
-                                            Value="@context.Denominations.Coins[denomKey]"
-                                            ValueChanged="@((int v) => OnDenominationChanged(context, denomKey, v, false))"
-                                            Min="0" Variant="Variant.Outlined" Margin="Margin.Dense"
-                                            Style="max-width: 100px;" HideSpinButtons="true" />
-                                    }
-                                </MudStack>
-
-                                <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center">
-                                    <MudText Typo="Typo.caption">Notes: UGX @context.Denominations.NotesTotal.ToString("N0")</MudText>
-                                    <MudText Typo="Typo.caption">Coins: UGX @context.Denominations.CoinsTotal.ToString("N0")</MudText>
-                                    <MudText Typo="Typo.body2"><strong>Total: UGX @context.Denominations.Total.ToString("N0")</strong></MudText>
-                                </MudStack>
+                            <td colspan="100" class="pa-2" style="background: var(--mud-palette-background-grey);">
+                                <MudSimpleTable Dense="true" Hover="true" Style="background: transparent;">
+                                    <thead>
+                                        <tr>
+                                            <th>Denomination</th>
+                                            <th Style="text-align: right; width: 100px;">Qty</th>
+                                            <th Style="text-align: right;">Subtotal (UGX)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td colspan="3"><strong>Notes</strong></td>
+                                        </tr>
+                                        @foreach (var denom in UgxDenominations.Notes)
+                                        {
+                                            var denomKey = denom.ToString();
+                                            var qty = context.Denominations.Notes[denomKey];
+                                            <tr>
+                                                <td>UGX @denom.ToString("N0")</td>
+                                                <td Style="text-align: right;">
+                                                    <MudNumericField T="int"
+                                                        Value="@qty"
+                                                        ValueChanged="@((int v) => OnDenominationChanged(context, denomKey, v, true))"
+                                                        Min="0" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                        Style="max-width: 80px;" HideSpinButtons="true" />
+                                                </td>
+                                                <td Style="text-align: right;">@((qty * denom).ToString("N0"))</td>
+                                            </tr>
+                                        }
+                                        <tr style="font-weight: 600;">
+                                            <td colspan="2">Notes Subtotal</td>
+                                            <td Style="text-align: right;">@context.Denominations.NotesTotal.ToString("N0")</td>
+                                        </tr>
+                                        <tr>
+                                            <td colspan="3"><strong>Coins</strong></td>
+                                        </tr>
+                                        @foreach (var denom in UgxDenominations.Coins)
+                                        {
+                                            var denomKey = denom.ToString();
+                                            var qty = context.Denominations.Coins[denomKey];
+                                            <tr>
+                                                <td>UGX @denom.ToString("N0")</td>
+                                                <td Style="text-align: right;">
+                                                    <MudNumericField T="int"
+                                                        Value="@qty"
+                                                        ValueChanged="@((int v) => OnDenominationChanged(context, denomKey, v, false))"
+                                                        Min="0" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                        Style="max-width: 80px;" HideSpinButtons="true" />
+                                                </td>
+                                                <td Style="text-align: right;">@((qty * denom).ToString("N0"))</td>
+                                            </tr>
+                                        }
+                                        <tr style="font-weight: 600;">
+                                            <td colspan="2">Coins Subtotal</td>
+                                            <td Style="text-align: right;">@context.Denominations.CoinsTotal.ToString("N0")</td>
+                                        </tr>
+                                    </tbody>
+                                    <tfoot>
+                                        <tr style="font-weight: 700;">
+                                            <td colspan="2">Total</td>
+                                            <td Style="text-align: right;">UGX @context.Denominations.Total.ToString("N0")</td>
+                                        </tr>
+                                    </tfoot>
+                                </MudSimpleTable>
                             </td>
                         </MudTr>
                     }
