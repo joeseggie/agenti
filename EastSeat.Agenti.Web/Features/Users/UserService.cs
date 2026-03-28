@@ -63,8 +63,10 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         performedByUserId = NormalizeUserId(performedByUserId);
         if (model is null) return CreateUserResult.Error("Invalid request");
 
-        // Validate email uniqueness
-        var existingUser = await userManager.FindByEmailAsync(model.Email);
+        // Validate email uniqueness (including soft-deleted tombstone rows)
+        var existingUser = await db.Users
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.NormalizedEmail == model.Email.ToUpperInvariant(), cancellationToken);
         if (existingUser != null)
             return CreateUserResult.Error($"A user with email '{model.Email}' already exists.");
 
@@ -419,13 +421,36 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
                 return new(false, "Cannot delete the last remaining Admin.");
         }
 
-        // If user is linked to an agent, prevent deletion for now to keep integrity
+        // If user is linked to an agent, prevent deletion to keep integrity
         if (user.Agent != null)
         {
             return new(false, "Cannot delete a user linked to an Agent. Please deactivate instead or unlink via data migration.");
         }
 
-        db.Users.Remove(user);
+        // Soft-delete: clear properties but preserve Id, UserName, and Email for FK integrity and uniqueness
+        user.FirstName = string.Empty;
+        user.LastName = string.Empty;
+        user.PhoneNumber = null;
+        user.BranchId = null;
+        user.ThemePreference = null;
+        user.Role = UserRole.Agent;
+        user.IsActive = false;
+        user.IsDeleted = true;
+        user.DeletedAt = DateTime.UtcNow;
+        user.UpdatedAt = DateTime.UtcNow;
+        user.LockoutEnabled = true;
+        user.LockoutEnd = DateTimeOffset.MaxValue;
+
+        // Clear password and invalidate existing sessions
+        await userManager.RemovePasswordAsync(user);
+        await userManager.UpdateSecurityStampAsync(user);
+
+        // Remove all Identity role assignments
+        var roles = await userManager.GetRolesAsync(user);
+        if (roles.Count > 0)
+        {
+            await userManager.RemoveFromRolesAsync(user, roles);
+        }
 
         db.UserAuditLogs.Add(new UserAuditLog
         {

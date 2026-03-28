@@ -157,6 +157,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         {
             entity.Property(e => e.FirstName).IsRequired().HasMaxLength(100);
             entity.Property(e => e.LastName).IsRequired().HasMaxLength(100);
+            entity.HasQueryFilter(u => !u.IsDeleted);
         });
 
         // Configure WalletType
