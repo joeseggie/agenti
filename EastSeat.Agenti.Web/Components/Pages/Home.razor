@@ -46,46 +46,9 @@
     }
     else
     {
-        <!-- Wallet Balance Cards -->
+        <!-- Session Status -->
         <MudGrid>
-            @foreach (var wallet in _dashboard.Wallets)
-            {
-                <MudItem xs="12" sm="6" md="4">
-                    <MudCard Elevation="2" Class="wallet-card">
-                        <MudCardContent>
-                            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
-                                <MudText Typo="Typo.h6">@wallet.WalletTypeIcon @wallet.WalletTypeName</MudText>
-                                @if (wallet.SupportsDenominations)
-                                {
-                                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
-                                        Denominations</MudChip>
-                                }
-                            </MudStack>
-                            <MudText Typo="Typo.body2" Color="Color.Dark" Class="mt-1">@wallet.WalletName</MudText>
-                            <MudText Typo="Typo.h5" Color="Color.Primary" Class="mt-3">
-                                @wallet.Currency @wallet.Balance.ToString("N0")
-                            </MudText>
-                        </MudCardContent>
-                    </MudCard>
-                </MudItem>
-            }
-        </MudGrid>
-
-        <!-- Total Balance Summary -->
-        <MudGrid Class="mt-4">
-            <MudItem xs="12" md="6">
-                <MudCard Elevation="3" Class="total-balance-card">
-                    <MudCardContent>
-                        <MudText Typo="Typo.h6">💰 Total Balance</MudText>
-                        <MudText Typo="Typo.h4" Color="Color.Primary" Class="mt-2">
-                            @_dashboard.Currency @_dashboard.TotalBalance.ToString("N0")
-                        </MudText>
-                    </MudCardContent>
-                </MudCard>
-            </MudItem>
-
-            <!-- Session Status -->
-            <MudItem xs="12" md="6">
+            <MudItem xs="12">
                 <MudCard Elevation="3" Class="session-status-card">
                     <MudCardContent>
                         <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
@@ -106,6 +69,70 @@
                                 No active session for today. Start a cash count to open a session.
                             </MudText>
                         }
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+
+        <!-- Agent Wallet Summary Table -->
+        <MudGrid Class="mt-4">
+            <MudItem xs="12">
+                <MudCard Elevation="2">
+                    <MudCardContent>
+                        <MudText Typo="Typo.h6" Class="mb-3">Agent Wallet Balances</MudText>
+                        <MudTable Items="@_dashboard.AgentSummaries" Hover="true" Dense="true" Striped="true"
+                            Breakpoint="Breakpoint.Sm">
+                            <HeaderContent>
+                                <MudTh>Agent Name</MudTh>
+                                <MudTh Style="text-align: right">Total Balance</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Agent Name">@context.AgentName</MudTd>
+                                <MudTd DataLabel="Total Balance" Style="text-align: right">
+                                    @context.Currency @context.TotalBalance.ToString("N0")
+                                </MudTd>
+                            </RowTemplate>
+                            <FooterContent>
+                                <MudTd><strong>Total (All Agents)</strong></MudTd>
+                                <MudTd Style="text-align: right">
+                                    <strong>@_dashboard.Currency @_dashboard.TotalAgentBalance.ToString("N0")</strong>
+                                </MudTd>
+                            </FooterContent>
+                        </MudTable>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+
+        <!-- Vault vs Agents Summary -->
+        <MudGrid Class="mt-4">
+            <MudItem xs="12" sm="4">
+                <MudCard Elevation="3">
+                    <MudCardContent>
+                        <MudText Typo="Typo.body2" Color="Color.Default">Vault Balance</MudText>
+                        <MudText Typo="Typo.h5" Color="Color.Primary" Class="mt-1">
+                            @_dashboard.Currency @_dashboard.VaultBalance.ToString("N0")
+                        </MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudCard Elevation="3">
+                    <MudCardContent>
+                        <MudText Typo="Typo.body2" Color="Color.Default">Total Agent Wallets</MudText>
+                        <MudText Typo="Typo.h5" Color="Color.Primary" Class="mt-1">
+                            @_dashboard.Currency @_dashboard.TotalAgentBalance.ToString("N0")
+                        </MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudCard Elevation="3" Style="@GetDifferenceCardStyle()">
+                    <MudCardContent>
+                        <MudText Typo="Typo.body2" Style="@GetDifferenceTextStyle()">Difference (Vault - Agents)</MudText>
+                        <MudText Typo="Typo.h5" Style="@GetDifferenceTextStyle()" Class="mt-1">
+                            @_dashboard.Currency @_dashboard.VaultAgentDifference.ToString("N0")
+                        </MudText>
                     </MudCardContent>
                 </MudCard>
             </MudItem>
@@ -150,4 +177,21 @@
         EastSeat.Agenti.Shared.Domain.Enums.CashSessionStatus.Completed => Color.Info,
         _ => Color.Info
     };
+
+    private string GetDifferenceCardStyle()
+    {
+        if (_dashboard is null) return string.Empty;
+        return _dashboard.VaultAgentDifference switch
+        {
+            < 0 => "background-color: #f44336;",
+            > 0 => "background-color: #4caf50;",
+            _ => string.Empty
+        };
+    }
+
+    private string GetDifferenceTextStyle()
+    {
+        if (_dashboard is null) return string.Empty;
+        return _dashboard.VaultAgentDifference != 0 ? "color: white;" : string.Empty;
+    }
 }
