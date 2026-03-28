@@ -300,22 +300,28 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         var oldRoleName = user.Role.ToString();
         var newRoleName = newRole.ToString();
 
-        // Remove from old Identity role
-        var removeResult = await userManager.RemoveFromRoleAsync(user, oldRoleName);
-        if (!removeResult.Succeeded)
+        // Remove from old Identity role (skip if user was never assigned the role in Identity)
+        if (await userManager.IsInRoleAsync(user, oldRoleName))
         {
-            var errors = string.Join(", ", removeResult.Errors.Select(e => e.Description));
-            return new(false, $"Failed to remove old role: {errors}");
+            var removeResult = await userManager.RemoveFromRoleAsync(user, oldRoleName);
+            if (!removeResult.Succeeded)
+            {
+                var errors = string.Join(", ", removeResult.Errors.Select(e => e.Description));
+                return new(false, $"Failed to remove old role: {errors}");
+            }
         }
 
-        // Add to new Identity role
-        var addResult = await userManager.AddToRoleAsync(user, newRoleName);
-        if (!addResult.Succeeded)
+        // Add to new Identity role (skip if already assigned)
+        if (!await userManager.IsInRoleAsync(user, newRoleName))
         {
-            var errors = string.Join(", ", addResult.Errors.Select(e => e.Description));
-            // Try to restore old role
-            await userManager.AddToRoleAsync(user, oldRoleName);
-            return new(false, $"Failed to add new role: {errors}");
+            var addResult = await userManager.AddToRoleAsync(user, newRoleName);
+            if (!addResult.Succeeded)
+            {
+                var errors = string.Join(", ", addResult.Errors.Select(e => e.Description));
+                // Try to restore old role
+                await userManager.AddToRoleAsync(user, oldRoleName);
+                return new(false, $"Failed to add new role: {errors}");
+            }
         }
 
         // Update custom role property

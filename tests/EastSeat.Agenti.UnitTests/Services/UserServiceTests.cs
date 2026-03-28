@@ -570,6 +570,8 @@ public class UserServiceTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         _userManagerMock.Setup(x => x.FindByIdAsync("admin-2")).ReturnsAsync(admin2);
+        _userManagerMock.Setup(x => x.IsInRoleAsync(admin2, "Admin")).ReturnsAsync(true);
+        _userManagerMock.Setup(x => x.IsInRoleAsync(admin2, "Agent")).ReturnsAsync(false);
         _userManagerMock.Setup(x => x.RemoveFromRoleAsync(admin2, "Admin"))
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.AddToRoleAsync(admin2, "Agent"))
@@ -588,6 +590,38 @@ public class UserServiceTests : IDisposable
         auditLog!.Action.Should().Be(UserAuditAction.RoleChanged);
         auditLog.OldValue.Should().Be("Admin");
         auditLog.NewValue.Should().Be("Agent");
+    }
+
+    [Fact]
+    public async Task ChangeRoleAsync_WhenUserNotInIdentityRole_SkipsRemoveAndSucceeds()
+    {
+        // Arrange - user has Role=Agent in custom property but no Identity role assigned
+        var admin = UserBuilder.Default().WithId("admin-1").WithRole(UserRole.Admin).Build();
+        var agent = UserBuilder.Default().WithId("agent-1").WithRole(UserRole.Agent).Build();
+        _dbContext.Users.AddRange(admin, agent);
+        await _dbContext.SaveChangesAsync();
+
+        _userManagerMock.Setup(x => x.FindByIdAsync("agent-1")).ReturnsAsync(agent);
+        _userManagerMock.Setup(x => x.IsInRoleAsync(agent, "Agent")).ReturnsAsync(false);
+        _userManagerMock.Setup(x => x.IsInRoleAsync(agent, "Admin")).ReturnsAsync(false);
+        _userManagerMock.Setup(x => x.AddToRoleAsync(agent, "Admin"))
+            .ReturnsAsync(IdentityResult.Success);
+        _userManagerMock.Setup(x => x.UpdateAsync(agent))
+            .ReturnsAsync(IdentityResult.Success);
+
+        // Act
+        var result = await _userService.ChangeRoleAsync("agent-1", UserRole.Admin, "admin-1");
+
+        // Assert
+        result.Success.Should().BeTrue();
+        _userManagerMock.Verify(x => x.RemoveFromRoleAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()), Times.Never);
+        _userManagerMock.Verify(x => x.AddToRoleAsync(agent, "Admin"), Times.Once);
+
+        var auditLog = await _dbContext.UserAuditLogs.FirstOrDefaultAsync();
+        auditLog.Should().NotBeNull();
+        auditLog!.Action.Should().Be(UserAuditAction.RoleChanged);
+        auditLog.OldValue.Should().Be("Agent");
+        auditLog.NewValue.Should().Be("Admin");
     }
 
     #endregion
