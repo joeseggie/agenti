@@ -20,6 +20,8 @@ public class UserBuilder
     private long? _agentId = null;
     private DateTime _createdAt = DateTime.UtcNow;
     private string? _themePreference = null;
+    private bool _isDeleted = false;
+    private DateTime? _deletedAt = null;
 
     public UserBuilder WithId(string id)
     {
@@ -88,6 +90,19 @@ public class UserBuilder
         return this;
     }
 
+    public UserBuilder AsDeleted()
+    {
+        _isDeleted = true;
+        _isActive = false;
+        _deletedAt = DateTime.UtcNow;
+        _firstName = string.Empty;
+        _lastName = string.Empty;
+        _phoneNumber = null;
+        _branchId = null;
+        _themePreference = null;
+        return this;
+    }
+
     public ApplicationUser Build()
     {
         return new ApplicationUser
@@ -103,7 +118,11 @@ public class UserBuilder
             BranchId = _branchId,
             AgentId = _agentId,
             CreatedAt = _createdAt,
-            ThemePreference = _themePreference
+            ThemePreference = _themePreference,
+            IsDeleted = _isDeleted,
+            DeletedAt = _deletedAt,
+            NormalizedEmail = _email.ToUpperInvariant(),
+            NormalizedUserName = _userName.ToUpperInvariant()
         };
     }
 
