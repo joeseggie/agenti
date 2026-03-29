@@ -1,8 +1,28 @@
-@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&display=swap");
-
 html,
 body {
   font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+/* Mobile: reduce main content horizontal padding */
+@media (max-width: 599.98px) {
+  .mud-main-content {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+}
+
+/* Ensure tables scroll horizontally as fallback */
+.mud-table-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Touch-friendly tap targets on mobile */
+@media (max-width: 959.98px) {
+  .mud-icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 a,

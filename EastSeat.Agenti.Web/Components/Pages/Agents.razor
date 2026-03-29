@@ -51,7 +51,8 @@
     {
         <MudGrid Class="mt-4">
             <MudItem xs="12">
-                <MudTable Items="@_agents" Hover="true" Striped="true" Dense="true" Elevation="2">
+                <MudTable Items="@_agents" Hover="true" Striped="true" Dense="true" Elevation="2"
+                    Breakpoint="Breakpoint.Md">
                     <HeaderContent>
                         <MudTh>Code</MudTh>
                         <MudTh>Name</MudTh>
@@ -114,13 +115,11 @@
 </MudContainer>
 
 <!-- Agent Form Dialog -->
-@if (_showAgentDialog)
-{
-    <MudOverlay Visible="true" DarkBackground="true" ZIndex="9999" OnClick="CloseAgentDialog" />
-    <MudPaper Class="pa-4"
-        Style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10000; width: 500px; max-width: 90vw;">
-        <MudText Typo="Typo.h6" Class="mb-4">@(_agentForm.Id.HasValue ? "Edit Agent" : "Add Agent")</MudText>
-
+<MudDialog @bind-Visible="_showAgentDialog" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_agentForm.Id.HasValue ? "Edit Agent" : "Add Agent")</MudText>
+    </TitleContent>
+    <DialogContent>
         @if (_isLoadingUsers)
         {
             <div class="d-flex justify-center pa-4">
@@ -201,29 +200,27 @@
                     <MudSwitch @bind-Value="_agentForm.IsActive" Label="Active" Color="Color.Success" />
                 </MudItem>
             </MudGrid>
-            <div class="d-flex justify-end gap-2 mt-4">
-                <MudButton OnClick="CloseAgentDialog" Color="Color.Default">Cancel</MudButton>
-                <MudButton OnClick="SaveAgent" Color="Color.Primary" Variant="Variant.Filled"
-                    Disabled="@(_isSaving || (!_agentForm.Id.HasValue && _availableUsers.Count == 0))">
-                    @if (_isSaving)
-                    {
-                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
-                    }
-                    Save
-                </MudButton>
-            </div>
         }
-    </MudPaper>
-}
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseAgentDialog" Color="Color.Default">Cancel</MudButton>
+        <MudButton OnClick="SaveAgent" Color="Color.Primary" Variant="Variant.Filled"
+            Disabled="@(_isSaving || (!_agentForm.Id.HasValue && _availableUsers.Count == 0))">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Save
+        </MudButton>
+    </DialogActions>
+</MudDialog>
 
 <!-- Wallet Management Dialog -->
-@if (_showWalletDialog)
-{
-    <MudOverlay Visible="true" DarkBackground="true" ZIndex="9999" OnClick="CloseWalletDialog" />
-    <MudPaper Class="pa-4"
-        Style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10000; width: 600px; max-width: 95vw; max-height: 90vh; overflow-y: auto;">
-        <MudText Typo="Typo.h6" Class="mb-4">💼 Wallets for @_selectedAgent?.FullName (@_selectedAgent?.Code)</MudText>
-
+<MudDialog @bind-Visible="_showWalletDialog" Options="@(new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true })">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Wallets for @_selectedAgent?.FullName (@_selectedAgent?.Code)</MudText>
+    </TitleContent>
+    <DialogContent>
         @if (_isLoadingWallets)
         {
             <div class="d-flex justify-center pa-4">
@@ -240,7 +237,8 @@
             }
             else
             {
-                <MudTable Items="@_agentWallets" Hover="true" Dense="true" Elevation="0" Class="mb-4">
+                <MudTable Items="@_agentWallets" Hover="true" Dense="true" Elevation="0" Class="mb-4"
+                    Breakpoint="Breakpoint.Sm">
                     <HeaderContent>
                         <MudTh>Name</MudTh>
                         <MudTh>Type</MudTh>
@@ -320,12 +318,11 @@
                 </MudGrid>
             }
         }
-
-        <div class="d-flex justify-end mt-4">
-            <MudButton OnClick="CloseWalletDialog" Color="Color.Default">Close</MudButton>
-        </div>
-    </MudPaper>
-}
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="CloseWalletDialog" Color="Color.Default">Close</MudButton>
+    </DialogActions>
+</MudDialog>
 
 @code {
     private List<AgentListItemDto> _agents = [];

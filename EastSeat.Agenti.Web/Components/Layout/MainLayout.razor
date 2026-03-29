@@ -2,6 +2,7 @@
 @using EastSeat.Agenti.Web.Features.Theme
 @inject IThemeService ThemeService
 @inject IJSRuntime JS
+@inject NavigationManager NavigationManager
 @implements IDisposable
 
 <MudThemeProvider @ref="_themeProvider" Theme="@_currentTheme" IsDarkMode="@_isDarkMode" />
@@ -21,24 +22,42 @@
                     Color="Color.Inherit"
                     OnClick="@ToggleTheme"
                     Title="@(_isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode")" />
-                <MudButton Href="/profile" Variant="Variant.Text" Color="Color.Inherit"
-                    StartIcon="@Icons.Material.Filled.Person" Class="mr-4" Style="text-transform:none"
-                    Title="View my profile">
-                    @context.User.Identity?.Name
-                </MudButton>
-                <form action="Account/Logout" method="post">
-                    <AntiforgeryToken />
-                    <input type="hidden" name="ReturnUrl" value="/" />
-                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Color="Color.Inherit"
-                        StartIcon="@Icons.Material.Filled.Logout">
-                        Logout
+
+                @* Desktop: show username button and logout *@
+                <MudHidden Breakpoint="Breakpoint.SmAndDown">
+                    <MudButton Href="/profile" Variant="Variant.Text" Color="Color.Inherit"
+                        StartIcon="@Icons.Material.Filled.Person" Class="mr-4" Style="text-transform:none"
+                        Title="View my profile">
+                        @context.User.Identity?.Name
                     </MudButton>
-                </form>
+                    <form action="Account/Logout" method="post">
+                        <AntiforgeryToken />
+                        <input type="hidden" name="ReturnUrl" value="/" />
+                        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Color="Color.Inherit"
+                            StartIcon="@Icons.Material.Filled.Logout">
+                            Logout
+                        </MudButton>
+                    </form>
+                </MudHidden>
+
+                @* Mobile: compact menu with profile and logout *@
+                <MudHidden Breakpoint="Breakpoint.MdAndUp">
+                    <MudMenu Icon="@Icons.Material.Filled.Person" Color="Color.Inherit"
+                        AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                        <MudMenuItem Href="/profile" Icon="@Icons.Material.Filled.Person">
+                            @context.User.Identity?.Name
+                        </MudMenuItem>
+                        <MudMenuItem Href="Account/Logout" Icon="@Icons.Material.Filled.Logout">
+                            Logout
+                        </MudMenuItem>
+                    </MudMenu>
+                </MudHidden>
             </Authorized>
         </AuthorizeView>
     </MudAppBar>
 
-    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="2">
+    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="2"
+        Variant="DrawerVariant.Responsive" Breakpoint="Breakpoint.Md">
         <NavMenu />
     </MudDrawer>
 
@@ -62,6 +81,9 @@
 
     protected override async Task OnInitializedAsync()
     {
+        // Auto-close drawer on navigation (for mobile overlay mode)
+        NavigationManager.LocationChanged += OnLocationChanged;
+
         // Detect system theme
         string? systemPreference = null;
         try
@@ -98,6 +120,13 @@
         _drawerOpen = !_drawerOpen;
     }
 
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        // Close the drawer on navigation when in responsive overlay mode (mobile)
+        _drawerOpen = false;
+        InvokeAsync(StateHasChanged);
+    }
+
     private async Task ToggleTheme()
     {
         var currentPref = await ThemeService.GetUserPreferenceAsync();
@@ -129,6 +158,7 @@
 
     public void Dispose()
     {
+        NavigationManager.LocationChanged -= OnLocationChanged;
         ThemeService.ThemeChanged -= OnThemeChanged;
         _dotNetHelper?.Dispose();
     }

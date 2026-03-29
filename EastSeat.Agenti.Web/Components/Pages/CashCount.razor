@@ -48,7 +48,7 @@
     {
         <!-- Selection Mode: Opening or Closing Count -->
         <MudPaper Class="mt-4 pa-3" Elevation="1">
-            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+            <MudStack Row="true" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="3">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Medium"
                     Disabled="@(!_currentSession?.CanPerformOpeningCount ?? true)"
                     OnClick="@(() => StartCount(true))"
@@ -85,7 +85,7 @@
     else
     {
         <!-- Counting Mode: Enter Wallet Amounts -->
-        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mt-4 mb-2">
+        <MudStack Row="true" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mt-4 mb-2">
             <MudText Typo="Typo.h5">
                 @(_countForm?.IsOpening == true ? "Opening Count" : "Closing Count")
             </MudText>
@@ -103,7 +103,8 @@
         }
         else
         {
-            <MudTable Items="@_countForm!.WalletEntries" Hover="true" Dense="true" Striped="true" Elevation="2">
+            <MudTable Items="@_countForm!.WalletEntries" Hover="true" Dense="true" Striped="true" Elevation="2"
+                Breakpoint="Breakpoint.Md">
                 <HeaderContent>
                     <MudTh>Wallet</MudTh>
                     <MudTh>Type</MudTh>
@@ -255,7 +256,7 @@
             </MudTable>
 
             <!-- Action Buttons -->
-            <MudStack Row="true" Justify="Justify.FlexEnd" Class="mt-3 mb-4" Spacing="2">
+            <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.FlexEnd" Class="mt-3 mb-4" Spacing="2">
                 <MudButton Variant="Variant.Filled" Color="Color.Default" OnClick="SaveCount" Disabled="_isSaving">
                     @if (_isSaving)
                     {
