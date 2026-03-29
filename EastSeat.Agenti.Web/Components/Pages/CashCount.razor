@@ -47,246 +47,227 @@
     else if (!_isCountingMode)
     {
         <!-- Selection Mode: Opening or Closing Count -->
-        <MudGrid Class="mt-4">
-            <MudItem xs="12" md="6">
-                <MudCard Elevation="2" Class="pa-4">
-                    <MudCardContent>
-                        <MudText Typo="Typo.h6" Class="mb-3">🌅 Opening Count</MudText>
-                        <MudText Typo="Typo.body2" Color="Color.Default">
-                            Record your starting cash balance at the beginning of the day.
-                        </MudText>
-                        @if (_currentSession?.HasOpeningCount == true)
-                        {
-                            <MudChip T="string" Color="Color.Success" Size="Size.Small" Class="mt-2">
-                                ✓ Completed
-                            </MudChip>
-                        }
-                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-4"
-                            Disabled="@(!_currentSession?.CanPerformOpeningCount ?? true)"
-                            OnClick="@(() => StartCount(true))" FullWidth="true">
-                            @(_currentSession?.HasOpeningCount == true ? "View Opening Count" : "Start Opening Count")
-                        </MudButton>
-                    </MudCardContent>
-                </MudCard>
-            </MudItem>
+        <MudPaper Class="mt-4 pa-3" Elevation="1">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Medium"
+                    Disabled="@(!_currentSession?.CanPerformOpeningCount ?? true)"
+                    OnClick="@(() => StartCount(true))"
+                    StartIcon="@Icons.Material.Filled.WbSunny">
+                    @(_currentSession?.HasOpeningCount == true ? "View Opening Count" : "Start Opening Count")
+                </MudButton>
+                @if (_currentSession?.HasOpeningCount == true)
+                {
+                    <MudChip T="string" Color="Color.Success" Size="Size.Small">Completed</MudChip>
+                }
 
-            <MudItem xs="12" md="6">
-                <MudCard Elevation="2" Class="pa-4">
-                    <MudCardContent>
-                        <MudText Typo="Typo.h6" Class="mb-3">🌙 Closing Count</MudText>
-                        <MudText Typo="Typo.body2" Color="Color.Default">
-                            Record your ending cash balance at the close of business.
-                        </MudText>
-                        @if (_currentSession?.HasClosingCount == true)
-                        {
-                            <MudChip T="string" Color="Color.Success" Size="Size.Small" Class="mt-2">
-                                ✓ Completed
-                            </MudChip>
-                        }
-                        <MudButton Variant="Variant.Filled" Color="Color.Secondary" Class="mt-4"
-                            Disabled="@(!_currentSession?.CanPerformClosingCount ?? true)"
-                            OnClick="@(() => StartCount(false))" FullWidth="true">
-                            @(_currentSession?.HasClosingCount == true ? "View Closing Count" : "Start Closing Count")
-                        </MudButton>
-                    </MudCardContent>
-                </MudCard>
-            </MudItem>
-        </MudGrid>
+                <MudDivider Vertical="true" FlexItem="true" />
+
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Medium"
+                    Disabled="@(!_currentSession?.CanPerformClosingCount ?? true)"
+                    OnClick="@(() => StartCount(false))"
+                    StartIcon="@Icons.Material.Filled.NightsStay">
+                    @(_currentSession?.HasClosingCount == true ? "View Closing Count" : "Start Closing Count")
+                </MudButton>
+                @if (_currentSession?.HasClosingCount == true)
+                {
+                    <MudChip T="string" Color="Color.Success" Size="Size.Small">Completed</MudChip>
+                }
+            </MudStack>
+        </MudPaper>
 
         @if (_currentSession != null && !_currentSession.CanPerformOpeningCount && !_currentSession.HasOpeningCount)
         {
-            <MudGrid Class="mt-4">
-                <MudItem xs="12">
-                    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
-                        @_currentSession.StatusText. You may not be able to perform cash counts at this time.
-                    </MudAlert>
-                </MudItem>
-            </MudGrid>
+            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-4">
+                @_currentSession.StatusText. You may not be able to perform cash counts at this time.
+            </MudAlert>
         }
     }
     else
     {
         <!-- Counting Mode: Enter Wallet Amounts -->
-        <MudGrid Class="mt-4">
-            <MudItem xs="12">
-                <MudCard Elevation="2">
-                    <MudCardHeader>
-                        <CardHeaderContent>
-                            <MudText Typo="Typo.h5">
-                                @(_countForm?.IsOpening == true ? "🌅 Opening Count" : "🌙 Closing Count")
-                            </MudText>
-                        </CardHeaderContent>
-                        <CardHeaderActions>
-                            <MudButton Variant="Variant.Text" Color="Color.Default" OnClick="CancelCount"
-                                StartIcon="@Icons.Material.Filled.ArrowBack">
-                                Back
-                            </MudButton>
-                        </CardHeaderActions>
-                    </MudCardHeader>
-                    <MudCardContent>
-                        @if (_countForm?.WalletEntries.Count == 0)
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mt-4 mb-2">
+            <MudText Typo="Typo.h5">
+                @(_countForm?.IsOpening == true ? "Opening Count" : "Closing Count")
+            </MudText>
+            <MudButton Variant="Variant.Text" Color="Color.Default" OnClick="CancelCount"
+                StartIcon="@Icons.Material.Filled.ArrowBack">
+                Back
+            </MudButton>
+        </MudStack>
+
+        @if (_countForm?.WalletEntries.Count == 0)
+        {
+            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4">
+                No wallets are assigned to your account. Please contact your administrator.
+            </MudAlert>
+        }
+        else
+        {
+            <MudTable Items="@_countForm!.WalletEntries" Hover="true" Dense="true" Striped="true" Elevation="2">
+                <HeaderContent>
+                    <MudTh>Wallet</MudTh>
+                    <MudTh>Type</MudTh>
+                    @if (!_countForm.IsOpening)
+                    {
+                        <MudTh Style="text-align: right;">Expected (UGX)</MudTh>
+                    }
+                    <MudTh Style="text-align: right;">Counted (UGX)</MudTh>
+                    @if (!_countForm.IsOpening)
+                    {
+                        <MudTh Style="text-align: right;">Variance</MudTh>
+                    }
+                    <MudTh Style="width: 50px;"></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Wallet">@context.WalletName</MudTd>
+                    <MudTd DataLabel="Type">
+                        <MudText Typo="Typo.caption">@context.WalletTypeName</MudText>
+                    </MudTd>
+                    @if (!_countForm.IsOpening)
+                    {
+                        <MudTd DataLabel="Expected" Style="text-align: right;">
+                            @context.ExpectedBalance.ToString("N0")
+                        </MudTd>
+                    }
+                    <MudTd DataLabel="Counted" Style="text-align: right;">
+                        @if (context.SupportsDenominations)
                         {
-                            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4">
-                                No wallets are assigned to your account. Please contact your administrator.
-                            </MudAlert>
+                            <MudText Typo="Typo.body2">@context.CountedAmount.ToString("N0")</MudText>
                         }
                         else
                         {
-                            @foreach (var wallet in _countForm!.WalletEntries)
-                            {
-                                <MudPaper Class="pa-4 mb-4" Elevation="1">
-                                    <MudGrid>
-                                        <MudItem xs="12">
-                                            <MudText Typo="Typo.h6">@wallet.WalletName</MudText>
-                                            <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                                @wallet.WalletTypeName
-                                            </MudText>
-                                        </MudItem>
-
-                                        @if (!_countForm.IsOpening)
-                                        {
-                                            <MudItem xs="12" sm="4">
-                                                <MudText Typo="Typo.body2">Expected Balance:</MudText>
-                                                <MudText Typo="Typo.h6" Color="Color.Info">
-                                                    UGX @wallet.ExpectedBalance.ToString("N0")
-                                                </MudText>
-                                            </MudItem>
-                                        }
-
-                                        @if (wallet.SupportsDenominations && wallet.Denominations != null)
-                                        {
-                                            <!-- Denomination Entry -->
-                                            <MudItem xs="12">
-                                                <MudExpansionPanels>
-                                                    <MudExpansionPanel Text="Denomination Breakdown" @bind-Expanded="_denominationPanelExpanded">
-                                                        <!-- Notes Section -->
-                                                        <MudText Typo="Typo.subtitle2" Class="mb-2">📜 Notes</MudText>
-                                                        <MudGrid Spacing="2">
-                                                            @foreach (var denom in UgxDenominations.Notes)
-                                                            {
-                                                                var denomKey = denom.ToString();
-                                                                <MudItem xs="6" sm="4" md="2">
-                                                                    <MudNumericField T="int"
-                                                                        Label="@($"UGX {denom:N0}")"
-                                                                        Value="@wallet.Denominations.Notes[denomKey]"
-                                                                        ValueChanged="@((int v) => OnDenominationChanged(wallet, denomKey, v, true))"
-                                                                        Min="0" Variant="Variant.Outlined" />
-                                                                </MudItem>
-                                                            }
-                                                        </MudGrid>
-
-                                                        <!-- Coins Section -->
-                                                        <MudText Typo="Typo.subtitle2" Class="mt-4 mb-2">🪙 Coins</MudText>
-                                                        <MudGrid Spacing="2">
-                                                            @foreach (var denom in UgxDenominations.Coins)
-                                                            {
-                                                                var denomKey = denom.ToString();
-                                                                <MudItem xs="6" sm="4" md="3">
-                                                                    <MudNumericField T="int"
-                                                                        Label="@($"UGX {denom:N0}")"
-                                                                        Value="@wallet.Denominations.Coins[denomKey]"
-                                                                        ValueChanged="@((int v) => OnDenominationChanged(wallet, denomKey, v, false))"
-                                                                        Min="0" Variant="Variant.Outlined" />
-                                                                </MudItem>
-                                                            }
-                                                        </MudGrid>
-
-                                                        <MudDivider Class="my-3" />
-                                                        <MudGrid>
-                                                            <MudItem xs="4">
-                                                                <MudText Typo="Typo.body2">Notes Total:</MudText>
-                                                                <MudText Typo="Typo.body1">
-                                                                    UGX @wallet.Denominations.NotesTotal.ToString("N0")
-                                                                </MudText>
-                                                            </MudItem>
-                                                            <MudItem xs="4">
-                                                                <MudText Typo="Typo.body2">Coins Total:</MudText>
-                                                                <MudText Typo="Typo.body1">
-                                                                    UGX @wallet.Denominations.CoinsTotal.ToString("N0")
-                                                                </MudText>
-                                                            </MudItem>
-                                                            <MudItem xs="4">
-                                                                <MudText Typo="Typo.body2">Grand Total:</MudText>
-                                                                <MudText Typo="Typo.h6" Color="Color.Primary">
-                                                                    UGX @wallet.Denominations.Total.ToString("N0")
-                                                                </MudText>
-                                                            </MudItem>
-                                                        </MudGrid>
-                                                    </MudExpansionPanel>
-                                                </MudExpansionPanels>
-                                            </MudItem>
-                                        }
-                                        else
-                                        {
-                                            <!-- Direct Amount Entry -->
-                                            <MudItem xs="12" sm="@(_countForm.IsOpening ? 12 : 4)">
-                                                <MudNumericField T="decimal"
-                                                    Label="Counted Amount (UGX)"
-                                                    @bind-Value="wallet.CountedAmount"
-                                                    Min="0" Variant="Variant.Outlined"
-                                                    Adornment="Adornment.Start"
-                                                    AdornmentText="UGX" />
-                                            </MudItem>
-                                        }
-
-                                        @if (!_countForm.IsOpening && wallet.HasDiscrepancy)
-                                        {
-                                            <MudItem xs="12">
-                                                <MudAlert Severity="@(wallet.Variance > 0 ? Severity.Info : Severity.Warning)"
-                                                    Dense="true" Class="mt-2">
-                                                    Variance: UGX @wallet.Variance.ToString("N0")
-                                                    (@(wallet.Variance > 0 ? "Over" : "Short"))
-                                                </MudAlert>
-                                            </MudItem>
-                                        }
-                                    </MudGrid>
-                                </MudPaper>
-                            }
-
-                            <!-- Summary -->
-                            <MudPaper Class="pa-4 mt-4" Elevation="2" Style="background-color: var(--mud-palette-background-grey);">
-                                <MudGrid>
-                                    @if (!_countForm.IsOpening)
-                                    {
-                                        <MudItem xs="6" sm="3">
-                                            <MudText Typo="Typo.body2">Total Expected:</MudText>
-                                            <MudText Typo="Typo.h6">UGX @_countForm.TotalExpected.ToString("N0")</MudText>
-                                        </MudItem>
-                                    }
-                                    <MudItem xs="6" sm="@(_countForm.IsOpening ? 6 : 3)">
-                                        <MudText Typo="Typo.body2">Total Counted:</MudText>
-                                        <MudText Typo="Typo.h6" Color="Color.Primary">UGX @_countForm.TotalAmount.ToString("N0")</MudText>
-                                    </MudItem>
-                                    @if (!_countForm.IsOpening)
-                                    {
-                                        <MudItem xs="6" sm="3">
-                                            <MudText Typo="Typo.body2">Total Variance:</MudText>
-                                            <MudText Typo="Typo.h6" Color="@(_countForm.TotalVariance == 0 ? Color.Success : Color.Warning)">
-                                                UGX @_countForm.TotalVariance.ToString("N0")
-                                            </MudText>
-                                        </MudItem>
-                                    }
-                                    <MudItem xs="6" sm="@(_countForm.IsOpening ? 6 : 3)" Class="d-flex align-center justify-end">
-                                        <MudButtonGroup Variant="Variant.Filled" OverrideStyles="false">
-                                            <MudButton Color="Color.Default" OnClick="SaveCount" Disabled="_isSaving">
-                                                @if (_isSaving)
-                                                {
-                                                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
-                                                }
-                                                Save Draft
-                                            </MudButton>
-                                            <MudButton Color="Color.Primary" OnClick="SubmitCount" Disabled="_isSaving">
-                                                Submit
-                                            </MudButton>
-                                        </MudButtonGroup>
-                                    </MudItem>
-                                </MudGrid>
-                            </MudPaper>
+                            <MudNumericField T="decimal" @bind-Value="context.CountedAmount"
+                                Min="0" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                Style="max-width: 160px; display: inline-flex;" HideSpinButtons="true" />
                         }
-                    </MudCardContent>
-                </MudCard>
-            </MudItem>
-        </MudGrid>
+                    </MudTd>
+                    @if (!_countForm.IsOpening)
+                    {
+                        <MudTd DataLabel="Variance" Style="text-align: right;">
+                            <MudText Typo="Typo.body2"
+                                Color="@(context.Variance == 0 ? Color.Default : (context.Variance > 0 ? Color.Info : Color.Warning))">
+                                @context.Variance.ToString("N0")
+                            </MudText>
+                        </MudTd>
+                    }
+                    <MudTd Style="text-align: center;">
+                        @if (context.SupportsDenominations)
+                        {
+                            <MudIconButton Icon="@(_expandedWalletIds.Contains(context.WalletId) ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                Size="Size.Small" OnClick="@(() => ToggleDenominationRow(context.WalletId))" />
+                        }
+                    </MudTd>
+                </RowTemplate>
+                <ChildRowContent>
+                    @if (context.SupportsDenominations && _expandedWalletIds.Contains(context.WalletId) && context.Denominations != null)
+                    {
+                        <MudTr>
+                            <td colspan="100" class="pa-2" style="background: var(--mud-palette-background-grey);">
+                                <MudSimpleTable Dense="true" Hover="true" Style="background: transparent;">
+                                    <thead>
+                                        <tr>
+                                            <th>Denomination</th>
+                                            <th Style="text-align: right; width: 100px;">Qty</th>
+                                            <th Style="text-align: right;">Subtotal (UGX)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td colspan="3"><strong>Notes</strong></td>
+                                        </tr>
+                                        @foreach (var denom in UgxDenominations.Notes)
+                                        {
+                                            var denomKey = denom.ToString();
+                                            var qty = context.Denominations.Notes[denomKey];
+                                            <tr>
+                                                <td>UGX @denom.ToString("N0")</td>
+                                                <td Style="text-align: right;">
+                                                    <MudNumericField T="int"
+                                                        Value="@qty"
+                                                        ValueChanged="@((int v) => OnDenominationChanged(context, denomKey, v, true))"
+                                                        Min="0" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                        Style="max-width: 80px;" HideSpinButtons="true" />
+                                                </td>
+                                                <td Style="text-align: right;">@((qty * denom).ToString("N0"))</td>
+                                            </tr>
+                                        }
+                                        <tr style="font-weight: 600;">
+                                            <td colspan="2">Notes Subtotal</td>
+                                            <td Style="text-align: right;">@context.Denominations.NotesTotal.ToString("N0")</td>
+                                        </tr>
+                                        <tr>
+                                            <td colspan="3"><strong>Coins</strong></td>
+                                        </tr>
+                                        @foreach (var denom in UgxDenominations.Coins)
+                                        {
+                                            var denomKey = denom.ToString();
+                                            var qty = context.Denominations.Coins[denomKey];
+                                            <tr>
+                                                <td>UGX @denom.ToString("N0")</td>
+                                                <td Style="text-align: right;">
+                                                    <MudNumericField T="int"
+                                                        Value="@qty"
+                                                        ValueChanged="@((int v) => OnDenominationChanged(context, denomKey, v, false))"
+                                                        Min="0" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                        Style="max-width: 80px;" HideSpinButtons="true" />
+                                                </td>
+                                                <td Style="text-align: right;">@((qty * denom).ToString("N0"))</td>
+                                            </tr>
+                                        }
+                                        <tr style="font-weight: 600;">
+                                            <td colspan="2">Coins Subtotal</td>
+                                            <td Style="text-align: right;">@context.Denominations.CoinsTotal.ToString("N0")</td>
+                                        </tr>
+                                    </tbody>
+                                    <tfoot>
+                                        <tr style="font-weight: 700;">
+                                            <td colspan="2">Total</td>
+                                            <td Style="text-align: right;">UGX @context.Denominations.Total.ToString("N0")</td>
+                                        </tr>
+                                    </tfoot>
+                                </MudSimpleTable>
+                            </td>
+                        </MudTr>
+                    }
+                </ChildRowContent>
+                <FooterContent>
+                    <MudTh><strong>Totals</strong></MudTh>
+                    <MudTh></MudTh>
+                    @if (!_countForm.IsOpening)
+                    {
+                        <MudTh Style="text-align: right;">
+                            <strong>@_countForm.TotalExpected.ToString("N0")</strong>
+                        </MudTh>
+                    }
+                    <MudTh Style="text-align: right;">
+                        <strong>@_countForm.TotalAmount.ToString("N0")</strong>
+                    </MudTh>
+                    @if (!_countForm.IsOpening)
+                    {
+                        <MudTh Style="text-align: right;">
+                            <MudText Color="@(_countForm.TotalVariance == 0 ? Color.Success : Color.Warning)">
+                                <strong>@_countForm.TotalVariance.ToString("N0")</strong>
+                            </MudText>
+                        </MudTh>
+                    }
+                    <MudTh></MudTh>
+                </FooterContent>
+            </MudTable>
+
+            <!-- Action Buttons -->
+            <MudStack Row="true" Justify="Justify.FlexEnd" Class="mt-3 mb-4" Spacing="2">
+                <MudButton Variant="Variant.Filled" Color="Color.Default" OnClick="SaveCount" Disabled="_isSaving">
+                    @if (_isSaving)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                    }
+                    Save Draft
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SubmitCount" Disabled="_isSaving">
+                    Submit
+                </MudButton>
+            </MudStack>
+        }
     }
 </MudContainer>
 
@@ -296,7 +277,7 @@
     private bool _isLoading = true;
     private bool _isSaving = false;
     private bool _isCountingMode = false;
-    private bool _denominationPanelExpanded = true;
+    private HashSet<long> _expandedWalletIds = new();
     private string? _userId;
 
     protected override async Task OnInitializedAsync()
@@ -347,6 +328,13 @@
     {
         _isCountingMode = false;
         _countForm = null;
+        _expandedWalletIds.Clear();
+    }
+
+    private void ToggleDenominationRow(long walletId)
+    {
+        if (!_expandedWalletIds.Remove(walletId))
+            _expandedWalletIds.Add(walletId);
     }
 
     private void OnDenominationChanged(WalletCountEntryDto wallet, string denomKey, int value, bool isNote)
