@@ -16,8 +16,10 @@ public class ApplicationUser : IdentityUser
     public long? BranchId { get; set; }
     public UserRole Role { get; set; } = UserRole.Agent;
     public bool IsActive { get; set; } = true;
+    public bool IsDeleted { get; set; } = false;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
+    public DateTime? DeletedAt { get; set; }
 
     /// <summary>
     /// User's theme preference: null (system), "light", or "dark"

@@ -193,10 +193,10 @@ public class UserServiceTests : IDisposable
     [Fact]
     public async Task CreateUserAsync_WithDuplicateEmail_ReturnsError()
     {
-        // Arrange
+        // Arrange - add existing user directly to DB (uniqueness now checked via IgnoreQueryFilters)
         var existingUser = UserBuilder.Default().WithEmail("existing@test.com").Build();
-        _userManagerMock.Setup(x => x.FindByEmailAsync("existing@test.com"))
-            .ReturnsAsync(existingUser);
+        _dbContext.Users.Add(existingUser);
+        await _dbContext.SaveChangesAsync();
 
         var model = new CreateUserModel
         {
@@ -216,11 +216,39 @@ public class UserServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateUserAsync_WithDeletedUserEmail_ReturnsError()
+    {
+        // Arrange - add a soft-deleted tombstone user
+        var deletedUser = UserBuilder.Default()
+            .WithId("deleted-user")
+            .WithEmail("taken@test.com")
+            .AsDeleted()
+            .Build();
+        _dbContext.Users.Add(deletedUser);
+        await _dbContext.SaveChangesAsync();
+
+        var model = new CreateUserModel
+        {
+            Email = "taken@test.com",
+            FirstName = "New",
+            LastName = "User",
+            BranchId = 1,
+            Role = UserRole.Agent
+        };
+
+        // Act
+        var result = await _userService.CreateUserAsync(model, "admin-123");
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Message.Should().Contain("already exists");
+    }
+
+    [Fact]
     public async Task CreateUserAsync_WithNonExistentBranch_ReturnsError()
     {
         // Arrange
-        _userManagerMock.Setup(x => x.FindByEmailAsync(It.IsAny<string>()))
-            .ReturnsAsync((ApplicationUser?)null);
+
 
         var model = new CreateUserModel
         {
@@ -247,8 +275,7 @@ public class UserServiceTests : IDisposable
         _dbContext.Branches.Add(branch);
         await _dbContext.SaveChangesAsync();
 
-        _userManagerMock.Setup(x => x.FindByEmailAsync(It.IsAny<string>()))
-            .ReturnsAsync((ApplicationUser?)null);
+
         _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
@@ -299,8 +326,7 @@ public class UserServiceTests : IDisposable
         _dbContext.Branches.Add(branch);
         await _dbContext.SaveChangesAsync();
 
-        _userManagerMock.Setup(x => x.FindByEmailAsync(It.IsAny<string>()))
-            .ReturnsAsync((ApplicationUser?)null);
+
         _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), "Admin"))
@@ -337,8 +363,7 @@ public class UserServiceTests : IDisposable
         _dbContext.Branches.Add(branch);
         await _dbContext.SaveChangesAsync();
 
-        _userManagerMock.Setup(x => x.FindByEmailAsync(It.IsAny<string>()))
-            .ReturnsAsync((ApplicationUser?)null);
+
         _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), "Agent"))
@@ -379,8 +404,7 @@ public class UserServiceTests : IDisposable
         _dbContext.Branches.Add(branch);
         await _dbContext.SaveChangesAsync();
 
-        _userManagerMock.Setup(x => x.FindByEmailAsync(It.IsAny<string>()))
-            .ReturnsAsync((ApplicationUser?)null);
+
         _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
             .ReturnsAsync(IdentityResult.Success);
         _userManagerMock.Setup(x => x.AddToRoleAsync(It.IsAny<ApplicationUser>(), "Admin"))
@@ -414,8 +438,7 @@ public class UserServiceTests : IDisposable
         _dbContext.Branches.Add(branch);
         await _dbContext.SaveChangesAsync();
 
-        _userManagerMock.Setup(x => x.FindByEmailAsync(It.IsAny<string>()))
-            .ReturnsAsync((ApplicationUser?)null);
+
         _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), It.IsAny<string>()))
             .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "Password too weak" }));
 
@@ -816,13 +839,27 @@ public class UserServiceTests : IDisposable
         result.Message.Should().Contain("Cannot delete a user linked to an Agent");
     }
 
-    [Fact(Skip = "Foreign key constraint with DeleteBehavior.Restrict not supported in-memory. Tested in integration tests.")]
-    public async Task DeleteAsync_WithValidUser_DeletesAndLogsAudit()
+    [Fact]
+    public async Task DeleteAsync_WithValidUser_SoftDeletesClearsPropertiesAndLogsAudit()
     {
         // Arrange
-        var user = UserBuilder.Default().WithId("user-123").Build();
+        var user = UserBuilder.Default()
+            .WithId("user-123")
+            .WithFirstName("John")
+            .WithLastName("Doe")
+            .WithPhoneNumber("1234567890")
+            .WithBranchId(1)
+            .WithThemePreference("dark")
+            .Build();
         _dbContext.Users.Add(user);
         await _dbContext.SaveChangesAsync();
+
+        _userManagerMock.Setup(x => x.RemovePasswordAsync(It.IsAny<ApplicationUser>()))
+            .ReturnsAsync(IdentityResult.Success);
+        _userManagerMock.Setup(x => x.UpdateSecurityStampAsync(It.IsAny<ApplicationUser>()))
+            .ReturnsAsync(IdentityResult.Success);
+        _userManagerMock.Setup(x => x.GetRolesAsync(It.IsAny<ApplicationUser>()))
+            .ReturnsAsync(new List<string>());
 
         // Act
         var result = await _userService.DeleteAsync("user-123", "admin-123");
@@ -830,12 +867,80 @@ public class UserServiceTests : IDisposable
         // Assert
         result.Success.Should().BeTrue();
 
-        var deletedUser = await _dbContext.Users.FindAsync("user-123");
-        deletedUser.Should().BeNull();
+        // User should still exist but be soft-deleted with cleared properties
+        var deletedUser = await _dbContext.Users.IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == "user-123");
+        deletedUser.Should().NotBeNull();
+        deletedUser!.IsDeleted.Should().BeTrue();
+        deletedUser.DeletedAt.Should().NotBeNull();
+        deletedUser.IsActive.Should().BeFalse();
+        deletedUser.FirstName.Should().BeEmpty();
+        deletedUser.LastName.Should().BeEmpty();
+        deletedUser.PhoneNumber.Should().BeNull();
+        deletedUser.BranchId.Should().BeNull();
+        deletedUser.ThemePreference.Should().BeNull();
+        deletedUser.LockoutEnd.Should().Be(DateTimeOffset.MaxValue);
 
+        // Email and Username should be preserved
+        deletedUser.Email.Should().NotBeNullOrEmpty();
+        deletedUser.UserName.Should().NotBeNullOrEmpty();
+
+        // Password removal and security stamp update should have been called
+        _userManagerMock.Verify(x => x.RemovePasswordAsync(It.IsAny<ApplicationUser>()), Times.Once);
+        _userManagerMock.Verify(x => x.UpdateSecurityStampAsync(It.IsAny<ApplicationUser>()), Times.Once);
+
+        // Audit log should be recorded
         var auditLog = await _dbContext.UserAuditLogs.FirstOrDefaultAsync();
         auditLog.Should().NotBeNull();
         auditLog!.Action.Should().Be(UserAuditAction.Deleted);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WithValidUser_RemovesIdentityRoles()
+    {
+        // Arrange
+        var user = UserBuilder.Default().WithId("user-123").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(user);
+        await _dbContext.SaveChangesAsync();
+
+        // Need at least 2 admins so we don't hit last-admin protection
+        var otherAdmin = UserBuilder.Default().WithId("admin-other").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(otherAdmin);
+        await _dbContext.SaveChangesAsync();
+
+        _userManagerMock.Setup(x => x.RemovePasswordAsync(It.IsAny<ApplicationUser>()))
+            .ReturnsAsync(IdentityResult.Success);
+        _userManagerMock.Setup(x => x.UpdateSecurityStampAsync(It.IsAny<ApplicationUser>()))
+            .ReturnsAsync(IdentityResult.Success);
+        _userManagerMock.Setup(x => x.GetRolesAsync(It.IsAny<ApplicationUser>()))
+            .ReturnsAsync(new List<string> { "Admin" });
+        _userManagerMock.Setup(x => x.RemoveFromRolesAsync(It.IsAny<ApplicationUser>(), It.IsAny<IEnumerable<string>>()))
+            .ReturnsAsync(IdentityResult.Success);
+
+        // Act
+        var result = await _userService.DeleteAsync("user-123", "admin-other");
+
+        // Assert
+        result.Success.Should().BeTrue();
+        _userManagerMock.Verify(x => x.RemoveFromRolesAsync(It.IsAny<ApplicationUser>(), It.Is<IEnumerable<string>>(r => r.Contains("Admin"))), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_SoftDeletedUserNotVisibleInQueries()
+    {
+        // Arrange
+        var activeUser = UserBuilder.Default().WithId("active-user").WithEmail("active@test.com").Build();
+        var deletedUser = UserBuilder.Default().WithId("deleted-user").WithEmail("deleted@test.com").AsDeleted().Build();
+
+        _dbContext.Users.Add(activeUser);
+        _dbContext.Users.Add(deletedUser);
+        await _dbContext.SaveChangesAsync();
+
+        // Act - query through the service (uses global query filter)
+        var users = await _userService.GetAllAsync();
+
+        // Assert
+        users.Should().HaveCount(1);
+        users[0].Id.Should().Be("active-user");
     }
 
     #endregion
