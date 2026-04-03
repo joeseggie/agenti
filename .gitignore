@@ -168,3 +168,5 @@ publish-fix/*
 scripts/*
 scripts/azure/setup-secrets.md
 scripts/azure/*
+
+.claude/worktrees/
