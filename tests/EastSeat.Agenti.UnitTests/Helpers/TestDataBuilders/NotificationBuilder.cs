@@ -8,7 +8,7 @@ namespace EastSeat.Agenti.UnitTests.Helpers.TestDataBuilders;
 /// </summary>
 public class NotificationBuilder
 {
-    private long _id;
+    private Guid _id = Guid.NewGuid();
     private string _recipientUserId = "recipient-user-id";
     private string? _senderUserId = "sender-user-id";
     private string _message = "Test notification message";
@@ -17,7 +17,7 @@ public class NotificationBuilder
     private DateTimeOffset _createdAt = DateTimeOffset.UtcNow;
     private DateTimeOffset? _readAt = null;
 
-    public NotificationBuilder WithId(long id)
+    public NotificationBuilder WithId(Guid id)
     {
         _id = id;
         return this;

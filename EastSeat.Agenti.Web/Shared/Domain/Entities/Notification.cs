@@ -8,7 +8,7 @@ namespace EastSeat.Agenti.Shared.Domain.Entities;
 /// </summary>
 public class Notification
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
 
     /// <summary>
     /// The user who receives this notification.

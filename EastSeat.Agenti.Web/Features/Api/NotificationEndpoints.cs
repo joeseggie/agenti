@@ -36,8 +36,8 @@ public static class NotificationEndpoints
         .WithName("GetUnreadNotificationCount")
         .WithSummary("Get unread notification count for the authenticated user");
 
-        group.MapPost("/{notificationId:long}/read", async (
-            long notificationId,
+        group.MapPost("/{notificationId:guid}/read", async (
+            Guid notificationId,
             ClaimsPrincipal user,
             INotificationService notificationService) =>
         {

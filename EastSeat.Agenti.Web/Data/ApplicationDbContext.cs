@@ -336,6 +336,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<Notification>(entity =>
         {
             entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
             entity.Property(e => e.RecipientUserId).IsRequired().HasMaxLength(450);
             entity.Property(e => e.SenderUserId).HasMaxLength(450);
             entity.Property(e => e.Message).IsRequired().HasMaxLength(1000);

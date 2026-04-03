@@ -220,7 +220,7 @@ public class NotificationServiceTests : IDisposable
 
         // Assert
         result.Success.Should().BeTrue();
-        result.Id.Should().BeGreaterThan(0);
+        result.Id.Should().NotBe(Guid.Empty);
 
         var saved = await _dbContext.Notifications.FirstAsync();
         saved.RecipientUserId.Should().Be(_recipientUser.Id);

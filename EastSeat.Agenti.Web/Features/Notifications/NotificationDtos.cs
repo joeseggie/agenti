@@ -4,7 +4,7 @@ namespace EastSeat.Agenti.Web.Features.Notifications;
 
 public class NotificationListItemDto
 {
-    public long Id { get; set; }
+    public Guid Id { get; set; }
     public string Message { get; set; } = string.Empty;
     public NotificationPriority Priority { get; set; }
     public string SenderName { get; set; } = string.Empty;
@@ -28,8 +28,8 @@ public class NotificationSaveResult
 {
     public bool Success { get; set; }
     public string? ErrorMessage { get; set; }
-    public long? Id { get; set; }
+    public Guid? Id { get; set; }
 
-    public static NotificationSaveResult Ok(long id) => new() { Success = true, Id = id };
+    public static NotificationSaveResult Ok(Guid id) => new() { Success = true, Id = id };
     public static NotificationSaveResult Error(string message) => new() { Success = false, ErrorMessage = message };
 }

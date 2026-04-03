@@ -67,7 +67,7 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
         return NotificationSaveResult.Ok(notification.Id);
     }
 
-    public async Task<NotificationSaveResult> MarkAsReadAsync(long notificationId, string userId)
+    public async Task<NotificationSaveResult> MarkAsReadAsync(Guid notificationId, string userId)
     {
         var notification = await dbContext.Notifications
             .FirstOrDefaultAsync(n => n.Id == notificationId && n.RecipientUserId == userId);
@@ -101,6 +101,6 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
 
         await dbContext.SaveChangesAsync();
 
-        return NotificationSaveResult.Ok(0);
+        return NotificationSaveResult.Ok(Guid.Empty);
     }
 }
