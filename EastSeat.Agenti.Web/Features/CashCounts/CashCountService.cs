@@ -128,8 +128,7 @@ public class CashCountService(
         var hasApprovedOpening = agentOpeningCount?.Status == CashCountStatus.Approved;
         var hasSubmittedOrApprovedClosing = agentClosingCount != null &&
             (agentClosingCount.Status == CashCountStatus.Approved ||
-             agentClosingCount.Status == CashCountStatus.PendingApproval ||
-             agentClosingCount.Status == CashCountStatus.Submitted);
+             agentClosingCount.Status == CashCountStatus.PendingApproval);
 
         // Agent can open if they haven't yet submitted an opening count in this session
         var canOpen = agentOpeningCount == null ||
