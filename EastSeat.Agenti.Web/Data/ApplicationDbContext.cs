@@ -26,6 +26,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<AuditLog> AuditLogs { get; set; }
     public DbSet<UserAuditLog> UserAuditLogs { get; set; }
     public DbSet<AppConfig> AppConfigs { get; set; }
+    public DbSet<Notification> Notifications { get; set; }
 
     public override int SaveChanges()
     {
@@ -329,6 +330,33 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasKey(e => e.Key);
             entity.Property(e => e.Key).IsRequired().HasMaxLength(256);
             entity.Property(e => e.Value).HasMaxLength(1000);
+        });
+
+        // Configure Notification
+        builder.Entity<Notification>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.RecipientUserId).IsRequired().HasMaxLength(450);
+            entity.Property(e => e.SenderUserId).HasMaxLength(450);
+            entity.Property(e => e.Message).IsRequired().HasMaxLength(1000);
+            entity.Property(e => e.Priority)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(50);
+            entity.Property(e => e.IsRead).HasDefaultValue(false);
+
+            entity.HasOne(e => e.Recipient)
+                .WithMany()
+                .HasForeignKey(e => e.RecipientUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Sender)
+                .WithMany()
+                .HasForeignKey(e => e.SenderUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(e => new { e.RecipientUserId, e.IsRead, e.CreatedAt });
+            entity.HasIndex(e => new { e.RecipientUserId, e.CreatedAt });
         });
 
         // Seed default app config

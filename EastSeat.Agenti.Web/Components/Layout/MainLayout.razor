@@ -1,6 +1,9 @@
 ﻿@inherits LayoutComponentBase
 @using EastSeat.Agenti.Web.Features.Theme
+@using EastSeat.Agenti.Web.Features.Notifications
 @inject IThemeService ThemeService
+@inject INotificationService NotificationService
+@inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IJSRuntime JS
 @inject NavigationManager NavigationManager
 @implements IDisposable
@@ -18,6 +21,13 @@
         <MudSpacer />
         <AuthorizeView>
             <Authorized>
+                <MudBadge Content="@_unreadCount" Visible="@(_unreadCount > 0)" Color="Color.Error" Overlap="true">
+                    <MudIconButton Icon="@Icons.Material.Filled.Notifications"
+                        Color="Color.Inherit"
+                        OnClick="@(() => NavigationManager.NavigateTo("/notifications"))"
+                        Title="Notifications" />
+                </MudBadge>
+
                 <MudIconButton Icon="@(_isDarkMode ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
                     Color="Color.Inherit"
                     OnClick="@ToggleTheme"
@@ -78,6 +88,8 @@
     private bool _isDarkMode = false;
     private MudTheme _currentTheme = AppThemes.LightTheme;
     private DotNetObjectReference<MainLayout>? _dotNetHelper;
+    private int _unreadCount;
+    private CancellationTokenSource? _notificationCts;
 
     protected override async Task OnInitializedAsync()
     {
@@ -112,6 +124,49 @@
         catch
         {
             // If JS interop fails, continue without system theme watching
+        }
+
+        // Start periodic notification count refresh
+        _ = RefreshNotificationCountPeriodically();
+    }
+
+    private async Task RefreshNotificationCountPeriodically()
+    {
+        _notificationCts = new CancellationTokenSource();
+        var token = _notificationCts.Token;
+
+        // Initial load
+        await RefreshUnreadCountAsync();
+
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                await RefreshUnreadCountAsync();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected on dispose
+        }
+    }
+
+    private async Task RefreshUnreadCountAsync()
+    {
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (userId is not null)
+            {
+                _unreadCount = await NotificationService.GetUnreadCountAsync(userId);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch
+        {
+            // Silently ignore polling errors
         }
     }
 
@@ -160,6 +215,8 @@
     {
         NavigationManager.LocationChanged -= OnLocationChanged;
         ThemeService.ThemeChanged -= OnThemeChanged;
+        _notificationCts?.Cancel();
+        _notificationCts?.Dispose();
         _dotNetHelper?.Dispose();
     }
 }
