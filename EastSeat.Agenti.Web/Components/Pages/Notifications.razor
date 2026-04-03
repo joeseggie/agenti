@@ -93,12 +93,12 @@
                     @if (context.TransactionId.HasValue && _isAdmin)
                     {
                         <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Success"
-                            OnClick="@(() => ApproveVaultTransaction(context.Id, context.TransactionId!.Value))"
+                            OnClick="@(() => ApproveVaultTransaction(context.Id, context.TransactionId.Value))"
                             Disabled="@_isActioning">
                             Approve
                         </MudButton>
                         <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
-                            OnClick="@(() => RejectVaultTransaction(context.Id, context.TransactionId!.Value))"
+                            OnClick="@(() => RejectVaultTransaction(context.Id, context.TransactionId.Value))"
                             Disabled="@_isActioning">
                             Reject
                         </MudButton>
