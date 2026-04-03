@@ -244,12 +244,20 @@ if (adjustment.CreatedBy == currentUserId)
 
 **Soft Deletes:**
 ```csharp
-// Use IsActive flags, not hard deletes
+// For domain entities: Use IsActive flags, not hard deletes
 public bool IsActive { get; set; } = true;
 
 // Deactivate instead of delete
 agent.IsActive = false;
 await _dbContext.SaveChangesAsync();
+
+// For ApplicationUser: Use IsDeleted + DeletedAt (has global query filter)
+user.IsDeleted = true;
+user.DeletedAt = DateTime.UtcNow;
+await _dbContext.SaveChangesAsync();
+
+// To include soft-deleted users in queries:
+var allUsers = await _dbContext.Users.IgnoreQueryFilters().ToListAsync();
 ```
 
 **Authorization Policies:**
@@ -446,8 +454,13 @@ if (user.Role == UserRole.Admin)
 // ❌ WRONG
 _dbContext.Agents.Remove(agent);
 
-// ✅ CORRECT
+// ✅ CORRECT - Domain entities use IsActive flag
 agent.IsActive = false;
+await _dbContext.SaveChangesAsync();
+
+// ✅ CORRECT - Users use IsDeleted + DeletedAt (global query filter auto-excludes)
+user.IsDeleted = true;
+user.DeletedAt = DateTime.UtcNow;
 await _dbContext.SaveChangesAsync();
 ```
 
@@ -820,6 +833,18 @@ entity.Property(e => e.Status).HasConversion<string>();
 builder.Services.AddScoped<IAgentService, AgentService>();
 ```
 
+**Service with Primary Constructor and Optional Dependencies:**
+```csharp
+// Modern pattern using primary constructors (used by LoginTelemetryService)
+public class LoginTelemetryService(
+    ApplicationDbContext db,
+    ILogger<LoginTelemetryService> logger,
+    TelemetryClient? telemetryClient = null) : ILoginTelemetryService
+{
+    // TelemetryClient is optional — null when Application Insights is not configured
+}
+```
+
 **Service with Dependencies:**
 ```csharp
 public class VaultService : IVaultService
@@ -950,7 +975,7 @@ When writing code for Agenti, ensure you:
 - [ ] Use `decimal(18,2)` for money, `DateTimeOffset` for timestamps
 - [ ] Store enums as strings in database
 - [ ] Use `DeleteBehavior.Restrict` for critical relationships
-- [ ] Soft delete with `IsActive` flags, not hard deletes
+- [ ] Soft delete with `IsActive` flags for domain entities, `IsDeleted`/`DeletedAt` for users
 - [ ] Validate unique constraints before insert
 - [ ] Use transactions for multi-entity changes
 - [ ] Sync related entities (e.g., `Agent.BranchId` ↔ `User.BranchId`)
@@ -960,6 +985,27 @@ When writing code for Agenti, ensure you:
 - [ ] Register services as `Scoped` in `Program.cs`
 - [ ] Use MudBlazor components in Blazor pages
 - [ ] Apply authorization policies to protected pages
+
+---
+
+## MCP Server Integration
+
+The `EastSeat.Agenti.Mcp` project is a read-only MCP server for AI assistant integration. When working with this project:
+
+**Key Patterns:**
+- Use `ReadOnlyDbContext` (never the main `ApplicationDbContext`)
+- All queries must respect branch isolation via `McpServerConfig.BranchId`
+- Tools are auto-discovered via assembly scanning — add `[McpServerToolType]` and `[McpServerTool]` attributes
+- Maximum row limits are enforced via `McpServerConfig.MaxRows`
+- Connection uses a PostgreSQL read-only role — do not add write operations
+
+**Adding a New MCP Tool:**
+1. Create `Tools/{Feature}Tools.cs` in `EastSeat.Agenti.Mcp/Tools/`
+2. Mark the class with `[McpServerToolType]`
+3. Add methods with `[McpServerTool]` attribute
+4. Inject `ReadOnlyDbContext` and `McpServerConfig`
+5. Always filter by `BranchId` unless `CanQueryAllBranches` is true
+6. Always apply `.Take(config.MaxRows)` to queries
 
 ---
 
