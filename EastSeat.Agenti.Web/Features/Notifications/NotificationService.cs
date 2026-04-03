@@ -7,15 +7,117 @@ namespace EastSeat.Agenti.Web.Features.Notifications;
 
 public class NotificationService(ApplicationDbContext dbContext) : INotificationService
 {
-    public async Task CreateAsync(string userId, string title, string message, NotificationType type, string? linkUrl = null)
+    public async Task<List<NotificationListItemDto>> GetNotificationsAsync(string userId)
+    {
+        return await dbContext.Notifications
+            .Where(n => n.RecipientUserId == userId)
+            .OrderByDescending(n => n.CreatedAt)
+            .Select(n => new NotificationListItemDto
+            {
+                Id = n.Id,
+                Title = n.Title,
+                Message = n.Message,
+                Priority = n.Priority,
+                Type = n.Type,
+                LinkUrl = n.LinkUrl,
+                SenderName = n.Sender != null
+                    ? (n.Sender.FirstName + " " + n.Sender.LastName).Trim()
+                    : "System",
+                IsRead = n.IsRead,
+                CreatedAt = n.CreatedAt
+            })
+            .ToListAsync();
+    }
+
+    public async Task<int> GetUnreadCountAsync(string userId)
+    {
+        return await dbContext.Notifications
+            .CountAsync(n => n.RecipientUserId == userId && !n.IsRead);
+    }
+
+    public async Task<NotificationSaveResult> SendNotificationAsync(string? senderUserId, CreateNotificationDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Message))
+            return NotificationSaveResult.Error("Message is required.");
+
+        if (string.IsNullOrWhiteSpace(dto.RecipientUserId))
+            return NotificationSaveResult.Error("Recipient is required.");
+
+        var recipientExists = await dbContext.Users.AnyAsync(u => u.Id == dto.RecipientUserId);
+        if (!recipientExists)
+            return NotificationSaveResult.Error("Recipient not found.");
+
+        if (senderUserId != null)
+        {
+            var senderExists = await dbContext.Users.AnyAsync(u => u.Id == senderUserId);
+            if (!senderExists)
+                return NotificationSaveResult.Error("Sender not found.");
+        }
+
+        var notification = new Notification
+        {
+            RecipientUserId = dto.RecipientUserId,
+            SenderUserId = senderUserId,
+            Message = dto.Message,
+            Priority = dto.Priority,
+            IsRead = false,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        dbContext.Notifications.Add(notification);
+        await dbContext.SaveChangesAsync();
+
+        return NotificationSaveResult.Ok(notification.Id);
+    }
+
+    public async Task<NotificationSaveResult> MarkAsReadAsync(Guid notificationId, string userId)
+    {
+        var notification = await dbContext.Notifications
+            .FirstOrDefaultAsync(n => n.Id == notificationId && n.RecipientUserId == userId);
+
+        if (notification == null)
+            return NotificationSaveResult.Error("Notification not found.");
+
+        if (notification.IsRead)
+            return NotificationSaveResult.Ok(notification.Id);
+
+        notification.IsRead = true;
+        notification.ReadAt = DateTimeOffset.UtcNow;
+        await dbContext.SaveChangesAsync();
+
+        return NotificationSaveResult.Ok(notification.Id);
+    }
+
+    public async Task<NotificationSaveResult> MarkAllAsReadAsync(string userId)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var unreadNotifications = await dbContext.Notifications
+            .Where(n => n.RecipientUserId == userId && !n.IsRead)
+            .ToListAsync();
+
+        foreach (var notification in unreadNotifications)
+        {
+            notification.IsRead = true;
+            notification.ReadAt = now;
+        }
+
+        await dbContext.SaveChangesAsync();
+
+        return NotificationSaveResult.Ok(Guid.Empty);
+    }
+
+    public async Task CreateSystemNotificationAsync(string recipientUserId, string title, string message, NotificationType type, string? linkUrl = null)
     {
         dbContext.Notifications.Add(new Notification
         {
-            UserId = userId,
+            RecipientUserId = recipientUserId,
+            SenderUserId = null,
             Title = title,
             Message = message,
             Type = type,
             LinkUrl = linkUrl,
+            Priority = type == NotificationType.SessionBlocked ? NotificationPriority.High : NotificationPriority.Normal,
             IsRead = false,
             CreatedAt = DateTimeOffset.UtcNow
         });
@@ -32,79 +134,25 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
             .ToListAsync();
 
         var now = DateTimeOffset.UtcNow;
+        var priority = type == NotificationType.SessionBlocked ? NotificationPriority.High : NotificationPriority.Normal;
+
         foreach (var userId in adminUserIds)
         {
             dbContext.Notifications.Add(new Notification
             {
-                UserId = userId,
+                RecipientUserId = userId,
+                SenderUserId = null,
                 Title = title,
                 Message = message,
                 Type = type,
                 LinkUrl = linkUrl,
+                Priority = priority,
                 IsRead = false,
                 CreatedAt = now
             });
         }
 
         if (adminUserIds.Count > 0)
-        {
-            await dbContext.SaveChangesAsync();
-        }
-    }
-
-    public async Task<int> GetUnreadCountAsync(string userId)
-    {
-        return await dbContext.Notifications
-            .Where(n => n.UserId == userId && !n.IsRead)
-            .CountAsync();
-    }
-
-    public async Task<List<NotificationDto>> GetNotificationsAsync(string userId, int take = 20)
-    {
-        return await dbContext.Notifications
-            .Where(n => n.UserId == userId)
-            .OrderByDescending(n => n.CreatedAt)
-            .Take(take)
-            .Select(n => new NotificationDto
-            {
-                Id = n.Id,
-                Title = n.Title,
-                Message = n.Message,
-                Type = n.Type,
-                LinkUrl = n.LinkUrl,
-                IsRead = n.IsRead,
-                CreatedAt = n.CreatedAt
-            })
-            .ToListAsync();
-    }
-
-    public async Task MarkAsReadAsync(long notificationId, string userId)
-    {
-        var notification = await dbContext.Notifications
-            .FirstOrDefaultAsync(n => n.Id == notificationId && n.UserId == userId);
-
-        if (notification != null && !notification.IsRead)
-        {
-            notification.IsRead = true;
-            notification.ReadAt = DateTimeOffset.UtcNow;
-            await dbContext.SaveChangesAsync();
-        }
-    }
-
-    public async Task MarkAllAsReadAsync(string userId)
-    {
-        var unread = await dbContext.Notifications
-            .Where(n => n.UserId == userId && !n.IsRead)
-            .ToListAsync();
-
-        var now = DateTimeOffset.UtcNow;
-        foreach (var n in unread)
-        {
-            n.IsRead = true;
-            n.ReadAt = now;
-        }
-
-        if (unread.Count > 0)
         {
             await dbContext.SaveChangesAsync();
         }

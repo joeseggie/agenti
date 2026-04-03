@@ -54,6 +54,18 @@ public class CashSessionBuilder
         return this;
     }
 
+    public CashSessionBuilder WithBlockedAt(DateTimeOffset? blockedAt)
+    {
+        _blockedAt = blockedAt;
+        return this;
+    }
+
+    public CashSessionBuilder WithUnblockedAt(DateTimeOffset? unblockedAt)
+    {
+        _unblockedAt = unblockedAt;
+        return this;
+    }
+
     public CashSessionBuilder WithBranch(Branch branch)
     {
         _branch = branch;

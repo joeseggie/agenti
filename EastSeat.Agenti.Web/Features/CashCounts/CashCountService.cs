@@ -558,7 +558,7 @@ public class CashCountService(
         if (cashCount.Agent?.UserId != null)
         {
             var countType = cashCount.IsOpening ? "opening" : "closing";
-            await notificationService.CreateAsync(
+            await notificationService.CreateSystemNotificationAsync(
                 cashCount.Agent.UserId,
                 "Cash Count Rejected",
                 $"Your {countType} cash count has been rejected. Reason: {reason.Trim()}",
@@ -786,7 +786,7 @@ public class CashCountService(
         // Notify agent
         if (cashCount.Agent?.UserId != null)
         {
-            await notificationService.CreateAsync(
+            await notificationService.CreateSystemNotificationAsync(
                 cashCount.Agent.UserId,
                 "Opening Count Approved",
                 $"Your opening cash count of UGX {cashCount.TotalAmount:N0} has been approved.",
@@ -855,7 +855,7 @@ public class CashCountService(
         if (cashCount.Agent?.UserId != null)
         {
             var notificationType = isAutoApproval ? NotificationType.CountAutoApproved : NotificationType.CountApproved;
-            await notificationService.CreateAsync(
+            await notificationService.CreateSystemNotificationAsync(
                 cashCount.Agent.UserId,
                 "Closing Count Approved",
                 $"Your closing cash count of UGX {cashCount.TotalAmount:N0} has been {(isAutoApproval ? "automatically " : "")}approved.",

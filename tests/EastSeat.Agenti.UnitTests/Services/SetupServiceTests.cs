@@ -35,12 +35,12 @@ public class SetupServiceTests : IDisposable
         // Mock UserManager
         var userStore = new Mock<IUserStore<ApplicationUser>>();
         _userManagerMock = new Mock<UserManager<ApplicationUser>>(
-            userStore.Object, null, null, null, null, null, null, null, null);
+            userStore.Object, null!, null!, null!, null!, null!, null!, null!, null!);
 
         // Mock RoleManager
         var roleStore = new Mock<IRoleStore<IdentityRole>>();
         _roleManagerMock = new Mock<RoleManager<IdentityRole>>(
-            roleStore.Object, null, null, null, null);
+            roleStore.Object, null!, null!, null!, null!);
 
         _loggerMock = new Mock<ILogger<SetupService>>();
 

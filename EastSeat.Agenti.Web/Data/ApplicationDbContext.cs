@@ -358,21 +358,33 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<Notification>(entity =>
         {
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.UserId).IsRequired().HasMaxLength(450);
-            entity.Property(e => e.Title).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(e => e.RecipientUserId).IsRequired().HasMaxLength(450);
+            entity.Property(e => e.SenderUserId).HasMaxLength(450);
+            entity.Property(e => e.Title).HasMaxLength(256);
             entity.Property(e => e.Message).IsRequired().HasMaxLength(2000);
-            entity.Property(e => e.Type)
+            entity.Property(e => e.Priority)
                 .IsRequired()
                 .HasConversion<string>()
                 .HasMaxLength(50);
+            entity.Property(e => e.Type)
+                .HasConversion<string>()
+                .HasMaxLength(50);
             entity.Property(e => e.LinkUrl).HasMaxLength(500);
+            entity.Property(e => e.IsRead).HasDefaultValue(false);
 
-            entity.HasOne(e => e.User)
+            entity.HasOne(e => e.Recipient)
                 .WithMany()
-                .HasForeignKey(e => e.UserId)
+                .HasForeignKey(e => e.RecipientUserId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            entity.HasIndex(e => new { e.UserId, e.IsRead, e.CreatedAt });
+            entity.HasOne(e => e.Sender)
+                .WithMany()
+                .HasForeignKey(e => e.SenderUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(e => new { e.RecipientUserId, e.IsRead, e.CreatedAt });
+            entity.HasIndex(e => new { e.RecipientUserId, e.CreatedAt });
         });
 
         // Seed default app config

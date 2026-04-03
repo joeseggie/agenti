@@ -1,0 +1,174 @@
+@page "/notifications"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Web.Features.Notifications
+@using EastSeat.Agenti.Shared.Domain.Enums
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject INotificationService NotificationService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>Notifications - Agenti</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudGrid>
+        <MudItem xs="12" sm="8">
+            <MudText Typo="Typo.h4" Class="mb-2">Notifications</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                View your notifications from users and the system
+            </MudText>
+        </MudItem>
+        <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                StartIcon="@Icons.Material.Filled.DoneAll"
+                OnClick="MarkAllAsRead"
+                Disabled="@(_isLoading || !_notifications.Any(n => !n.IsRead))">
+                Mark All as Read
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+
+    @if (_isLoading)
+    {
+        <MudGrid Class="mt-4">
+            <MudItem xs="12" Class="d-flex justify-center">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    }
+    else if (_notifications.Count == 0)
+    {
+        <MudGrid Class="mt-4">
+            <MudItem xs="12">
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                    <MudText Typo="Typo.body1">No notifications yet.</MudText>
+                    <MudText Typo="Typo.body2" Class="mt-2">
+                        You will see notifications here when they are sent to you.
+                    </MudText>
+                </MudAlert>
+            </MudItem>
+        </MudGrid>
+    }
+    else
+    {
+        <MudTable Items="@_notifications" Hover="true" Striped="true" Dense="true"
+            Elevation="2" Breakpoint="Breakpoint.Md" Class="mt-4"
+            RowStyleFunc="@((NotificationListItemDto item, int _) => item.IsRead ? "" : "background-color: var(--mud-palette-primary-lighten); font-weight: bold;")">
+            <HeaderContent>
+                <MudTh>Date</MudTh>
+                <MudTh>Sender</MudTh>
+                <MudTh>Message</MudTh>
+                <MudTh Style="text-align: center;">Priority</MudTh>
+                <MudTh Style="text-align: center;">Status</MudTh>
+                <MudTh Style="text-align: center;">Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Date">
+                    <MudText Typo="Typo.body2">@context.CreatedAt.LocalDateTime.ToString("dd MMM yyyy HH:mm")</MudText>
+                </MudTd>
+                <MudTd DataLabel="Sender">
+                    <MudText Typo="Typo.body2">@context.SenderName</MudText>
+                </MudTd>
+                <MudTd DataLabel="Message">
+                    <MudText Typo="Typo.body2">@context.Message</MudText>
+                </MudTd>
+                <MudTd DataLabel="Priority" Style="text-align: center;">
+                    <MudChip T="string" Size="Size.Small" Color="@GetPriorityColor(context.Priority)">
+                        @context.Priority
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Status" Style="text-align: center;">
+                    @if (context.IsRead)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Default">Read</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info">Unread</MudChip>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Actions" Style="text-align: center;">
+                    @if (!context.IsRead)
+                    {
+                        <MudIconButton Icon="@Icons.Material.Filled.MarkEmailRead"
+                            Size="Size.Small"
+                            OnClick="@(() => MarkAsRead(context.Id))"
+                            Title="Mark as Read" />
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    private List<NotificationListItemDto> _notifications = [];
+    private bool _isLoading = true;
+    private string? _userId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        await LoadNotificationsAsync();
+    }
+
+    private async Task LoadNotificationsAsync()
+    {
+        if (_userId is null) return;
+
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            _notifications = await NotificationService.GetNotificationsAsync(_userId);
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task MarkAsRead(Guid notificationId)
+    {
+        if (_userId is null) return;
+
+        var result = await NotificationService.MarkAsReadAsync(notificationId, _userId);
+        if (result.Success)
+        {
+            Snackbar.Add("Notification marked as read.", Severity.Success);
+            await LoadNotificationsAsync();
+        }
+        else
+        {
+            Snackbar.Add(result.ErrorMessage ?? "Failed to mark notification as read.", Severity.Error);
+        }
+    }
+
+    private async Task MarkAllAsRead()
+    {
+        if (_userId is null) return;
+
+        var result = await NotificationService.MarkAllAsReadAsync(_userId);
+        if (result.Success)
+        {
+            Snackbar.Add("All notifications marked as read.", Severity.Success);
+            await LoadNotificationsAsync();
+        }
+        else
+        {
+            Snackbar.Add(result.ErrorMessage ?? "Failed to mark notifications as read.", Severity.Error);
+        }
+    }
+
+    private static Color GetPriorityColor(NotificationPriority priority) => priority switch
+    {
+        NotificationPriority.Low => Color.Default,
+        NotificationPriority.Normal => Color.Info,
+        NotificationPriority.High => Color.Warning,
+        NotificationPriority.Urgent => Color.Error,
+        _ => Color.Default
+    };
+}

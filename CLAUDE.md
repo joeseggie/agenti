@@ -27,6 +27,7 @@ The solution file is `Agenti.slnx` (XML solution format) containing:
 Agenti.slnx
 ├── EastSeat.Agenti.Web/           # Blazor Server web app + REST API backend
 ├── EastSeat.Agenti.Android/       # .NET MAUI Android mobile client
+├── EastSeat.Agenti.Mcp/           # MCP server for AI assistant integration (read-only)
 ├── tests/
 │   ├── EastSeat.Agenti.UnitTests/
 │   ├── EastSeat.Agenti.IntegrationTests/
@@ -131,7 +132,7 @@ Features/{FeatureName}/
 - `Dashboard` - Summary metrics and real-time status
 - `Setup` - First-time system setup wizard
 - `Theme` - Dark/light mode theme management (`AppThemes`, `ThemeService`, `ThemePreferenceConstants`)
-- `Users` - User management with audit logs
+- `Users` - User management with audit logs, soft-delete, and login telemetry
 - `Vault` / `Vaults` - Branch vault management with dual-approval workflow
 - `WalletTypes` - Wallet type catalog (Cash, Mobile Money, Bank)
 
@@ -155,7 +156,7 @@ Each endpoint file defines extension methods (e.g., `MapAuthApi()`) called from 
 
 ```text
 Shared/Domain/
-├── Entities/               # EF Core entities (15+ entities)
+├── Entities/               # EF Core entities (13 entities)
 │   ├── Agent.cs           # 1:1 with ApplicationUser
 │   ├── AppConfig.cs       # Key-value application config (e.g., SetupComplete flag)
 │   ├── Branch.cs          # Tenant branches (1:1 with Vault)
@@ -168,7 +169,7 @@ Shared/Domain/
 │   ├── WalletType.cs      # Wallet type catalog
 │   ├── Transaction.cs     # Inter-wallet movements
 │   ├── Discrepancy.cs     # Count mismatches requiring approval
-│   └── AuditLog.cs / UserAuditLog.cs
+│   └── AuditLog.cs
 └── Enums/
     ├── CashSessionStatus.cs
     ├── VaultTransactionType.cs
@@ -177,6 +178,12 @@ Shared/Domain/
     ├── TransactionType.cs
     ├── UserRole.cs
     └── WalletType.cs (enum)
+
+Data/                        # Data layer (in EastSeat.Agenti.Web/Data/)
+├── ApplicationDbContext.cs  # EF Core context
+├── ApplicationUser.cs       # Identity user with soft-delete + theme preference
+├── UserAuditLog.cs          # User action audit log entity
+└── UserAuditAction.cs       # Enum: Created, RoleChanged, Deactivated, Reactivated, Deleted, PasswordReset, LoginSuccess, LoginFailed
 ```
 
 ### Key Architectural Patterns
@@ -201,9 +208,17 @@ Use `@attribute [Authorize(Policy = "PolicyName")]` in Razor components.
 ### Background Services
 
 - `VaultExpirationService` - Expires pending vault transactions after 12 hours
-- `UserAuditCleanupService` - Removes old audit logs
+- `UserAuditCleanupService` - Removes old user audit logs
 
-Both services accept an optional `TelemetryClient?` parameter for Application Insights integration.
+Both services inherit from `BackgroundService` and accept an optional `TelemetryClient?` parameter for Application Insights integration.
+
+### Login Telemetry
+
+`LoginTelemetryService` records sign-in events to both the `UserAuditLogs` table and Application Insights:
+
+- `login_succeeded` / `login_failed` events with IP, user agent, role, branch
+- `jwt_token_issued` event for API token creation
+- `login_duration_ms` metric for performance tracking
 
 **5. Claims Transformation**
 `BranchIdClaimsTransformer` adds `BranchId` claim from `Agent.BranchId` for multi-branch support.
@@ -219,10 +234,11 @@ Both services accept an optional `TelemetryClient?` parameter for Application In
 **Location:** `EastSeat.Agenti.Web/Data/ApplicationDbContext.cs`
 
 - Inherits from `IdentityDbContext<ApplicationUser>`
-- Contains 15+ `DbSet<T>` properties for domain entities (including `DbSet<AppConfig> AppConfigs`)
+- Contains 14 `DbSet<T>` properties for domain entities (including `DbSet<AppConfig> AppConfigs`)
 - Overrides `SaveChangesAsync` to auto-create Vault when Branch is created
 - Configures relationships, indexes, precision, and enums-as-strings in `OnModelCreating`
 - Seeds default `WalletTypes` and `AppConfig` entries
+- Global query filter on `ApplicationUser` excludes soft-deleted users (`IsDeleted == false`)
 
 **Registration:** Both `AddDbContext` and `AddDbContextFactory` are registered (both Scoped). The factory is used by services that need their own `DbContext` instance to avoid concurrency issues during Blazor prerendering.
 
@@ -351,10 +367,48 @@ The setup middleware also excludes `/api/*` paths from the redirect so the REST 
 
 A .NET MAUI Android app that consumes the REST API at `/api/*`:
 
-- **Pages:** LoginPage, DashboardPage, AgentsPage, CashSessionsPage, CashCountPage
+- **Pages:** LoginPage, DashboardPage, AgentsPage, CashSessionsPage, CashCountPage, ProfilePage
 - **ViewModels:** LoginViewModel, DashboardViewModel, AgentsViewModel, CashSessionsViewModel, CashCountViewModel, VaultViewModel, BaseViewModel
 - **Services:** `ApiService` (HTTP client), `AuthService` (JWT token management)
 - Authenticates via `/api/auth` (JWT) and calls the same business logic as the web UI
+
+## MCP Server
+
+**Location:** `EastSeat.Agenti.Mcp/`
+
+A Model Context Protocol (MCP) server that provides read-only access to Agenti data for AI assistants. Runs as a standalone console application using stdio transport.
+
+**Architecture:**
+- `ReadOnlyDbContext` - Separate EF Core context with no write capabilities
+- `McpServerConfig` - Configuration for connection string, branch isolation, user role, max rows, timeouts
+- Uses PostgreSQL read-only database role (`agenti_readonly`)
+- Auto-discovers tools via assembly scanning
+
+**Tools (6 tool sets):**
+
+| Tool | Description |
+| --- | --- |
+| `AgentTools` | Query agent data and wallets |
+| `CashSessionTools` | Query cash session history |
+| `DiscrepancyTools` | Query discrepancy records |
+| `TransactionTools` | Query transaction history |
+| `TrendTools` | Query trend/analytics data |
+| `VaultTools` | Query vault balances |
+
+**Branch Isolation:** Agents see only their branch data. Admins/Supervisors can query all branches (`CanQueryAllBranches`).
+
+**Configuration:** Set `AGENTI__ConnectionString` environment variable or configure in `appsettings.json` under `Agenti` section.
+
+## Soft-Delete (Users)
+
+Users are soft-deleted rather than hard-deleted. `ApplicationUser` has:
+
+- `IsDeleted` (bool, default `false`) - Soft delete flag
+- `DeletedAt` (DateTime?) - When the user was deleted
+- `UpdatedAt` (DateTime?) - Last update timestamp
+- `ThemePreference` (string?) - User's theme: `null` (system), `"light"`, or `"dark"`
+
+A global query filter on `ApplicationUser` automatically excludes soft-deleted users from all queries. Use `.IgnoreQueryFilters()` when you need to include deleted users.
 
 ## Testing
 
@@ -374,7 +428,7 @@ dotnet test tests/EastSeat.Agenti.IntegrationTests
 dotnet test tests/EastSeat.Agenti.E2ETests
 ```
 
-- **Unit tests** cover all feature services (AgentService, CashCountService, CashSessionService, DashboardService, SetupService, ThemeService, UserService, VaultService, WalletTypeService, ApiResponse, VaultExpirationService)
+- **Unit tests** cover all feature services (AgentService, CashCountService, CashSessionService, DashboardService, LoginTelemetryService, SetupService, ThemeService, UserService, VaultService, WalletTypeService, ApiResponse, AuthEndpoints, VaultExpirationService)
 - **Integration tests** use a real PostgreSQL database via `DatabaseFixture` and `IntegrationTestBase`
 - **E2E tests** cover end-to-end workflows
 
@@ -431,7 +485,7 @@ The `docs/` directory contains detailed documentation:
 - `ANDROID_DEPLOYMENT.md` - Android app deployment guide
 - `APPLICATION_INSIGHTS_SETUP.md` - Application Insights configuration
 - `AZURE_DEPLOYMENT_SETUP.md` - Azure deployment setup guide
-- `AZURE_LOGS_QUERYING.md` - Azure log querying reference
+- `AZURE_LOGS_QUERYING.md` - Azure log querying reference (KQL queries for login telemetry, etc.)
 - `CI_CD_PIPELINE.md` - CI/CD pipeline documentation
 - `DEVELOPMENT_GUIDE.md` - Development environment setup
 - `IMPLEMENTATION_SUMMARY.md` - Implementation overview

@@ -18,8 +18,8 @@ using EastSeat.Agenti.Web.Features.Vaults;
 using EastSeat.Agenti.Web.Features.Users;
 using EastSeat.Agenti.Web.Features.Setup;
 using EastSeat.Agenti.Web.Features.Theme;
-using EastSeat.Agenti.Web.Features.Api;
 using EastSeat.Agenti.Web.Features.Notifications;
+using EastSeat.Agenti.Web.Features.Api;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using MudBlazor.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -339,6 +339,10 @@ apiGroup.MapGroup("/vault")
 apiGroup.MapGroup("/wallet-types")
     .WithTags("Wallet Types")
     .MapWalletTypesApi();
+
+apiGroup.MapGroup("/notifications")
+    .WithTags("Notifications")
+    .MapNotificationsApi();
 
 // Redirect to setup page if setup is incomplete
 // Use a separate scope to avoid DbContext concurrency with Blazor components
