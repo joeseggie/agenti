@@ -75,7 +75,7 @@ public static class CashCountEndpoints
         })
         .RequireAuthorization()
         .WithName("SubmitCashCount")
-        .WithSummary("Submit a cash count for processing");
+        .WithSummary("Submit a cash count for approval");
 
         group.MapGet("/{cashCountId:long}", async (
             long cashCountId,
@@ -94,6 +94,54 @@ public static class CashCountEndpoints
         .RequireAuthorization()
         .WithName("GetCashCount")
         .WithSummary("Get an existing cash count by ID");
+
+        group.MapGet("/pending", async (
+            long branchId,
+            ICashCountService cashCountService) =>
+        {
+            var pending = await cashCountService.GetPendingApprovalsAsync(branchId);
+            return Results.Ok(ApiResponse<List<PendingApprovalDto>>.Ok(pending));
+        })
+        .RequireAuthorization("CashCountApprove")
+        .WithName("GetPendingApprovals")
+        .WithSummary("Get all pending cash count approvals for a branch");
+
+        group.MapPost("/{cashCountId:long}/approve", async (
+            long cashCountId,
+            ClaimsPrincipal principal,
+            ICashCountService cashCountService) =>
+        {
+            var userId = GetUserId(principal);
+            if (string.IsNullOrEmpty(userId))
+                return Results.Unauthorized();
+
+            var result = await cashCountService.ApproveCashCountAsync(userId, cashCountId);
+            return result.Success
+                ? Results.Ok(ApiResponse<CashCountSaveResult>.Ok(result))
+                : Results.BadRequest(ApiResponse<CashCountSaveResult>.Fail(result.ErrorMessage ?? "Failed to approve."));
+        })
+        .RequireAuthorization("CashCountApprove")
+        .WithName("ApproveCashCount")
+        .WithSummary("Approve a pending cash count (admin/supervisor only)");
+
+        group.MapPost("/{cashCountId:long}/reject", async (
+            long cashCountId,
+            CashCountApprovalModel model,
+            ClaimsPrincipal principal,
+            ICashCountService cashCountService) =>
+        {
+            var userId = GetUserId(principal);
+            if (string.IsNullOrEmpty(userId))
+                return Results.Unauthorized();
+
+            var result = await cashCountService.RejectCashCountAsync(userId, cashCountId, model.RejectionReason ?? "");
+            return result.Success
+                ? Results.Ok(ApiResponse<CashCountSaveResult>.Ok(result))
+                : Results.BadRequest(ApiResponse<CashCountSaveResult>.Fail(result.ErrorMessage ?? "Failed to reject."));
+        })
+        .RequireAuthorization("CashCountApprove")
+        .WithName("RejectCashCount")
+        .WithSummary("Reject a pending cash count (admin/supervisor only)");
 
         return group;
     }

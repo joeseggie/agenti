@@ -37,7 +37,8 @@ public class TransactionTools
 
         var query = db.Transactions
             .Include(t => t.CashSession)
-                .ThenInclude(s => s!.Agent)
+                .ThenInclude(s => s!.CashCounts)
+                    .ThenInclude(c => c.Agent)
             .Include(t => t.FromWallet)
                 .ThenInclude(w => w!.WalletType)
             .Include(t => t.ToWallet)
@@ -58,8 +59,7 @@ public class TransactionTools
         if (!string.IsNullOrWhiteSpace(agentCode))
             query = query.Where(t =>
                 t.CashSession != null &&
-                t.CashSession.Agent != null &&
-                t.CashSession.Agent.Code == agentCode.ToUpper());
+                t.CashSession.CashCounts.Any(c => c.Agent != null && c.Agent.Code == agentCode.ToUpper()));
 
         // Amount filters
         if (minAmount.HasValue)
@@ -84,8 +84,12 @@ public class TransactionTools
                 ToWallet = t.ToWallet != null ? t.ToWallet.Name : "N/A",
                 ToWalletType = t.ToWallet != null && t.ToWallet.WalletType != null
                     ? t.ToWallet.WalletType.Name : "N/A",
-                AgentCode = t.CashSession != null && t.CashSession.Agent != null
-                    ? t.CashSession.Agent.Code : "N/A",
+                AgentCode = t.CashSession != null
+                    ? t.CashSession.CashCounts
+                        .Where(c => c.IsOpening && c.Agent != null)
+                        .Select(c => c.Agent!.Code)
+                        .FirstOrDefault() ?? "N/A"
+                    : "N/A",
                 CreatedAt = t.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
                 IsReversed = t.ReversedAt.HasValue
             })

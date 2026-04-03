@@ -12,7 +12,7 @@ public class CashSessionTools
 {
     [McpServerTool(Name = "query_cash_sessions"),
      Description("Query cash session history with date range, agent, status, and branch filters. " +
-                 "Returns session date, agent name, status, opening/closing totals, and discrepancy flag.")]
+                 "Returns session date, participating agents, status, opening/closing totals, and discrepancy flag.")]
     public static async Task<string> QueryCashSessions(
         ReadOnlyDbContext db,
         McpServerConfig config,
@@ -35,9 +35,9 @@ public class CashSessionTools
             return "Error: dateFrom cannot be after dateTo.";
 
         var query = db.CashSessions
-            .Include(s => s.Agent)
-                .ThenInclude(a => a!.User)
             .Include(s => s.CashCounts)
+                .ThenInclude(c => c.Agent)
+                    .ThenInclude(a => a!.User)
             .Include(s => s.Discrepancies)
             .AsQueryable();
 
@@ -49,9 +49,9 @@ public class CashSessionTools
         if (effectiveBranchId.HasValue)
             query = query.Where(s => s.BranchId == effectiveBranchId.Value);
 
-        // Agent filter
+        // Agent filter (via CashCounts)
         if (!string.IsNullOrWhiteSpace(agentCode))
-            query = query.Where(s => s.Agent != null && s.Agent.Code == agentCode.ToUpper());
+            query = query.Where(s => s.CashCounts.Any(c => c.Agent != null && c.Agent.Code == agentCode.ToUpper()));
 
         // Status filter
         if (!string.IsNullOrWhiteSpace(status) &&
@@ -60,31 +60,7 @@ public class CashSessionTools
 
         var sessions = await query
             .OrderByDescending(s => s.SessionDate)
-            .ThenBy(s => s.Agent != null ? s.Agent.Code : "")
             .Take(config.MaxRows)
-            .Select(s => new
-            {
-                s.Id,
-                s.SessionDate,
-                AgentCode = s.Agent != null ? s.Agent.Code : "N/A",
-                AgentName = s.Agent != null && s.Agent.User != null
-                    ? s.Agent.User.FirstName + " " + s.Agent.User.LastName
-                    : "N/A",
-                Status = s.Status.ToString(),
-                s.BranchId,
-                OpeningTotal = s.CashCounts
-                    .Where(c => c.IsOpening)
-                    .Sum(c => c.TotalAmount),
-                ClosingTotal = s.CashCounts
-                    .Where(c => !c.IsOpening)
-                    .Sum(c => c.TotalAmount),
-                HasDiscrepancy = s.Discrepancies.Any(),
-                DiscrepancyCount = s.Discrepancies.Count,
-                OpenedAt = s.OpenedAt.ToString("yyyy-MM-dd HH:mm"),
-                ClosedAt = s.ClosedAt.HasValue
-                    ? s.ClosedAt.Value.ToString("yyyy-MM-dd HH:mm")
-                    : "Still open"
-            })
             .ToListAsync();
 
         if (sessions.Count == 0)
@@ -98,12 +74,25 @@ public class CashSessionTools
 
         foreach (var s in sessions)
         {
-            lines.Add($"• Session #{s.Id} | {s.SessionDate:yyyy-MM-dd} | Agent: {s.AgentCode} ({s.AgentName})");
+            var agents = s.CashCounts
+                .Where(c => c.IsOpening && c.Agent != null)
+                .Select(c => $"{c.Agent!.Code} ({c.Agent.User?.FullName ?? "N/A"})")
+                .Distinct()
+                .ToList();
+
+            var openingTotal = s.CashCounts
+                .Where(c => c.IsOpening && c.Status == CashCountStatus.Approved)
+                .Sum(c => c.TotalAmount);
+            var closingTotal = s.CashCounts
+                .Where(c => !c.IsOpening && c.Status == CashCountStatus.Approved)
+                .Sum(c => c.TotalAmount);
+
+            lines.Add($"• Session #{s.Id} | {s.SessionDate:yyyy-MM-dd} | Agents: {string.Join(", ", agents)}");
             lines.Add($"  Status: {s.Status} | Branch: {s.BranchId}");
-            lines.Add($"  Opening: {s.OpeningTotal:N2} | Closing: {s.ClosingTotal:N2}");
-            lines.Add($"  Opened: {s.OpenedAt} | Closed: {s.ClosedAt}");
-            if (s.HasDiscrepancy)
-                lines.Add($"  ⚠️ {s.DiscrepancyCount} discrepancy(ies) flagged");
+            lines.Add($"  Opening: {openingTotal:N2} | Closing: {closingTotal:N2}");
+            lines.Add($"  Opened: {s.OpenedAt:yyyy-MM-dd HH:mm} | Closed: {(s.ClosedAt.HasValue ? s.ClosedAt.Value.ToString("yyyy-MM-dd HH:mm") : "Still open")}");
+            if (s.Discrepancies.Any())
+                lines.Add($"  ⚠️ {s.Discrepancies.Count} discrepancy(ies) flagged");
             lines.Add("");
         }
 

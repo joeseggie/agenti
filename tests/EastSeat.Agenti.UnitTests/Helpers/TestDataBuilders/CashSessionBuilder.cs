@@ -4,20 +4,19 @@ using EastSeat.Agenti.Shared.Domain.Enums;
 namespace EastSeat.Agenti.UnitTests.Helpers.TestDataBuilders;
 
 /// <summary>
-/// Fluent builder for creating CashSession test data.
+/// Fluent builder for creating CashSession test data (branch-level sessions).
 /// </summary>
 public class CashSessionBuilder
 {
     private long _id = 1;
-    private long _agentId = 1;
-    private long? _branchId = 1;
+    private long _branchId = 1;
     private DateOnly _sessionDate = DateOnly.FromDateTime(DateTime.UtcNow);
     private CashSessionStatus _status = CashSessionStatus.Open;
     private DateTimeOffset _openedAt = DateTimeOffset.UtcNow;
     private DateTimeOffset? _closedAt;
     private DateTimeOffset? _blockedAt;
     private DateTimeOffset? _unblockedAt;
-    private Agent? _agent;
+    private Branch? _branch;
 
     public CashSessionBuilder WithId(long id)
     {
@@ -25,13 +24,7 @@ public class CashSessionBuilder
         return this;
     }
 
-    public CashSessionBuilder WithAgentId(long agentId)
-    {
-        _agentId = agentId;
-        return this;
-    }
-
-    public CashSessionBuilder WithBranchId(long? branchId)
+    public CashSessionBuilder WithBranchId(long branchId)
     {
         _branchId = branchId;
         return this;
@@ -61,10 +54,10 @@ public class CashSessionBuilder
         return this;
     }
 
-    public CashSessionBuilder WithAgent(Agent agent)
+    public CashSessionBuilder WithBranch(Branch branch)
     {
-        _agent = agent;
-        _agentId = agent.Id;
+        _branch = branch;
+        _branchId = branch.Id;
         return this;
     }
 
@@ -87,7 +80,6 @@ public class CashSessionBuilder
         return new CashSession
         {
             Id = _id,
-            AgentId = _agentId,
             BranchId = _branchId,
             SessionDate = _sessionDate,
             Status = _status,
@@ -95,7 +87,7 @@ public class CashSessionBuilder
             ClosedAt = _closedAt,
             BlockedAt = _blockedAt,
             UnblockedAt = _unblockedAt,
-            Agent = _agent
+            Branch = _branch
         };
     }
 

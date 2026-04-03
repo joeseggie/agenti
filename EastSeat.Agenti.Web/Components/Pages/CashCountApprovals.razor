@@ -1,0 +1,224 @@
+@page "/cashcount-approvals"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using EastSeat.Agenti.Web.Features.CashCounts
+@using EastSeat.Agenti.Shared.Domain.Enums
+@attribute [Authorize(Policy = "CashCountApprove")]
+@rendermode InteractiveServer
+@inject ICashCountService CashCountService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Cash Count Approvals - Agenti</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudGrid>
+        <MudItem xs="12" sm="8">
+            <MudText Typo="Typo.h4" Class="mb-2">Cash Count Approvals</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Review and approve or reject pending cash counts
+            </MudText>
+        </MudItem>
+        <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
+            <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="LoadPendingAsync"
+                StartIcon="@Icons.Material.Filled.Refresh" Disabled="_isLoading">
+                Refresh
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+
+    @if (_isLoading)
+    {
+        <MudGrid Class="mt-4">
+            <MudItem xs="12" Class="d-flex justify-center">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    }
+    else if (_pending.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-4">
+            No cash counts pending approval.
+        </MudAlert>
+    }
+    else
+    {
+        <MudTable Items="@_pending" Hover="true" Striped="true" Dense="true" Elevation="2" Class="mt-4"
+            Breakpoint="Breakpoint.Md">
+            <HeaderContent>
+                <MudTh>Agent</MudTh>
+                <MudTh>Type</MudTh>
+                <MudTh>Date</MudTh>
+                <MudTh Style="text-align: right;">Amount (UGX)</MudTh>
+                <MudTh Style="text-align: right;">Variance</MudTh>
+                <MudTh>Submitted</MudTh>
+                <MudTh Style="text-align: center;">Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Agent">
+                    <MudText Typo="Typo.body2">@context.AgentName</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@context.AgentCode</MudText>
+                </MudTd>
+                <MudTd DataLabel="Type">
+                    <MudChip T="string" Size="Size.Small" Color="@(context.IsOpening ? Color.Primary : Color.Secondary)">
+                        @(context.IsOpening ? "Opening" : "Closing")
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Date">
+                    @context.CountDate.ToString("MMM dd, yyyy")
+                </MudTd>
+                <MudTd DataLabel="Amount" Style="text-align: right;">
+                    @context.TotalAmount.ToString("N0")
+                </MudTd>
+                <MudTd DataLabel="Variance" Style="text-align: right;">
+                    @if (context.HasDiscrepancy && context.Variance.HasValue)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Warning">
+                            @context.Variance.Value.ToString("N0")
+                        </MudText>
+                    }
+                    else if (!context.IsOpening && context.OpeningTotal.HasValue)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Success">0</MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Style="opacity: 0.5;">---</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Submitted">
+                    <MudText Typo="Typo.caption">@context.SubmittedAt.ToLocalTime().ToString("HH:mm")</MudText>
+                </MudTd>
+                <MudTd DataLabel="Actions" Style="text-align: center;">
+                    <MudStack Row="true" Spacing="1" Justify="Justify.Center">
+                        <MudTooltip Text="Approve">
+                            <MudIconButton Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small"
+                                OnClick="@(() => ApproveAsync(context))" Disabled="_isProcessing" />
+                        </MudTooltip>
+                        <MudTooltip Text="Reject">
+                            <MudIconButton Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small"
+                                OnClick="@(() => ShowRejectDialogAsync(context))" Disabled="_isProcessing" />
+                        </MudTooltip>
+                    </MudStack>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+
+        @foreach (var item in _pending.Where(p => !string.IsNullOrEmpty(p.Explanation)))
+        {
+            <MudAlert Severity="Severity.Warning" Variant="Variant.Text" Class="mt-2" Dense="true">
+                <strong>@item.AgentName (@(item.IsOpening ? "Opening" : "Closing")):</strong> @item.Explanation
+            </MudAlert>
+        }
+    }
+</MudContainer>
+
+@code {
+    private List<PendingApprovalDto> _pending = [];
+    private bool _isLoading = true;
+    private bool _isProcessing = false;
+    private string? _userId;
+    private long _branchId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var branchClaim = authState.User.FindFirst("BranchId")?.Value;
+        if (long.TryParse(branchClaim, out var bid))
+        {
+            _branchId = bid;
+        }
+        await LoadPendingAsync();
+    }
+
+    private async Task LoadPendingAsync()
+    {
+        if (_branchId == 0) return;
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            _pending = await CashCountService.GetPendingApprovalsAsync(_branchId);
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ApproveAsync(PendingApprovalDto item)
+    {
+        if (string.IsNullOrEmpty(_userId)) return;
+
+        _isProcessing = true;
+        StateHasChanged();
+
+        try
+        {
+            var result = await CashCountService.ApproveCashCountAsync(_userId, item.CashCountId);
+            if (result.Success)
+            {
+                Snackbar.Add($"Cash count approved for {item.AgentName}.", Severity.Success);
+                await LoadPendingAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to approve.", Severity.Error);
+            }
+        }
+        finally
+        {
+            _isProcessing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ShowRejectDialogAsync(PendingApprovalDto item)
+    {
+        var parameters = new DialogParameters<RejectCashCountDialog>
+        {
+            { x => x.AgentName, item.AgentName },
+            { x => x.CountType, item.IsOpening ? "opening" : "closing" }
+        };
+
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<RejectCashCountDialog>("Reject Cash Count", parameters, options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled && result.Data is string reason)
+        {
+            await RejectAsync(item, reason);
+        }
+    }
+
+    private async Task RejectAsync(PendingApprovalDto item, string reason)
+    {
+        if (string.IsNullOrEmpty(_userId)) return;
+
+        _isProcessing = true;
+        StateHasChanged();
+
+        try
+        {
+            var result = await CashCountService.RejectCashCountAsync(_userId, item.CashCountId, reason);
+            if (result.Success)
+            {
+                Snackbar.Add($"Cash count rejected for {item.AgentName}.", Severity.Warning);
+                await LoadPendingAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to reject.", Severity.Error);
+            }
+        }
+        finally
+        {
+            _isProcessing = false;
+            StateHasChanged();
+        }
+    }
+}

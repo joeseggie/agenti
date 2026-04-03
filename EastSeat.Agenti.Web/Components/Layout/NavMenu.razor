@@ -1,4 +1,4 @@
-﻿@implements IDisposable
+@implements IDisposable
 @inject NavigationManager NavigationManager
 
 <MudNavMenu>
@@ -12,6 +12,9 @@
             </MudNavLink>
             <AuthorizeView Roles="Admin,Supervisor">
                 <Authorized Context="adminOrSupervisorCtx">
+                    <MudNavLink Href="cashcount-approvals" Icon="@Icons.Material.Filled.FactCheck">
+                        Approvals
+                    </MudNavLink>
                     <MudNavLink Href="cashsessions" Icon="@Icons.Material.Filled.EventNote">
                         Cash Sessions
                     </MudNavLink>

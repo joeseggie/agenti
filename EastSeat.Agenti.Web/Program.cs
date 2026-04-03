@@ -19,6 +19,7 @@ using EastSeat.Agenti.Web.Features.Users;
 using EastSeat.Agenti.Web.Features.Setup;
 using EastSeat.Agenti.Web.Features.Theme;
 using EastSeat.Agenti.Web.Features.Api;
+using EastSeat.Agenti.Web.Features.Notifications;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using MudBlazor.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -146,6 +147,7 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<ILoginTelemetryService, LoginTelemetryService>();
 builder.Services.AddScoped<ISetupService, SetupService>();
 builder.Services.AddScoped<IThemeService, ThemeService>();
+builder.Services.AddScoped<INotificationService, NotificationService>();
 
 // Add vault background service
 builder.Services.AddHostedService<VaultExpirationService>();
@@ -169,6 +171,10 @@ builder.Services.AddAuthorizationBuilder()
     // Admin-only user management access
     .AddPolicy("UserManagement", policy =>
         policy.RequireRole(UserRole.Admin.ToString())
+              .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme))
+    // Cash count approval access (Admin or Supervisor)
+    .AddPolicy("CashCountApprove", policy =>
+        policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString())
               .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme));
 
 // Add REST API support

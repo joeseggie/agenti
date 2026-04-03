@@ -26,6 +26,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<AuditLog> AuditLogs { get; set; }
     public DbSet<UserAuditLog> UserAuditLogs { get; set; }
     public DbSet<AppConfig> AppConfigs { get; set; }
+    public DbSet<Notification> Notifications { get; set; }
 
     public override int SaveChanges()
     {
@@ -192,7 +193,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(e => new { e.AgentId, e.WalletTypeId }).IsUnique();
         });
 
-        // Configure CashSession
+        // Configure CashSession (branch-level, one per branch per day)
         builder.Entity<CashSession>(entity =>
         {
             entity.HasKey(e => e.Id);
@@ -201,24 +202,46 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .IsRequired()
                 .HasConversion<string>()
                 .HasMaxLength(50);
-            entity.HasOne(e => e.Agent)
-                .WithMany(a => a.CashSessions)
-                .HasForeignKey(e => e.AgentId)
+            entity.HasOne(e => e.Branch)
+                .WithMany()
+                .HasForeignKey(e => e.BranchId)
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.HasIndex(e => new { e.AgentId, e.SessionDate }).IsUnique();
+            entity.HasIndex(e => new { e.BranchId, e.SessionDate }).IsUnique();
             entity.HasIndex(e => new { e.Status, e.BranchId });
         });
 
-        // Configure CashCount
+        // Configure CashCount (per-agent within a session)
         builder.Entity<CashCount>(entity =>
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.TotalAmount).HasPrecision(18, 2);
+            entity.Property(e => e.Status)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(50);
+            entity.Property(e => e.CountDate).IsRequired();
+            entity.Property(e => e.Explanation).HasMaxLength(2000);
+            entity.Property(e => e.ApprovedByUserId).HasMaxLength(450);
+            entity.Property(e => e.RejectedByUserId).HasMaxLength(450);
+            entity.Property(e => e.RejectionReason).HasMaxLength(2000);
             entity.HasOne(e => e.CashSession)
                 .WithMany(s => s.CashCounts)
                 .HasForeignKey(e => e.CashSessionId)
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.HasIndex(e => new { e.CashSessionId, e.IsOpening });
+            entity.HasOne(e => e.Agent)
+                .WithMany(a => a.CashCounts)
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.ApprovedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.ApprovedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.RejectedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.RejectedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(e => new { e.CashSessionId, e.AgentId, e.IsOpening }).IsUnique();
+            entity.HasIndex(e => new { e.AgentId, e.Status });
         });
 
         // Configure CashCountDetail
@@ -329,6 +352,27 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasKey(e => e.Key);
             entity.Property(e => e.Key).IsRequired().HasMaxLength(256);
             entity.Property(e => e.Value).HasMaxLength(1000);
+        });
+
+        // Configure Notification
+        builder.Entity<Notification>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.UserId).IsRequired().HasMaxLength(450);
+            entity.Property(e => e.Title).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.Message).IsRequired().HasMaxLength(2000);
+            entity.Property(e => e.Type)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(50);
+            entity.Property(e => e.LinkUrl).HasMaxLength(500);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(e => new { e.UserId, e.IsRead, e.CreatedAt });
         });
 
         // Seed default app config
