@@ -345,6 +345,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .HasConversion<string>()
                 .HasMaxLength(50);
             entity.Property(e => e.IsRead).HasDefaultValue(false);
+            entity.Property(e => e.TransactionId).IsRequired(false);
 
             entity.HasOne(e => e.Recipient)
                 .WithMany()

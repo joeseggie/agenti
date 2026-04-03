@@ -1,10 +1,12 @@
 @page "/notifications"
 @using Microsoft.AspNetCore.Authorization
 @using EastSeat.Agenti.Web.Features.Notifications
+@using EastSeat.Agenti.Web.Features.Vaults
 @using EastSeat.Agenti.Shared.Domain.Enums
 @attribute [Authorize]
 @rendermode InteractiveServer
 @inject INotificationService NotificationService
+@inject IVaultService VaultService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ISnackbar Snackbar
 
@@ -88,6 +90,19 @@
                     }
                 </MudTd>
                 <MudTd DataLabel="Actions" Style="text-align: center;">
+                    @if (context.TransactionId.HasValue && _isAdmin)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Success"
+                            OnClick="@(() => ApproveVaultTransaction(context.Id, context.TransactionId!.Value))"
+                            Disabled="@_isActioning">
+                            Approve
+                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                            OnClick="@(() => RejectVaultTransaction(context.Id, context.TransactionId!.Value))"
+                            Disabled="@_isActioning">
+                            Reject
+                        </MudButton>
+                    }
                     @if (!context.IsRead)
                     {
                         <MudIconButton Icon="@Icons.Material.Filled.MarkEmailRead"
@@ -104,12 +119,15 @@
 @code {
     private List<NotificationListItemDto> _notifications = [];
     private bool _isLoading = true;
+    private bool _isActioning = false;
+    private bool _isAdmin = false;
     private string? _userId;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         _userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        _isAdmin = authState.User.IsInRole(UserRole.Admin.ToString());
         await LoadNotificationsAsync();
     }
 
@@ -160,6 +178,56 @@
         else
         {
             Snackbar.Add(result.ErrorMessage ?? "Failed to mark notifications as read.", Severity.Error);
+        }
+    }
+
+    private async Task ApproveVaultTransaction(Guid notificationId, long transactionId)
+    {
+        if (_userId is null) return;
+
+        _isActioning = true;
+        try
+        {
+            var result = await VaultService.ApproveManualAdjustmentAsync(transactionId, _userId);
+            if (result.Success)
+            {
+                Snackbar.Add("Vault adjustment approved.", Severity.Success);
+                await NotificationService.MarkAsReadAsync(notificationId, _userId);
+                await LoadNotificationsAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to approve adjustment.", Severity.Error);
+            }
+        }
+        finally
+        {
+            _isActioning = false;
+        }
+    }
+
+    private async Task RejectVaultTransaction(Guid notificationId, long transactionId)
+    {
+        if (_userId is null) return;
+
+        _isActioning = true;
+        try
+        {
+            var result = await VaultService.RejectManualAdjustmentAsync(transactionId, _userId);
+            if (result.Success)
+            {
+                Snackbar.Add("Vault adjustment rejected.", Severity.Info);
+                await NotificationService.MarkAsReadAsync(notificationId, _userId);
+                await LoadNotificationsAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to reject adjustment.", Severity.Error);
+            }
+        }
+        finally
+        {
+            _isActioning = false;
         }
     }
 

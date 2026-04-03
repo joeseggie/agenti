@@ -2,6 +2,7 @@ using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.UnitTests.Helpers.TestDataBuilders;
 using EastSeat.Agenti.Web.Data;
+using EastSeat.Agenti.Web.Features.Notifications;
 using EastSeat.Agenti.Web.Features.Vaults;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
@@ -496,6 +497,84 @@ public class VaultServiceTests : IDisposable
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Contain("Branch not found");
+    }
+
+    [Fact]
+    public async Task RequestManualAdjustmentAsync_WithNotificationService_SendsNotificationsToOtherAdmins()
+    {
+        // Arrange
+        var secondAdmin = UserBuilder.Default()
+            .WithEmail("admin2@test.com")
+            .WithRole(UserRole.Admin)
+            .WithBranchId(_testBranch.Id)
+            .Build();
+        _dbContext.Users.Add(secondAdmin);
+        await _dbContext.SaveChangesAsync();
+
+        var notificationService = new NotificationService(_dbContext);
+        var sutWithNotifications = new VaultService(_dbContext, null, notificationService);
+
+        // Act
+        var result = await sutWithNotifications.RequestManualAdjustmentAsync(
+            _testBranch.Id,
+            500m,
+            isDeposit: true,
+            "Deposit request from teller",
+            _testAdmin.Id);
+
+        // Assert
+        result.Success.Should().BeTrue();
+
+        var notifications = await _dbContext.Notifications.ToListAsync();
+        notifications.Should().ContainSingle();
+        notifications[0].RecipientUserId.Should().Be(secondAdmin.Id);
+        notifications[0].SenderUserId.Should().Be(_testAdmin.Id);
+        notifications[0].TransactionId.Should().Be(result.TransactionId);
+        notifications[0].Priority.Should().Be(NotificationPriority.High);
+    }
+
+    [Fact]
+    public async Task RequestManualAdjustmentAsync_WithNotificationService_DoesNotNotifyRequester()
+    {
+        // Arrange
+        var notificationService = new NotificationService(_dbContext);
+        var sutWithNotifications = new VaultService(_dbContext, null, notificationService);
+
+        // Act
+        var result = await sutWithNotifications.RequestManualAdjustmentAsync(
+            _testBranch.Id,
+            300m,
+            isDeposit: false,
+            "Withdrawal request for operations",
+            _testAdmin.Id);
+
+        // Assert
+        result.Success.Should().BeTrue();
+
+        // _testAdmin made the request - should NOT be notified
+        var notificationsToRequester = await _dbContext.Notifications
+            .Where(n => n.RecipientUserId == _testAdmin.Id)
+            .ToListAsync();
+        notificationsToRequester.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RequestManualAdjustmentAsync_WithoutNotificationService_SucceedsWithoutNotifications()
+    {
+        // _sut does not have notificationService (uses default null)
+        // Act
+        var result = await _sut.RequestManualAdjustmentAsync(
+            _testBranch.Id,
+            500m,
+            isDeposit: true,
+            "Deposit without notifications",
+            _testUser.Id);
+
+        // Assert
+        result.Success.Should().BeTrue();
+
+        var notifications = await _dbContext.Notifications.ToListAsync();
+        notifications.Should().BeEmpty();
     }
 
     #endregion

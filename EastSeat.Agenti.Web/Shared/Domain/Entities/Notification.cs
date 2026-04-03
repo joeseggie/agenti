@@ -26,6 +26,11 @@ public class Notification
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? ReadAt { get; set; }
 
+    /// <summary>
+    /// Optional vault transaction ID for notifications that require approval action.
+    /// </summary>
+    public long? TransactionId { get; set; }
+
     // Navigation properties
     public ApplicationUser? Recipient { get; set; }
     public ApplicationUser? Sender { get; set; }

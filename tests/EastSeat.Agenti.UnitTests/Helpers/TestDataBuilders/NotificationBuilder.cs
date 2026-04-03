@@ -16,6 +16,7 @@ public class NotificationBuilder
     private bool _isRead = false;
     private DateTimeOffset _createdAt = DateTimeOffset.UtcNow;
     private DateTimeOffset? _readAt = null;
+    private long? _transactionId = null;
 
     public NotificationBuilder WithId(Guid id)
     {
@@ -66,6 +67,12 @@ public class NotificationBuilder
         return this;
     }
 
+    public NotificationBuilder WithTransactionId(long transactionId)
+    {
+        _transactionId = transactionId;
+        return this;
+    }
+
     public Notification Build()
     {
         return new Notification
@@ -77,7 +84,8 @@ public class NotificationBuilder
             Priority = _priority,
             IsRead = _isRead,
             CreatedAt = _createdAt,
-            ReadAt = _readAt
+            ReadAt = _readAt,
+            TransactionId = _transactionId
         };
     }
 
