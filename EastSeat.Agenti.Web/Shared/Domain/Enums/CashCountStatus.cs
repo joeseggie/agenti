@@ -6,8 +6,8 @@ namespace EastSeat.Agenti.Shared.Domain.Enums;
 public enum CashCountStatus
 {
     Draft = 0,
-    Submitted = 1,
-    PendingApproval = 2,
-    Approved = 3,
-    Rejected = 4
+    PendingApproval = 1,
+    Submitted = PendingApproval,
+    Approved = 2,
+    Rejected = 3
 }
