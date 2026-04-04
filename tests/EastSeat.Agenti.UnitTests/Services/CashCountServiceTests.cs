@@ -303,7 +303,7 @@ public class CashCountServiceTests : IDisposable
         var result = await _sut.SaveCashCountAsync(user2.Id, form);
 
         result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("Opening count must be approved");
+        result.ErrorMessage.Should().Contain("pending approval");
     }
 
     [Fact]

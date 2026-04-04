@@ -575,8 +575,7 @@ public class CashCountService(
         if (discrepancy != null)
         {
             discrepancy.Status = DiscrepancyStatus.Rejected;
-            // Review comment: use admin's user ID for audit trail, not agent's
-            discrepancy.ApprovedByUserId = null;
+            discrepancy.ApprovedByUserId = adminUserId;
             discrepancy.ApprovedAt = DateTimeOffset.UtcNow;
             discrepancy.ApprovalNotes = $"Rejected by admin. Reason: {reason.Trim()}";
         }
@@ -921,8 +920,7 @@ public class CashCountService(
             if (discrepancy != null)
             {
                 discrepancy.Status = DiscrepancyStatus.Approved;
-                // Review comment: use actual approver, not agent
-                discrepancy.ApprovedByUserId = isAutoApproval ? null : cashCount.AgentId;
+                discrepancy.ApprovedByUserId = isAutoApproval ? null : userId;
                 discrepancy.ApprovedAt = DateTimeOffset.UtcNow;
                 discrepancy.ApprovalNotes = isAutoApproval ? "Auto-approved (closing matches opening)" : null;
             }

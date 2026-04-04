@@ -1,4 +1,5 @@
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Web.Data;
 
 namespace EastSeat.Agenti.Shared.Domain.Entities;
 
@@ -18,7 +19,7 @@ public class Discrepancy
     public string? Explanation { get; set; }
     public long? ExplainedByUserId { get; set; }
     public DateTimeOffset? ExplainedAt { get; set; }
-    public long? ApprovedByUserId { get; set; }
+    public string? ApprovedByUserId { get; set; }
     public DateTimeOffset? ApprovedAt { get; set; }
     public string? ApprovalNotes { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -26,4 +27,5 @@ public class Discrepancy
     // Navigation properties
     public CashSession? CashSession { get; set; }
     public CashCount? CashCount { get; set; }
+    public ApplicationUser? ApprovedByUser { get; set; }
 }

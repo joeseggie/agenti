@@ -296,6 +296,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .IsRequired()
                 .HasConversion<string>()
                 .HasMaxLength(50);
+            entity.Property(e => e.ApprovedByUserId).HasMaxLength(450);
             entity.HasOne(e => e.CashSession)
                 .WithMany(s => s.Discrepancies)
                 .HasForeignKey(e => e.CashSessionId)
@@ -303,6 +304,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasOne(e => e.CashCount)
                 .WithMany()
                 .HasForeignKey(e => e.CashCountId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.ApprovedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.ApprovedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => new { e.Status, e.CashSessionId });
         });
