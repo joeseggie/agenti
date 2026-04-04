@@ -25,6 +25,8 @@ using MudBlazor.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -34,6 +36,7 @@ var serilogConfig = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Information)
+    .MinimumLevel.Override("Microsoft.AspNetCore.Diagnostics.HealthChecks", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .Enrich.WithProperty("Application", "Agenti")
     .WriteTo.Console();
@@ -173,6 +176,12 @@ builder.Services.AddAuthorizationBuilder()
         policy.RequireRole(UserRole.Admin.ToString())
               .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme));
 
+// Add health checks
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<ApplicationDbContext>(
+        name: "postgresql",
+        tags: ["db", "ready"]);
+
 // Add REST API support
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -305,6 +314,23 @@ app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
 
+// Health check endpoints
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    Predicate = _ => true,
+    ResponseWriter = WriteHealthCheckResponse
+}).AllowAnonymous();
+
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = _ => false
+}).AllowAnonymous();
+
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+}).AllowAnonymous();
+
 // Map REST API endpoints (for Android app)
 var apiGroup = app.MapGroup("/api");
 
@@ -355,6 +381,7 @@ app.Use(async (context, next) =>
                        path.StartsWith("/lib", StringComparison.OrdinalIgnoreCase) ||
                        path.StartsWith("/favicon", StringComparison.OrdinalIgnoreCase);
     var isApiPath = path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
+    var isHealthCheck = path.StartsWith("/health", StringComparison.OrdinalIgnoreCase);
 
     if (!setupCompleteFlag)
     {
@@ -363,7 +390,7 @@ app.Use(async (context, next) =>
         setupCompleteFlag = await setupService.IsSetupCompleteAsync();
     }
 
-    if (!setupCompleteFlag && !isSetupPage && !isStaticAsset && !isApiPath)
+    if (!setupCompleteFlag && !isSetupPage && !isStaticAsset && !isApiPath && !isHealthCheck)
     {
         var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
         logger.LogInformation("Setup incomplete. Redirecting to setup page from {Path}", path);
@@ -399,4 +426,25 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
+}
+
+static async Task WriteHealthCheckResponse(HttpContext context, HealthReport report)
+{
+    context.Response.ContentType = "application/json";
+
+    var result = new
+    {
+        status = report.Status.ToString(),
+        totalDuration = report.TotalDuration.TotalMilliseconds,
+        checks = report.Entries.Select(e => new
+        {
+            name = e.Key,
+            status = e.Value.Status.ToString(),
+            duration = e.Value.Duration.TotalMilliseconds,
+            description = e.Value.Description,
+            exception = e.Value.Exception?.Message
+        })
+    };
+
+    await context.Response.WriteAsJsonAsync(result);
 }
