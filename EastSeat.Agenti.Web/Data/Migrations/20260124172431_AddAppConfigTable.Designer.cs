@@ -3,17 +3,20 @@ using System;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace EastSeat.Agenti.Web.Migrations
+namespace EastSeat.Agenti.Web.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260124172431_AddAppConfigTable")]
+    partial class AddAppConfigTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -327,54 +330,6 @@ namespace EastSeat.Agenti.Web.Migrations
                     b.HasIndex("Status", "CashSessionId");
 
                     b.ToTable("Discrepancies");
-                });
-
-            modelBuilder.Entity("EastSeat.Agenti.Shared.Domain.Entities.Notification", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasDefaultValueSql("gen_random_uuid()");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsRead")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
-
-                    b.Property<string>("Message")
-                        .IsRequired()
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<string>("Priority")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<DateTimeOffset?>("ReadAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("RecipientUserId")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<string>("SenderUserId")
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SenderUserId");
-
-                    b.HasIndex("RecipientUserId", "CreatedAt");
-
-                    b.HasIndex("RecipientUserId", "IsRead", "CreatedAt");
-
-                    b.ToTable("Notifications");
                 });
 
             modelBuilder.Entity("EastSeat.Agenti.Shared.Domain.Entities.Transaction", b =>
@@ -698,9 +653,6 @@ namespace EastSeat.Agenti.Web.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("Email")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
@@ -714,9 +666,6 @@ namespace EastSeat.Agenti.Web.Migrations
                         .HasColumnType("character varying(100)");
 
                     b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
                     b.Property<string>("LastName")
@@ -751,9 +700,6 @@ namespace EastSeat.Agenti.Web.Migrations
                         .HasColumnType("integer");
 
                     b.Property<string>("SecurityStamp")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ThemePreference")
                         .HasColumnType("text");
 
                     b.Property<bool>("TwoFactorEnabled")
@@ -803,6 +749,7 @@ namespace EastSeat.Agenti.Web.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("PerformedByUserId")
+                        .IsRequired()
                         .HasMaxLength(450)
                         .HasColumnType("character varying(450)");
 
@@ -1025,24 +972,6 @@ namespace EastSeat.Agenti.Web.Migrations
                     b.Navigation("CashSession");
                 });
 
-            modelBuilder.Entity("EastSeat.Agenti.Shared.Domain.Entities.Notification", b =>
-                {
-                    b.HasOne("EastSeat.Agenti.Web.Data.ApplicationUser", "Recipient")
-                        .WithMany()
-                        .HasForeignKey("RecipientUserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("EastSeat.Agenti.Web.Data.ApplicationUser", "Sender")
-                        .WithMany()
-                        .HasForeignKey("SenderUserId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.Navigation("Recipient");
-
-                    b.Navigation("Sender");
-                });
-
             modelBuilder.Entity("EastSeat.Agenti.Shared.Domain.Entities.Transaction", b =>
                 {
                     b.HasOne("EastSeat.Agenti.Shared.Domain.Entities.CashSession", "CashSession")
@@ -1144,7 +1073,8 @@ namespace EastSeat.Agenti.Web.Migrations
                     b.HasOne("EastSeat.Agenti.Web.Data.ApplicationUser", "PerformedByUser")
                         .WithMany()
                         .HasForeignKey("PerformedByUserId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.HasOne("EastSeat.Agenti.Web.Data.ApplicationUser", "User")
                         .WithMany()

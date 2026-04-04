@@ -9,11 +9,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace EastSeat.Agenti.Web.Migrations
+namespace EastSeat.Agenti.Web.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20260108102023_AgentUserRelationship")]
-    partial class AgentUserRelationship
+    [Migration("20260108134333_RemoveWalletBranchIdAndAddUniqueConstraint")]
+    partial class RemoveWalletBranchIdAndAddUniqueConstraint
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -44,26 +44,8 @@ namespace EastSeat.Agenti.Web.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("Email")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
-
-                    b.Property<string>("FirstName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
-
-                    b.Property<string>("LastName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("PhoneNumber")
-                        .HasMaxLength(20)
-                        .HasColumnType("character varying(20)");
 
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -374,15 +356,12 @@ namespace EastSeat.Agenti.Web.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
-                    b.Property<long?>("AgentId")
+                    b.Property<long>("AgentId")
                         .HasColumnType("bigint");
 
                     b.Property<decimal>("Balance")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
-
-                    b.Property<long?>("BranchId")
-                        .HasColumnType("bigint");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -410,7 +389,8 @@ namespace EastSeat.Agenti.Web.Migrations
 
                     b.HasIndex("WalletTypeId");
 
-                    b.HasIndex("AgentId", "BranchId");
+                    b.HasIndex("AgentId", "WalletTypeId")
+                        .IsUnique();
 
                     b.ToTable("Wallets");
                 });
@@ -534,8 +514,18 @@ namespace EastSeat.Agenti.Web.Migrations
                     b.Property<bool>("EmailConfirmed")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("FirstName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("LastName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<bool>("LockoutEnabled")
                         .HasColumnType("boolean");
@@ -577,9 +567,6 @@ namespace EastSeat.Agenti.Web.Migrations
                         .HasColumnType("character varying(256)");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("AgentId")
-                        .IsUnique();
 
                     b.HasIndex("NormalizedEmail")
                         .HasDatabaseName("EmailIndex");
@@ -723,6 +710,17 @@ namespace EastSeat.Agenti.Web.Migrations
                     b.ToTable("AspNetUserTokens", (string)null);
                 });
 
+            modelBuilder.Entity("EastSeat.Agenti.Shared.Domain.Entities.Agent", b =>
+                {
+                    b.HasOne("EastSeat.Agenti.Web.Data.ApplicationUser", "User")
+                        .WithOne("Agent")
+                        .HasForeignKey("EastSeat.Agenti.Shared.Domain.Entities.Agent", "UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("EastSeat.Agenti.Shared.Domain.Entities.CashCount", b =>
                 {
                     b.HasOne("EastSeat.Agenti.Shared.Domain.Entities.CashSession", "CashSession")
@@ -819,7 +817,8 @@ namespace EastSeat.Agenti.Web.Migrations
                     b.HasOne("EastSeat.Agenti.Shared.Domain.Entities.Agent", "Agent")
                         .WithMany("Wallets")
                         .HasForeignKey("AgentId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.HasOne("EastSeat.Agenti.Shared.Domain.Entities.WalletType", "WalletType")
                         .WithMany("Wallets")
@@ -830,16 +829,6 @@ namespace EastSeat.Agenti.Web.Migrations
                     b.Navigation("Agent");
 
                     b.Navigation("WalletType");
-                });
-
-            modelBuilder.Entity("EastSeat.Agenti.Web.Data.ApplicationUser", b =>
-                {
-                    b.HasOne("EastSeat.Agenti.Shared.Domain.Entities.Agent", "Agent")
-                        .WithOne()
-                        .HasForeignKey("EastSeat.Agenti.Web.Data.ApplicationUser", "AgentId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("Agent");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
@@ -924,6 +913,11 @@ namespace EastSeat.Agenti.Web.Migrations
             modelBuilder.Entity("EastSeat.Agenti.Shared.Domain.Entities.WalletType", b =>
                 {
                     b.Navigation("Wallets");
+                });
+
+            modelBuilder.Entity("EastSeat.Agenti.Web.Data.ApplicationUser", b =>
+                {
+                    b.Navigation("Agent");
                 });
 #pragma warning restore 612, 618
         }
