@@ -467,7 +467,6 @@
     private static Color GetCountStatusColor(CashCountStatus status) => status switch
     {
         CashCountStatus.Draft => Color.Default,
-        CashCountStatus.Submitted => Color.Info,
         CashCountStatus.PendingApproval => Color.Warning,
         CashCountStatus.Approved => Color.Success,
         CashCountStatus.Rejected => Color.Error
@@ -476,7 +475,6 @@
     private static string GetCountStatusText(CashCountStatus status) => status switch
     {
         CashCountStatus.Draft => "Draft",
-        CashCountStatus.Submitted => "Submitted",
         CashCountStatus.PendingApproval => "Pending Approval",
         CashCountStatus.Approved => "Approved",
         CashCountStatus.Rejected => "Rejected"
