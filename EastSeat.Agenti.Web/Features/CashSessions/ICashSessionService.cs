@@ -6,19 +6,22 @@ namespace EastSeat.Agenti.Web.Features.CashSessions;
 public interface ICashSessionService
 {
     /// <summary>
-    /// Gets all cash sessions with summary information.
+    /// Gets all cash sessions with summary information (branch-level).
     /// </summary>
-    Task<List<CashSessionListItemDto>> GetCashSessionsAsync();
+    Task<List<CashSessionListItemDto>> GetCashSessionsAsync(long? branchId = null);
 
     /// <summary>
-    /// Gets cash session details by ID including opening and closing counts.
+    /// Gets cash session details by ID including all agents' opening and closing counts.
     /// </summary>
     Task<CashSessionDetailDto?> GetCashSessionDetailAsync(long sessionId);
 
     /// <summary>
-    /// Closes a cash session by ID.
+    /// Closes a cash session. Requires all agents' closing counts to be approved.
     /// </summary>
-    /// <param name="sessionId">The session ID to close.</param>
-    /// <returns>True if closed successfully, false otherwise.</returns>
     Task<(bool Success, string? ErrorMessage)> CloseSessionAsync(long sessionId);
+
+    /// <summary>
+    /// Gets open sessions that have not been closed (for admin dashboards).
+    /// </summary>
+    Task<List<CashSessionListItemDto>> GetOpenSessionsAsync(long branchId);
 }

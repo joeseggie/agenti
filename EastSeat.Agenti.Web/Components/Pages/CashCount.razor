@@ -2,6 +2,7 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
 @using EastSeat.Agenti.Web.Features.CashCounts
+@using EastSeat.Agenti.Shared.Domain.Enums
 @attribute [Authorize]
 @rendermode InteractiveServer
 @inject ICashCountService CashCountService
@@ -14,7 +15,7 @@
     <!-- Header with Session Status -->
     <MudGrid>
         <MudItem xs="12" sm="8">
-            <MudText Typo="Typo.h4" Class="mb-2">💵 Cash Count</MudText>
+            <MudText Typo="Typo.h4" Class="mb-2">Cash Count</MudText>
             @if (_currentSession != null)
             {
                 <MudChip T="string" Color="@GetStatusColor(_currentSession.StatusColor)" Size="Size.Small">
@@ -46,19 +47,56 @@
     }
     else if (!_isCountingMode)
     {
-        <!-- Selection Mode: Opening or Closing Count -->
+        @if (_currentSession?.BlockReason != null)
+        {
+            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-4">
+                @_currentSession.BlockReason
+            </MudAlert>
+        }
+
+        @if (_currentSession?.HasPendingApproval == true)
+        {
+            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-4">
+                You have a cash count pending admin approval. Please wait for it to be processed.
+            </MudAlert>
+        }
+
+        <!-- Status chips for existing counts -->
+        @if (_currentSession?.OpeningCountStatus != null || _currentSession?.ClosingCountStatus != null)
+        {
+            <MudPaper Class="mt-4 pa-3" Elevation="1">
+                <MudStack Spacing="2">
+                    @if (_currentSession?.OpeningCountStatus != null)
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudText Typo="Typo.body2">Opening Count:</MudText>
+                            <MudChip T="string" Size="Size.Small" Color="@GetCountStatusColor(_currentSession.OpeningCountStatus.Value)">
+                                @GetCountStatusText(_currentSession.OpeningCountStatus.Value)
+                            </MudChip>
+                        </MudStack>
+                    }
+                    @if (_currentSession?.ClosingCountStatus != null)
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudText Typo="Typo.body2">Closing Count:</MudText>
+                            <MudChip T="string" Size="Size.Small" Color="@GetCountStatusColor(_currentSession.ClosingCountStatus.Value)">
+                                @GetCountStatusText(_currentSession.ClosingCountStatus.Value)
+                            </MudChip>
+                        </MudStack>
+                    }
+                </MudStack>
+            </MudPaper>
+        }
+
+        <!-- Action Buttons -->
         <MudPaper Class="mt-4 pa-3" Elevation="1">
             <MudStack Row="true" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Spacing="3">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Medium"
                     Disabled="@(!_currentSession?.CanPerformOpeningCount ?? true)"
                     OnClick="@(() => StartCount(true))"
                     StartIcon="@Icons.Material.Filled.WbSunny">
-                    @(_currentSession?.HasOpeningCount == true ? "View Opening Count" : "Start Opening Count")
+                    @(_currentSession?.OpeningCountStatus == CashCountStatus.Rejected ? "Revise Opening Count" : "Start Opening Count")
                 </MudButton>
-                @if (_currentSession?.HasOpeningCount == true)
-                {
-                    <MudChip T="string" Color="Color.Success" Size="Size.Small">Completed</MudChip>
-                }
 
                 <MudDivider Vertical="true" FlexItem="true" />
 
@@ -66,21 +104,10 @@
                     Disabled="@(!_currentSession?.CanPerformClosingCount ?? true)"
                     OnClick="@(() => StartCount(false))"
                     StartIcon="@Icons.Material.Filled.NightsStay">
-                    @(_currentSession?.HasClosingCount == true ? "View Closing Count" : "Start Closing Count")
+                    @(_currentSession?.ClosingCountStatus == CashCountStatus.Rejected ? "Revise Closing Count" : "Start Closing Count")
                 </MudButton>
-                @if (_currentSession?.HasClosingCount == true)
-                {
-                    <MudChip T="string" Color="Color.Success" Size="Size.Small">Completed</MudChip>
-                }
             </MudStack>
         </MudPaper>
-
-        @if (_currentSession != null && !_currentSession.CanPerformOpeningCount && !_currentSession.HasOpeningCount)
-        {
-            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-4">
-                @_currentSession.StatusText. You may not be able to perform cash counts at this time.
-            </MudAlert>
-        }
     }
     else
     {
@@ -255,6 +282,15 @@
                 </FooterContent>
             </MudTable>
 
+            <!-- Explanation field for closing counts with discrepancy -->
+            @if (!_countForm.IsOpening && _countForm.TotalVariance != 0)
+            {
+                <MudTextField @bind-Value="_countForm.Explanation" Label="Explanation for discrepancy"
+                    Variant="Variant.Outlined" Lines="3" Class="mt-3"
+                    HelperText="Required: explain the difference between opening and closing amounts"
+                    Required="true" RequiredError="Explanation is required when there is a discrepancy" />
+            }
+
             <!-- Action Buttons -->
             <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.FlexEnd" Class="mt-3 mb-4" Spacing="2">
                 <MudButton Variant="Variant.Filled" Color="Color.Default" OnClick="SaveCount" Disabled="_isSaving">
@@ -265,7 +301,7 @@
                     Save Draft
                 </MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SubmitCount" Disabled="_isSaving">
-                    Submit
+                    Submit for Approval
                 </MudButton>
             </MudStack>
         }
@@ -351,7 +387,6 @@
             wallet.Denominations.Coins[denomKey] = value;
         }
 
-        // Update counted amount from denominations
         wallet.CountedAmount = wallet.Denominations.Total;
         StateHasChanged();
     }
@@ -388,7 +423,6 @@
     {
         if (string.IsNullOrEmpty(_userId) || _countForm == null) return;
 
-        // First save, then submit
         _isSaving = true;
         StateHasChanged();
 
@@ -404,7 +438,7 @@
             var submitResult = await CashCountService.SubmitCashCountAsync(_userId, saveResult.CashCountId!.Value);
             if (submitResult.Success)
             {
-                Snackbar.Add("Cash count submitted successfully!", Severity.Success);
+                Snackbar.Add("Cash count submitted for approval.", Severity.Success);
                 _isCountingMode = false;
                 _countForm = null;
                 await LoadDataAsync();
@@ -428,5 +462,21 @@
         "error" => Color.Error,
         "info" => Color.Info,
         _ => Color.Default
+    };
+
+    private static Color GetCountStatusColor(CashCountStatus status) => status switch
+    {
+        CashCountStatus.Draft => Color.Default,
+        CashCountStatus.PendingApproval => Color.Warning,
+        CashCountStatus.Approved => Color.Success,
+        CashCountStatus.Rejected => Color.Error
+    };
+
+    private static string GetCountStatusText(CashCountStatus status) => status switch
+    {
+        CashCountStatus.Draft => "Draft",
+        CashCountStatus.PendingApproval => "Pending Approval",
+        CashCountStatus.Approved => "Approved",
+        CashCountStatus.Rejected => "Rejected"
     };
 }

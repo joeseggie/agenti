@@ -1,11 +1,16 @@
 @page "/cashsessions/{Id:long}"
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
 @using EastSeat.Agenti.Web.Features.CashSessions
+@using EastSeat.Agenti.Web.Features.CashCounts
 @using EastSeat.Agenti.Shared.Domain.Enums
 @attribute [Authorize]
 @rendermode InteractiveServer
 @inject ICashSessionService CashSessionService
+@inject ICashCountService CashCountService
+@inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
 
 <PageTitle>Cash Session Details - Agenti</PageTitle>
 
@@ -38,14 +43,14 @@
                     Back to Sessions
                 </MudButton>
                 <MudText Typo="Typo.h4" Class="mb-2">
-                    📅 @_session.SessionDate.ToString("dddd, MMMM dd, yyyy")
+                    @_session.SessionDate.ToString("dddd, MMMM dd, yyyy")
                 </MudText>
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                     <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(_session.Status)">
                         @GetStatusText(_session.Status)
                     </MudChip>
                     <MudText Typo="Typo.body2" Color="Color.Secondary">
-                        Agent: @_session.AgentName (@_session.AgentCode)
+                        @_session.AgentSummaries.Count agent(s)
                     </MudText>
                 </MudStack>
             </MudItem>
@@ -57,7 +62,7 @@
             </MudItem>
         </MudGrid>
 
-        <!-- Session Summary Card -->
+        <!-- Session Summary -->
         <MudCard Elevation="2" Class="mt-4">
             <MudCardContent>
                 <MudGrid>
@@ -76,28 +81,15 @@
                             <MudText Typo="Typo.body1" Style="opacity: 0.5;">---</MudText>
                         }
                     </MudItem>
-                    <MudItem xs="6" sm="2">
-                        <MudText Typo="Typo.caption" Color="Color.Secondary">Opening Total</MudText>
-                        <MudText Typo="Typo.body1">UGX @_session.OpeningTotal.ToString("N0")</MudText>
+                    <MudItem xs="6" sm="3">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Total Opening</MudText>
+                        <MudText Typo="Typo.body1">UGX @_session.TotalOpeningAmount.ToString("N0")</MudText>
                     </MudItem>
-                    <MudItem xs="6" sm="2">
-                        <MudText Typo="Typo.caption" Color="Color.Secondary">Closing Total</MudText>
-                        @if (_session.ClosingTotal.HasValue)
+                    <MudItem xs="6" sm="3">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Total Closing</MudText>
+                        @if (_session.TotalClosingAmount.HasValue)
                         {
-                            <MudText Typo="Typo.body1">UGX @_session.ClosingTotal.Value.ToString("N0")</MudText>
-                        }
-                        else
-                        {
-                            <MudText Typo="Typo.body1" Style="opacity: 0.5;">---</MudText>
-                        }
-                    </MudItem>
-                    <MudItem xs="12" sm="2">
-                        <MudText Typo="Typo.caption" Color="Color.Secondary">Variance</MudText>
-                        @if (_session.Variance.HasValue)
-                        {
-                            <MudText Typo="Typo.body1" Color="@GetVarianceColor(_session.Variance.Value)">
-                                UGX @((_session.Variance.Value >= 0 ? "+" : ""))@_session.Variance.Value.ToString("N0")
-                            </MudText>
+                            <MudText Typo="Typo.body1">UGX @_session.TotalClosingAmount.Value.ToString("N0")</MudText>
                         }
                         else
                         {
@@ -108,130 +100,112 @@
             </MudCardContent>
         </MudCard>
 
-        <!-- Opening and Closing Counts -->
-        <MudGrid Class="mt-4">
-            <!-- Opening Count -->
-            <MudItem xs="12" md="6">
-                <MudCard Elevation="2" Class="h-100">
-                    <MudCardHeader>
-                        <CardHeaderContent>
-                            <MudText Typo="Typo.h6">🌅 Opening Count</MudText>
-                        </CardHeaderContent>
-                    </MudCardHeader>
-                    <MudCardContent>
-                        @if (_session.OpeningCount != null)
-                        {
-                            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2">
-                                @if (_session.OpeningCount.SubmittedAt.HasValue)
+        <!-- Agent Participation Cards -->
+        @foreach (var agent in _session.AgentSummaries)
+        {
+            <MudCard Elevation="2" Class="mt-4">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudText Typo="Typo.h6">@agent.AgentName</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">(@agent.AgentCode)</MudText>
+                            @if (agent.HasDiscrepancy)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Warning">Discrepancy</MudChip>
+                            }
+                        </MudStack>
+                    </CardHeaderContent>
+                    <CardHeaderActions>
+                        <AuthorizeView Roles="Admin">
+                            <Authorized>
+                                @if (_session.Status != CashSessionStatus.Closed &&
+                                     agent.OpeningCount?.Status == CashCountStatus.Approved &&
+                                     agent.ClosingCount?.Status != CashCountStatus.Approved)
                                 {
-                                    <span>Submitted: @_session.OpeningCount.SubmittedAt.Value.ToLocalTime().ToString("HH:mm")</span>
+                                    <MudButton Variant="Variant.Text" Color="Color.Warning" Size="Size.Small"
+                                        OnClick="@(() => AdminCloseForAgent(agent.AgentId))">
+                                        Close for Agent
+                                    </MudButton>
                                 }
-                                else
+                            </Authorized>
+                        </AuthorizeView>
+                    </CardHeaderActions>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudGrid>
+                        <!-- Opening Count -->
+                        <MudItem xs="12" md="6">
+                            <MudText Typo="Typo.subtitle2" Class="mb-1">Opening Count</MudText>
+                            @if (agent.OpeningCount != null)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="@GetCountStatusColor(agent.OpeningCount.Status)">
+                                    @GetCountStatusText(agent.OpeningCount.Status)
+                                </MudChip>
+                                <MudText Typo="Typo.body1" Class="mt-1">UGX @agent.OpeningCount.TotalAmount.ToString("N0")</MudText>
+                                @if (agent.OpeningCount.WalletEntries.Count > 0)
                                 {
-                                    <span>Draft - Not submitted</span>
+                                    <MudSimpleTable Dense="true" Hover="true" Elevation="0" Class="mt-1">
+                                        <thead>
+                                            <tr>
+                                                <th>Wallet</th>
+                                                <th style="text-align: right;">Amount</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var w in agent.OpeningCount.WalletEntries)
+                                            {
+                                                <tr>
+                                                    <td>@w.WalletName</td>
+                                                    <td style="text-align: right;">@w.Amount.ToString("N0")</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </MudSimpleTable>
                                 }
-                            </MudText>
-                            <MudTable Items="@_session.OpeningCount.WalletEntries" Dense="true" Hover="true" Elevation="0">
-                                <HeaderContent>
-                                    <MudTh>Wallet</MudTh>
-                                    <MudTh Style="text-align: right;">Amount (UGX)</MudTh>
-                                </HeaderContent>
-                                <RowTemplate>
-                                    <MudTd DataLabel="Wallet">
-                                        <MudText Typo="Typo.body2">@context.WalletName</MudText>
-                                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.WalletTypeName</MudText>
-                                    </MudTd>
-                                    <MudTd DataLabel="Amount" Style="text-align: right;">
-                                        @context.Amount.ToString("N0")
-                                    </MudTd>
-                                </RowTemplate>
-                            </MudTable>
-                            <MudDivider Class="my-2" />
-                            <MudStack Row="true" Justify="Justify.SpaceBetween">
-                                <MudText Typo="Typo.subtitle1">Total</MudText>
-                                <MudText Typo="Typo.subtitle1" Color="Color.Primary">
-                                    UGX @_session.OpeningCount.TotalAmount.ToString("N0")
-                                </MudText>
-                            </MudStack>
-                        }
-                        else
-                        {
-                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
-                                Opening count not recorded.
-                            </MudAlert>
-                        }
-                    </MudCardContent>
-                </MudCard>
-            </MudItem>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.body2" Style="opacity: 0.5;">Not recorded</MudText>
+                            }
+                        </MudItem>
 
-            <!-- Closing Count -->
-            <MudItem xs="12" md="6">
-                <MudCard Elevation="2" Class="h-100">
-                    <MudCardHeader>
-                        <CardHeaderContent>
-                            <MudText Typo="Typo.h6">🌙 Closing Count</MudText>
-                        </CardHeaderContent>
-                    </MudCardHeader>
-                    <MudCardContent>
-                        @if (_session.ClosingCount != null)
-                        {
-                            <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2">
-                                @if (_session.ClosingCount.SubmittedAt.HasValue)
+                        <!-- Closing Count -->
+                        <MudItem xs="12" md="6">
+                            <MudText Typo="Typo.subtitle2" Class="mb-1">Closing Count</MudText>
+                            @if (agent.ClosingCount != null)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="@GetCountStatusColor(agent.ClosingCount.Status)">
+                                    @GetCountStatusText(agent.ClosingCount.Status)
+                                </MudChip>
+                                <MudText Typo="Typo.body1" Class="mt-1">UGX @agent.ClosingCount.TotalAmount.ToString("N0")</MudText>
+                                @if (agent.Variance.HasValue && agent.Variance.Value != 0)
                                 {
-                                    <span>Submitted: @_session.ClosingCount.SubmittedAt.Value.ToLocalTime().ToString("HH:mm")</span>
-                                }
-                                else
-                                {
-                                    <span>Draft - Not submitted</span>
-                                }
-                            </MudText>
-                            <MudTable Items="@GetClosingEntriesWithVariance()" Dense="true" Hover="true" Elevation="0">
-                                <HeaderContent>
-                                    <MudTh>Wallet</MudTh>
-                                    <MudTh Style="text-align: right;">Amount (UGX)</MudTh>
-                                    <MudTh Style="text-align: right;">Variance (UGX)</MudTh>
-                                </HeaderContent>
-                                <RowTemplate>
-                                    <MudTd DataLabel="Wallet">
-                                        <MudText Typo="Typo.body2">@context.WalletName</MudText>
-                                        <MudText Typo="Typo.caption" Color="Color.Secondary">@context.WalletTypeName</MudText>
-                                    </MudTd>
-                                    <MudTd DataLabel="Amount" Style="text-align: right;">
-                                        @context.Amount.ToString("N0")
-                                    </MudTd>
-                                    <MudTd DataLabel="Variance" Style="text-align: right;">
-                                        <MudText Typo="Typo.body2" Color="@GetVarianceColor(context.Variance)">
-                                            @((context.Variance >= 0 ? "+" : ""))@context.Variance.ToString("N0")
-                                        </MudText>
-                                    </MudTd>
-                                </RowTemplate>
-                            </MudTable>
-                            <MudDivider Class="my-2" />
-                            <MudStack Row="true" Justify="Justify.SpaceBetween">
-                                <MudText Typo="Typo.subtitle1">Total</MudText>
-                                <MudStack Row="true" Spacing="4">
-                                    <MudText Typo="Typo.subtitle1" Color="Color.Primary">
-                                        UGX @_session.ClosingCount.TotalAmount.ToString("N0")
+                                    <MudText Typo="Typo.body2" Color="Color.Warning" Class="mt-1">
+                                        Variance: UGX @agent.Variance.Value.ToString("N0")
                                     </MudText>
-                                    @if (_session.Variance.HasValue)
-                                    {
-                                        <MudText Typo="Typo.subtitle1" Color="@GetVarianceColor(_session.Variance.Value)">
-                                            (@((_session.Variance.Value >= 0 ? "+" : ""))@_session.Variance.Value.ToString("N0"))
-                                        </MudText>
-                                    }
-                                </MudStack>
-                            </MudStack>
-                        }
-                        else
-                        {
-                            <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
-                                Closing count not yet recorded.
-                            </MudAlert>
-                        }
-                    </MudCardContent>
-                </MudCard>
-            </MudItem>
-        </MudGrid>
+                                }
+                                @if (!string.IsNullOrEmpty(agent.ClosingCount.Explanation))
+                                {
+                                    <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mt-1">
+                                        @agent.ClosingCount.Explanation
+                                    </MudAlert>
+                                }
+                                @if (!string.IsNullOrEmpty(agent.ClosingCount.RejectionReason))
+                                {
+                                    <MudAlert Severity="Severity.Error" Variant="Variant.Text" Dense="true" Class="mt-1">
+                                        Rejected: @agent.ClosingCount.RejectionReason
+                                    </MudAlert>
+                                }
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.body2" Style="opacity: 0.5;">Not recorded</MudText>
+                            }
+                        </MudItem>
+                    </MudGrid>
+                </MudCardContent>
+            </MudCard>
+        }
     }
 </MudContainer>
 
@@ -241,9 +215,12 @@
 
     private CashSessionDetailDto? _session;
     private bool _isLoading = true;
+    private string? _userId;
 
     protected override async Task OnInitializedAsync()
     {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         await LoadSessionAsync();
     }
 
@@ -268,21 +245,20 @@
         NavigationManager.NavigateTo("/cashsessions");
     }
 
-    private List<ClosingEntryWithVariance> GetClosingEntriesWithVariance()
+    private async Task AdminCloseForAgent(long agentId)
     {
-        if (_session?.ClosingCount == null) return [];
+        if (string.IsNullOrEmpty(_userId)) return;
 
-        var openingEntries = _session.OpeningCount?.WalletEntries
-        .ToDictionary(w => w.WalletId, w => w.Amount) ?? [];
-
-        return _session.ClosingCount.WalletEntries.Select(c => new ClosingEntryWithVariance
+        var result = await CashCountService.AdminCloseAgentSessionAsync(_userId, Id, agentId);
+        if (result.Success)
         {
-            WalletId = c.WalletId,
-            WalletName = c.WalletName,
-            WalletTypeName = c.WalletTypeName,
-            Amount = c.Amount,
-            Variance = c.Amount - (openingEntries.TryGetValue(c.WalletId, out var openingAmount) ? openingAmount : 0)
-        }).ToList();
+            Snackbar.Add("Agent's session closed by admin.", Severity.Success);
+            await LoadSessionAsync();
+        }
+        else
+        {
+            Snackbar.Add(result.ErrorMessage ?? "Failed to close agent session.", Severity.Error);
+        }
     }
 
     private static Color GetStatusColor(CashSessionStatus status) => status switch
@@ -292,8 +268,7 @@
         CashSessionStatus.Pending => Color.Warning,
         CashSessionStatus.DiscrepancyUnderReview => Color.Warning,
         CashSessionStatus.Blocked => Color.Error,
-        CashSessionStatus.Closed => Color.Default,
-        _ => Color.Default
+        CashSessionStatus.Closed => Color.Default
     };
 
     private static string GetStatusText(CashSessionStatus status) => status switch
@@ -303,22 +278,22 @@
         CashSessionStatus.Pending => "Pending",
         CashSessionStatus.DiscrepancyUnderReview => "Under Review",
         CashSessionStatus.Blocked => "Blocked",
-        CashSessionStatus.Closed => "Closed",
-        _ => "Unknown"
+        CashSessionStatus.Closed => "Closed"
     };
 
-    private static Color GetVarianceColor(decimal variance)
+    private static Color GetCountStatusColor(CashCountStatus status) => status switch
     {
-        if (variance == 0) return Color.Success;
-        return Color.Warning;
-    }
+        CashCountStatus.Draft => Color.Default,
+        CashCountStatus.PendingApproval => Color.Warning,
+        CashCountStatus.Approved => Color.Success,
+        CashCountStatus.Rejected => Color.Error
+    };
 
-    private class ClosingEntryWithVariance
+    private static string GetCountStatusText(CashCountStatus status) => status switch
     {
-        public long WalletId { get; set; }
-        public string WalletName { get; set; } = string.Empty;
-        public string WalletTypeName { get; set; } = string.Empty;
-        public decimal Amount { get; set; }
-        public decimal Variance { get; set; }
-    }
+        CashCountStatus.Draft => "Draft",
+        CashCountStatus.PendingApproval => "Pending Approval",
+        CashCountStatus.Approved => "Approved",
+        CashCountStatus.Rejected => "Rejected"
+    };
 }

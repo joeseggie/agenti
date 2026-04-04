@@ -171,6 +171,10 @@ builder.Services.AddAuthorizationBuilder()
     // Admin-only user management access
     .AddPolicy("UserManagement", policy =>
         policy.RequireRole(UserRole.Admin.ToString())
+              .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme))
+    // Cash count approval access (Admin or Supervisor)
+    .AddPolicy("CashCountApprove", policy =>
+        policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString())
               .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme));
 
 // Add REST API support

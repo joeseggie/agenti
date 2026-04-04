@@ -29,4 +29,25 @@ public interface ICashCountService
     /// Gets an existing cash count for editing.
     /// </summary>
     Task<CashCountFormModel?> GetCashCountFormAsync(string userId, long cashCountId);
+
+    /// <summary>
+    /// Approves a cash count (admin only). Executes vault operations on approval.
+    /// </summary>
+    Task<CashCountSaveResult> ApproveCashCountAsync(string adminUserId, long cashCountId);
+
+    /// <summary>
+    /// Rejects a cash count (admin only). Agent must revise and resubmit.
+    /// </summary>
+    Task<CashCountSaveResult> RejectCashCountAsync(string adminUserId, long cashCountId, string reason);
+
+    /// <summary>
+    /// Gets all cash counts pending admin approval for a branch.
+    /// </summary>
+    Task<List<PendingApprovalDto>> GetPendingApprovalsAsync(long branchId);
+
+    /// <summary>
+    /// Admin closes a session for a specific agent (rule 22).
+    /// Creates a closing count matching the opening count if the agent cannot close themselves.
+    /// </summary>
+    Task<CashCountSaveResult> AdminCloseAgentSessionAsync(string adminUserId, long cashSessionId, long agentId);
 }

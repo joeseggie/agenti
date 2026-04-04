@@ -1,3 +1,5 @@
+using EastSeat.Agenti.Shared.Domain.Enums;
+
 namespace EastSeat.Agenti.Web.Features.CashCounts;
 
 /// <summary>
@@ -13,14 +15,7 @@ public class WalletCountEntryDto
     public decimal CountedAmount { get; set; }
     public DenominationBreakdown? Denominations { get; set; }
 
-    /// <summary>
-    /// Calculates the variance between expected and counted amounts.
-    /// </summary>
     public decimal Variance => CountedAmount - ExpectedBalance;
-
-    /// <summary>
-    /// Indicates if there's a discrepancy.
-    /// </summary>
     public bool HasDiscrepancy => Variance != 0;
 }
 
@@ -32,21 +27,12 @@ public class CashCountFormModel
     public long? CashCountId { get; set; }
     public long? CashSessionId { get; set; }
     public bool IsOpening { get; set; }
+    public DateOnly? CountDate { get; set; }
+    public string? Explanation { get; set; }
     public List<WalletCountEntryDto> WalletEntries { get; set; } = [];
 
-    /// <summary>
-    /// Calculates the total counted amount across all wallets.
-    /// </summary>
     public decimal TotalAmount => WalletEntries.Sum(w => w.CountedAmount);
-
-    /// <summary>
-    /// Calculates the total expected amount across all wallets.
-    /// </summary>
     public decimal TotalExpected => WalletEntries.Sum(w => w.ExpectedBalance);
-
-    /// <summary>
-    /// Calculates the total variance across all wallets.
-    /// </summary>
     public decimal TotalVariance => TotalAmount - TotalExpected;
 }
 
@@ -75,7 +61,7 @@ public class CashCountSaveResult
 }
 
 /// <summary>
-/// DTO for displaying current session information.
+/// DTO for displaying current session information for an agent.
 /// </summary>
 public class CurrentSessionDto
 {
@@ -87,4 +73,39 @@ public class CurrentSessionDto
     public bool CanPerformClosingCount { get; set; }
     public bool HasOpeningCount { get; set; }
     public bool HasClosingCount { get; set; }
+    public CashCountStatus? OpeningCountStatus { get; set; }
+    public CashCountStatus? ClosingCountStatus { get; set; }
+    public bool HasPendingApproval { get; set; }
+    public string? BlockReason { get; set; }
+}
+
+/// <summary>
+/// DTO for pending approval list items (admin view).
+/// </summary>
+public class PendingApprovalDto
+{
+    public long CashCountId { get; set; }
+    public long CashSessionId { get; set; }
+    public DateOnly SessionDate { get; set; }
+    public DateOnly CountDate { get; set; }
+    public string AgentName { get; set; } = string.Empty;
+    public string AgentCode { get; set; } = string.Empty;
+    public bool IsOpening { get; set; }
+    public CashCountStatus Status { get; set; }
+    public decimal TotalAmount { get; set; }
+    public decimal? OpeningTotal { get; set; }
+    public decimal? Variance { get; set; }
+    public string? Explanation { get; set; }
+    public bool HasDiscrepancy { get; set; }
+    public DateTimeOffset SubmittedAt { get; set; }
+}
+
+/// <summary>
+/// Model for admin approval/rejection action.
+/// </summary>
+public class CashCountApprovalModel
+{
+    public long CashCountId { get; set; }
+    public bool Approve { get; set; }
+    public string? RejectionReason { get; set; }
 }

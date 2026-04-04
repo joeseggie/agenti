@@ -1,4 +1,5 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
+using EastSeat.Agenti.Shared.Domain.Enums;
 
 namespace EastSeat.Agenti.UnitTests.Helpers.TestDataBuilders;
 
@@ -9,12 +10,18 @@ public class CashCountBuilder
 {
     private long _id = 1;
     private long _cashSessionId = 1;
+    private long _agentId = 1;
     private bool _isOpening = true;
+    private CashCountStatus _status = CashCountStatus.Draft;
+    private DateOnly _countDate = DateOnly.FromDateTime(DateTime.UtcNow);
     private decimal _totalAmount = 0m;
+    private string? _explanation;
     private DateTimeOffset _createdAt = DateTimeOffset.UtcNow;
     private DateTimeOffset? _submittedAt;
     private DateTimeOffset? _approvedAt;
+    private string? _approvedByUserId;
     private CashSession? _cashSession;
+    private Agent? _agent;
     private List<CashCountDetail> _details = new();
 
     public CashCountBuilder WithId(long id)
@@ -29,15 +36,39 @@ public class CashCountBuilder
         return this;
     }
 
+    public CashCountBuilder WithAgentId(long agentId)
+    {
+        _agentId = agentId;
+        return this;
+    }
+
     public CashCountBuilder WithIsOpening(bool isOpening)
     {
         _isOpening = isOpening;
         return this;
     }
 
+    public CashCountBuilder WithStatus(CashCountStatus status)
+    {
+        _status = status;
+        return this;
+    }
+
+    public CashCountBuilder WithCountDate(DateOnly countDate)
+    {
+        _countDate = countDate;
+        return this;
+    }
+
     public CashCountBuilder WithTotalAmount(decimal totalAmount)
     {
         _totalAmount = totalAmount;
+        return this;
+    }
+
+    public CashCountBuilder WithExplanation(string? explanation)
+    {
+        _explanation = explanation;
         return this;
     }
 
@@ -66,6 +97,13 @@ public class CashCountBuilder
         return this;
     }
 
+    public CashCountBuilder WithAgent(Agent agent)
+    {
+        _agent = agent;
+        _agentId = agent.Id;
+        return this;
+    }
+
     public CashCountBuilder WithDetails(params CashCountDetail[] details)
     {
         _details.AddRange(details);
@@ -87,12 +125,15 @@ public class CashCountBuilder
     public CashCountBuilder AsSubmitted()
     {
         _submittedAt = DateTimeOffset.UtcNow;
+        _status = CashCountStatus.PendingApproval;
         return this;
     }
 
     public CashCountBuilder AsApproved()
     {
         _approvedAt = DateTimeOffset.UtcNow;
+        _submittedAt ??= DateTimeOffset.UtcNow;
+        _status = CashCountStatus.Approved;
         return this;
     }
 
@@ -102,15 +143,20 @@ public class CashCountBuilder
         {
             Id = _id,
             CashSessionId = _cashSessionId,
+            AgentId = _agentId,
             IsOpening = _isOpening,
+            Status = _status,
+            CountDate = _countDate,
             TotalAmount = _totalAmount,
+            Explanation = _explanation,
             CreatedAt = _createdAt,
             SubmittedAt = _submittedAt,
             ApprovedAt = _approvedAt,
-            CashSession = _cashSession
+            ApprovedByUserId = _approvedByUserId,
+            CashSession = _cashSession,
+            Agent = _agent
         };
 
-        // Set details collection using reflection if needed
         if (_details.Any())
         {
             var detailsProperty = typeof(CashCount).GetProperty(nameof(CashCount.Details));

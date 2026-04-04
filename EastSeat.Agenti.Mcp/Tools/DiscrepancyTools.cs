@@ -32,8 +32,9 @@ public class DiscrepancyTools
 
         var query = db.Discrepancies
             .Include(d => d.CashSession)
-                .ThenInclude(s => s!.Agent)
-                    .ThenInclude(a => a!.User)
+                .ThenInclude(s => s!.CashCounts)
+                    .ThenInclude(c => c.Agent)
+                        .ThenInclude(a => a!.User)
             .Include(d => d.CashCount)
             .AsQueryable();
 
@@ -56,8 +57,7 @@ public class DiscrepancyTools
         if (!string.IsNullOrWhiteSpace(agentCode))
             query = query.Where(d =>
                 d.CashSession != null &&
-                d.CashSession.Agent != null &&
-                d.CashSession.Agent.Code == agentCode.ToUpper());
+                d.CashSession.CashCounts.Any(c => c.Agent != null && c.Agent.Code == agentCode.ToUpper()));
 
         // Variance filter
         if (minVariance.HasValue)
@@ -70,10 +70,18 @@ public class DiscrepancyTools
             {
                 d.Id,
                 SessionDate = d.CashSession != null ? d.CashSession.SessionDate.ToString("yyyy-MM-dd") : "N/A",
-                AgentCode = d.CashSession != null && d.CashSession.Agent != null
-                    ? d.CashSession.Agent.Code : "N/A",
-                AgentName = d.CashSession != null && d.CashSession.Agent != null && d.CashSession.Agent.User != null
-                    ? d.CashSession.Agent.User.FirstName + " " + d.CashSession.Agent.User.LastName : "N/A",
+                AgentCode = d.CashSession != null
+                    ? d.CashSession.CashCounts
+                        .Where(c => c.IsOpening && c.Agent != null)
+                        .Select(c => c.Agent!.Code)
+                        .FirstOrDefault() ?? "N/A"
+                    : "N/A",
+                AgentName = d.CashSession != null
+                    ? d.CashSession.CashCounts
+                        .Where(c => c.IsOpening && c.Agent != null && c.Agent.User != null)
+                        .Select(c => c.Agent!.User!.FirstName + " " + c.Agent!.User!.LastName)
+                        .FirstOrDefault() ?? "N/A"
+                    : "N/A",
                 Status = d.Status.ToString(),
                 d.ExpectedAmount,
                 d.ActualAmount,
