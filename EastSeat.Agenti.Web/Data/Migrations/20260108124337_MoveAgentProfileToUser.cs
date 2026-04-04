@@ -2,7 +2,7 @@
 
 #nullable disable
 
-namespace EastSeat.Agenti.Web.Migrations
+namespace EastSeat.Agenti.Web.Data.Migrations
 {
     /// <inheritdoc />
     public partial class MoveAgentProfileToUser : Migration

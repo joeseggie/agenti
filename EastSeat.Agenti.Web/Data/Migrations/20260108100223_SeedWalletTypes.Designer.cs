@@ -9,11 +9,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace EastSeat.Agenti.Web.Migrations
+namespace EastSeat.Agenti.Web.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20260108100129_AddAgentEntity")]
-    partial class AddAgentEntity
+    [Migration("20260108100223_SeedWalletTypes")]
+    partial class SeedWalletTypes
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -450,6 +450,52 @@ namespace EastSeat.Agenti.Web.Migrations
                     b.HasIndex("Type");
 
                     b.ToTable("WalletTypes");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1L,
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Physical cash in drawer or safe",
+                            IsActive = true,
+                            IsSystem = true,
+                            Name = "Cash",
+                            SupportsDenominations = true,
+                            Type = "Cash"
+                        },
+                        new
+                        {
+                            Id = 2L,
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "MTN Mobile Money float",
+                            IsActive = true,
+                            IsSystem = true,
+                            Name = "MTN Mobile Money",
+                            SupportsDenominations = false,
+                            Type = "MobileMoney"
+                        },
+                        new
+                        {
+                            Id = 3L,
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Airtel Money float",
+                            IsActive = true,
+                            IsSystem = true,
+                            Name = "Airtel Money",
+                            SupportsDenominations = false,
+                            Type = "MobileMoney"
+                        },
+                        new
+                        {
+                            Id = 4L,
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            Description = "Linked bank account for transfers",
+                            IsActive = true,
+                            IsSystem = true,
+                            Name = "Bank Account",
+                            SupportsDenominations = false,
+                            Type = "Bank"
+                        });
                 });
 
             modelBuilder.Entity("EastSeat.Agenti.Web.Data.ApplicationUser", b =>
