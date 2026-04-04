@@ -11,6 +11,24 @@ namespace EastSeat.Agenti.Web.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            // Step 1: Add AgentId to CashCounts BEFORE dropping it from CashSessions
+            // so we can copy the data across.
+            migrationBuilder.AddColumn<long>(
+                name: "AgentId",
+                table: "CashCounts",
+                type: "bigint",
+                nullable: false,
+                defaultValue: 0L);
+
+            // Step 2: Populate CashCounts.AgentId from CashSessions.AgentId
+            migrationBuilder.Sql(
+                """
+                UPDATE "CashCounts" SET "AgentId" = cs."AgentId"
+                FROM "CashSessions" cs
+                WHERE "CashCounts"."CashSessionId" = cs."Id"
+                """);
+
+            // Step 3: Now safe to drop AgentId from CashSessions
             migrationBuilder.DropForeignKey(
                 name: "FK_CashSessions_Agents_AgentId",
                 table: "CashSessions");
@@ -77,13 +95,6 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                 oldClrType: typeof(long),
                 oldType: "bigint",
                 oldNullable: true);
-
-            migrationBuilder.AddColumn<long>(
-                name: "AgentId",
-                table: "CashCounts",
-                type: "bigint",
-                nullable: false,
-                defaultValue: 0L);
 
             migrationBuilder.AddColumn<string>(
                 name: "ApprovedByUserId",
