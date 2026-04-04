@@ -2,6 +2,7 @@ using System.Data;
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Web.Data;
+using EastSeat.Agenti.Web.Features.Notifications;
 using Microsoft.ApplicationInsights;
 using Microsoft.ApplicationInsights.DataContracts;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +13,7 @@ namespace EastSeat.Agenti.Web.Features.Vaults;
 /// <summary>
 /// Service implementation for vault operations with pessimistic locking.
 /// </summary>
-public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telemetryClient = null) : IVaultService
+public class VaultService(ApplicationDbContext dbContext, INotificationService notificationService, TelemetryClient? telemetryClient = null) : IVaultService
 {
     private const int PendingExpiryHours = 12;
 
@@ -181,6 +182,9 @@ public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telem
             { "TransactionId", transaction.Id.ToString() },
             { "ExpiresAt", transaction.ExpiresAt?.ToString("O") ?? "N/A" }
         });
+
+        // Notify other admins about the pending vault adjustment
+        await NotifyAdminsOfAdjustmentRequestAsync(userId, amount, isDeposit, cancellationToken);
 
         return VaultOperationResult.Ok(transaction.Id);
     }
@@ -410,6 +414,29 @@ public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telem
         await dbContext.SaveChangesAsync(cancellationToken);
 
         return vault;
+    }
+
+    private async Task NotifyAdminsOfAdjustmentRequestAsync(string creatorUserId, decimal amount, bool isDeposit, CancellationToken cancellationToken)
+    {
+        var creator = await dbContext.Users.FirstOrDefaultAsync(u => u.Id == creatorUserId, cancellationToken);
+        var creatorName = creator?.FullName ?? "A user";
+        var adjustmentType = isDeposit ? "deposit" : "withdrawal";
+        var message = $"{creatorName} requested a vault {adjustmentType} of {amount:N2}. Your approval is required.";
+
+        var adminUserIds = await dbContext.Users
+            .Where(u => u.Role == UserRole.Admin && u.Id != creatorUserId && !u.IsDeleted)
+            .Select(u => u.Id)
+            .ToListAsync(cancellationToken);
+
+        foreach (var adminUserId in adminUserIds)
+        {
+            await notificationService.SendNotificationAsync(creatorUserId, new CreateNotificationDto
+            {
+                RecipientUserId = adminUserId,
+                Message = message,
+                Priority = NotificationPriority.High
+            });
+        }
     }
 
     private async Task<Vault?> LockVaultAsync(long branchId, CancellationToken cancellationToken)

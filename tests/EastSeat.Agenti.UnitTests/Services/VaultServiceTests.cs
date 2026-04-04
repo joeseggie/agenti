@@ -2,10 +2,12 @@ using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.UnitTests.Helpers.TestDataBuilders;
 using EastSeat.Agenti.Web.Data;
+using EastSeat.Agenti.Web.Features.Notifications;
 using EastSeat.Agenti.Web.Features.Vaults;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Moq;
 
 namespace EastSeat.Agenti.UnitTests.Services;
 
@@ -14,6 +16,7 @@ namespace EastSeat.Agenti.UnitTests.Services;
 public class VaultServiceTests : IDisposable
 {
     private readonly ApplicationDbContext _dbContext;
+    private readonly Mock<INotificationService> _notificationServiceMock;
     private readonly VaultService _sut;
     private readonly Branch _testBranch;
     private readonly Vault _testVault;
@@ -29,6 +32,10 @@ public class VaultServiceTests : IDisposable
             .Options;
 
         _dbContext = new ApplicationDbContext(options);
+        _notificationServiceMock = new Mock<INotificationService>();
+        _notificationServiceMock
+            .Setup(x => x.SendNotificationAsync(It.IsAny<string?>(), It.IsAny<CreateNotificationDto>()))
+            .ReturnsAsync(NotificationSaveResult.Ok(Guid.NewGuid()));
 
         // Seed required data
         _testBranch = new Branch
@@ -58,7 +65,7 @@ public class VaultServiceTests : IDisposable
         _dbContext.Users.AddRange(_testUser, _testAdmin);
         _dbContext.SaveChanges();
 
-        _sut = new VaultService(_dbContext);
+        _sut = new VaultService(_dbContext, _notificationServiceMock.Object);
     }
 
     public void Dispose()
@@ -496,6 +503,65 @@ public class VaultServiceTests : IDisposable
         // Assert
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Contain("Branch not found");
+    }
+
+    [Fact]
+    public async Task RequestManualAdjustmentAsync_NotifiesOtherAdmins()
+    {
+        // Arrange - add a second admin who should receive notification
+        var secondAdmin = UserBuilder.Default()
+            .WithEmail("admin2@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(secondAdmin);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.RequestManualAdjustmentAsync(
+            _testBranch.Id,
+            500m,
+            isDeposit: true,
+            "Need to deposit cash from safe",
+            _testAdmin.Id);
+
+        // Assert
+        result.Success.Should().BeTrue();
+
+        // Only secondAdmin should be notified (not the creator _testAdmin)
+        _notificationServiceMock.Verify(
+            x => x.SendNotificationAsync(
+                _testAdmin.Id,
+                It.Is<CreateNotificationDto>(dto =>
+                    dto.RecipientUserId == secondAdmin.Id &&
+                    dto.Message.Contains("deposit") &&
+                    dto.Message.Contains("500") &&
+                    dto.Priority == NotificationPriority.High)),
+            Times.Once);
+
+        // Creator should NOT receive a notification
+        _notificationServiceMock.Verify(
+            x => x.SendNotificationAsync(
+                It.IsAny<string?>(),
+                It.Is<CreateNotificationDto>(dto => dto.RecipientUserId == _testAdmin.Id)),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RequestManualAdjustmentAsync_DoesNotNotifyWhenRequestFails()
+    {
+        // Act - request with invalid notes (too short)
+        var result = await _sut.RequestManualAdjustmentAsync(
+            _testBranch.Id,
+            500m,
+            isDeposit: true,
+            "Short",
+            _testUser.Id);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        _notificationServiceMock.Verify(
+            x => x.SendNotificationAsync(It.IsAny<string?>(), It.IsAny<CreateNotificationDto>()),
+            Times.Never);
     }
 
     #endregion
