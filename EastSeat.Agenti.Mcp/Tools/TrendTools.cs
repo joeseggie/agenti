@@ -74,8 +74,8 @@ public class TrendTools
 
         if (!string.IsNullOrWhiteSpace(agentCode))
             query = query.Where(t =>
-                t.CashSession != null && t.CashSession.Agent != null &&
-                t.CashSession.Agent.Code == agentCode.ToUpper());
+                t.CashSession != null &&
+                t.CashSession.CashCounts.Any(c => c.Agent != null && c.Agent.Code == agentCode.ToUpper()));
 
         // DB-level aggregation by date to avoid loading raw rows into memory
         var dailyAggregates = await query
@@ -131,7 +131,9 @@ public class TrendTools
         string? agentCode, long? branchId, int limit)
     {
         var sessionQuery = db.CashSessions
-            .Include(s => s.Agent).ThenInclude(a => a!.User)
+            .Include(s => s.CashCounts)
+                .ThenInclude(c => c.Agent)
+                    .ThenInclude(a => a!.User)
             .Include(s => s.Discrepancies)
             .Where(s => s.SessionDate >= from && s.SessionDate <= to);
 
@@ -139,22 +141,28 @@ public class TrendTools
             sessionQuery = sessionQuery.Where(s => s.BranchId == branchId.Value);
 
         if (!string.IsNullOrWhiteSpace(agentCode))
-            sessionQuery = sessionQuery.Where(s => s.Agent != null && s.Agent.Code == agentCode.ToUpper());
+            sessionQuery = sessionQuery.Where(s => s.CashCounts.Any(c => c.Agent != null && c.Agent.Code == agentCode.ToUpper()));
 
         var sessions = await sessionQuery.Take(limit).ToListAsync();
 
-        var agentStats = sessions
-            .Where(s => s.Agent != null)
-            .GroupBy(s => new { s.Agent!.Code, Name = s.Agent.User?.FullName ?? "N/A" })
+        // Build agent stats from CashCounts (since sessions are now branch-level)
+        var agentCounts = sessions
+            .SelectMany(s => s.CashCounts
+                .Where(c => c.IsOpening && c.Agent != null)
+                .Select(c => new { Session = s, Agent = c.Agent! }))
+            .ToList();
+
+        var agentStats = agentCounts
+            .GroupBy(x => new { x.Agent.Code, Name = x.Agent.User?.FullName ?? "N/A" })
             .Select(g => new
             {
                 g.Key.Code,
                 g.Key.Name,
-                SessionCount = g.Count(),
-                ClosedSessions = g.Count(s => s.Status == CashSessionStatus.Closed || s.Status == CashSessionStatus.Completed),
-                OpenSessions = g.Count(s => s.Status == CashSessionStatus.Open),
-                DiscrepancyCount = g.Sum(s => s.Discrepancies.Count),
-                SessionsWithDiscrepancy = g.Count(s => s.Discrepancies.Any())
+                SessionCount = g.Select(x => x.Session.Id).Distinct().Count(),
+                ClosedSessions = g.Where(x => x.Session.Status == CashSessionStatus.Closed || x.Session.Status == CashSessionStatus.Completed).Select(x => x.Session.Id).Distinct().Count(),
+                OpenSessions = g.Where(x => x.Session.Status == CashSessionStatus.Open).Select(x => x.Session.Id).Distinct().Count(),
+                DiscrepancyCount = g.Sum(x => x.Session.Discrepancies.Count),
+                SessionsWithDiscrepancy = g.Where(x => x.Session.Discrepancies.Any()).Select(x => x.Session.Id).Distinct().Count()
             })
             .OrderBy(a => a.Code)
             .ToList();
@@ -201,8 +209,8 @@ public class TrendTools
 
         if (!string.IsNullOrWhiteSpace(agentCode))
             query = query.Where(t =>
-                t.CashSession != null && t.CashSession.Agent != null &&
-                t.CashSession.Agent.Code == agentCode.ToUpper());
+                t.CashSession != null &&
+                t.CashSession.CashCounts.Any(c => c.Agent != null && c.Agent.Code == agentCode.ToUpper()));
 
         var transactions = await query.Take(limit).ToListAsync();
 
@@ -255,7 +263,7 @@ public class TrendTools
             sessionQuery = sessionQuery.Where(s => s.BranchId == branchId.Value);
 
         if (!string.IsNullOrWhiteSpace(agentCode))
-            sessionQuery = sessionQuery.Where(s => s.Agent != null && s.Agent.Code == agentCode.ToUpper());
+            sessionQuery = sessionQuery.Where(s => s.CashCounts.Any(c => c.Agent != null && c.Agent.Code == agentCode.ToUpper()));
 
         var sessions = await sessionQuery.Take(limit).ToListAsync();
 

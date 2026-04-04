@@ -5,8 +5,11 @@ namespace EastSeat.Agenti.Web.Features.Notifications;
 public class NotificationListItemDto
 {
     public Guid Id { get; set; }
+    public string? Title { get; set; }
     public string Message { get; set; } = string.Empty;
     public NotificationPriority Priority { get; set; }
+    public NotificationType? Type { get; set; }
+    public string? LinkUrl { get; set; }
     public string SenderName { get; set; } = string.Empty;
     public bool IsRead { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

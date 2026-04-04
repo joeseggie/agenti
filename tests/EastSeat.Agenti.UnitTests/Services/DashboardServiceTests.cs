@@ -198,18 +198,14 @@ public class DashboardServiceTests : IDisposable
     public async Task GetDashboardAsync_WithOpenSessionToday_ReturnsActiveSessionStatus()
     {
         // Arrange
-        var user = UserBuilder.Default().Build();
-        var agent = AgentBuilder.Default().WithUser(user).Build();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
         var session = CashSessionBuilder.Default()
-            .WithAgent(agent)
+            .WithBranchId(1)
             .WithSessionDate(today)
             .AsOpen()
             .Build();
 
-        _dbContext.Users.Add(user);
-        _dbContext.Agents.Add(agent);
         _dbContext.CashSessions.Add(session);
         await _dbContext.SaveChangesAsync();
 
@@ -231,18 +227,14 @@ public class DashboardServiceTests : IDisposable
     public async Task GetDashboardAsync_WithClosedSessionToday_ReturnsInactiveSessionStatus()
     {
         // Arrange
-        var user = UserBuilder.Default().Build();
-        var agent = AgentBuilder.Default().WithUser(user).Build();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
         var session = CashSessionBuilder.Default()
-            .WithAgent(agent)
+            .WithBranchId(1)
             .WithSessionDate(today)
             .AsClosed()
             .Build();
 
-        _dbContext.Users.Add(user);
-        _dbContext.Agents.Add(agent);
         _dbContext.CashSessions.Add(session);
         await _dbContext.SaveChangesAsync();
 
@@ -262,18 +254,14 @@ public class DashboardServiceTests : IDisposable
     public async Task GetDashboardAsync_WithSessionYesterday_ReturnsNoActiveSession()
     {
         // Arrange
-        var user = UserBuilder.Default().Build();
-        var agent = AgentBuilder.Default().WithUser(user).Build();
         var yesterday = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
 
         var session = CashSessionBuilder.Default()
-            .WithAgent(agent)
+            .WithBranchId(1)
             .WithSessionDate(yesterday)
             .AsOpen()
             .Build();
 
-        _dbContext.Users.Add(user);
-        _dbContext.Agents.Add(agent);
         _dbContext.CashSessions.Add(session);
         await _dbContext.SaveChangesAsync();
 
@@ -290,13 +278,11 @@ public class DashboardServiceTests : IDisposable
     public async Task GetDashboardAsync_WithMultipleSessionsToday_ReturnsMostRecentSession()
     {
         // Arrange
-        var user = UserBuilder.Default().Build();
-        var agent = AgentBuilder.Default().WithUser(user).Build();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
         var earlierSession = CashSessionBuilder.Default()
             .WithId(1)
-            .WithAgent(agent)
+            .WithBranchId(1)
             .WithSessionDate(today)
             .WithOpenedAt(DateTimeOffset.UtcNow.AddHours(-5))
             .AsOpen()
@@ -304,14 +290,12 @@ public class DashboardServiceTests : IDisposable
 
         var laterSession = CashSessionBuilder.Default()
             .WithId(2)
-            .WithAgent(agent)
+            .WithBranchId(1)
             .WithSessionDate(today)
             .WithOpenedAt(DateTimeOffset.UtcNow.AddHours(-2))
             .AsOpen()
             .Build();
 
-        _dbContext.Users.Add(user);
-        _dbContext.Agents.Add(agent);
         _dbContext.CashSessions.AddRange(earlierSession, laterSession);
         await _dbContext.SaveChangesAsync();
 
@@ -333,19 +317,15 @@ public class DashboardServiceTests : IDisposable
             .WithBalance(2500m)
             .Build();
 
-        var user = UserBuilder.Default().Build();
-        var agent = AgentBuilder.Default().WithUser(user).Build();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var session = CashSessionBuilder.Default()
-            .WithAgent(agent)
+            .WithBranchId(1)
             .WithSessionDate(today)
             .AsOpen()
             .Build();
 
         _dbContext.WalletTypes.Add(walletType);
         _dbContext.Wallets.Add(wallet);
-        _dbContext.Users.Add(user);
-        _dbContext.Agents.Add(agent);
         _dbContext.CashSessions.Add(session);
         await _dbContext.SaveChangesAsync();
 
@@ -385,18 +365,14 @@ public class DashboardServiceTests : IDisposable
     public async Task GetDashboardAsync_SessionStatusDisplay_ReturnsCorrectDisplay()
     {
         // Arrange
-        var user = UserBuilder.Default().Build();
-        var agent = AgentBuilder.Default().WithUser(user).Build();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
         var blockedSession = CashSessionBuilder.Default()
-            .WithAgent(agent)
+            .WithBranchId(1)
             .WithSessionDate(today)
             .WithStatus(CashSessionStatus.Blocked)
             .Build();
 
-        _dbContext.Users.Add(user);
-        _dbContext.Agents.Add(agent);
         _dbContext.CashSessions.Add(blockedSession);
         await _dbContext.SaveChangesAsync();
 

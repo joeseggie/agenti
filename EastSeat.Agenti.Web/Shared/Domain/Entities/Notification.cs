@@ -20,8 +20,11 @@ public class Notification
     /// </summary>
     public string? SenderUserId { get; set; }
 
+    public string? Title { get; set; }
     public string Message { get; set; } = string.Empty;
     public NotificationPriority Priority { get; set; } = NotificationPriority.Normal;
+    public NotificationType? Type { get; set; }
+    public string? LinkUrl { get; set; }
     public bool IsRead { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? ReadAt { get; set; }

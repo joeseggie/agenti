@@ -1,0 +1,35 @@
+@using Microsoft.AspNetCore.Components
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body1" Class="mb-4">
+            Reject <strong>@CountType</strong> cash count for <strong>@AgentName</strong>?
+        </MudText>
+        <MudTextField @bind-Value="_reason" Label="Reason for rejection" Variant="Variant.Outlined"
+            Lines="3" Required="true" RequiredError="Reason is required (minimum 10 characters)"
+            HelperText="Minimum 10 characters" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Error" Variant="Variant.Filled" OnClick="Submit"
+            Disabled="@(string.IsNullOrWhiteSpace(_reason) || _reason.Trim().Length < 10)">
+            Reject
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter]
+    public string AgentName { get; set; } = string.Empty;
+
+    [Parameter]
+    public string CountType { get; set; } = string.Empty;
+
+    private string _reason = string.Empty;
+
+    private void Cancel() => MudDialog.Cancel();
+    private void Submit() => MudDialog.Close(DialogResult.Ok(_reason.Trim()));
+}

@@ -15,8 +15,11 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
             .Select(n => new NotificationListItemDto
             {
                 Id = n.Id,
+                Title = n.Title,
                 Message = n.Message,
                 Priority = n.Priority,
+                Type = n.Type,
+                LinkUrl = n.LinkUrl,
                 SenderName = n.Sender != null
                     ? (n.Sender.FirstName + " " + n.Sender.LastName).Trim()
                     : "System",
@@ -104,5 +107,56 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
         await dbContext.SaveChangesAsync();
 
         return NotificationSaveResult.Ok(Guid.Empty);
+    }
+
+    public async Task CreateSystemNotificationAsync(string recipientUserId, string title, string message, NotificationType type, string? linkUrl = null)
+    {
+        dbContext.Notifications.Add(new Notification
+        {
+            RecipientUserId = recipientUserId,
+            SenderUserId = null,
+            Title = title,
+            Message = message,
+            Type = type,
+            LinkUrl = linkUrl,
+            Priority = type == NotificationType.SessionBlocked ? NotificationPriority.High : NotificationPriority.Normal,
+            IsRead = false,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+    }
+
+    public async Task NotifyBranchAdminsAsync(long branchId, string title, string message, NotificationType type, string? linkUrl = null)
+    {
+        var adminUserIds = await dbContext.Users
+            .Where(u => u.BranchId == branchId &&
+                        (u.Role == UserRole.Admin || u.Role == UserRole.Supervisor) &&
+                        u.IsActive && !u.IsDeleted)
+            .Select(u => u.Id)
+            .ToListAsync();
+
+        var now = DateTimeOffset.UtcNow;
+        var priority = type == NotificationType.SessionBlocked ? NotificationPriority.High : NotificationPriority.Normal;
+
+        foreach (var userId in adminUserIds)
+        {
+            dbContext.Notifications.Add(new Notification
+            {
+                RecipientUserId = userId,
+                SenderUserId = null,
+                Title = title,
+                Message = message,
+                Type = type,
+                LinkUrl = linkUrl,
+                Priority = priority,
+                IsRead = false,
+                CreatedAt = now
+            });
+        }
+
+        if (adminUserIds.Count > 0)
+        {
+            await dbContext.SaveChangesAsync();
+        }
     }
 }

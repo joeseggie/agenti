@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using EastSeat.Agenti.Web.Features.CashCounts;
 using EastSeat.Agenti.Web.Features.CashSessions;
 
 namespace EastSeat.Agenti.Web.Features.Api;
@@ -9,9 +11,9 @@ public static class CashSessionEndpoints
 {
     public static RouteGroupBuilder MapCashSessionsApi(this RouteGroupBuilder group)
     {
-        group.MapGet("/", async (ICashSessionService cashSessionService) =>
+        group.MapGet("/", async (long? branchId, ICashSessionService cashSessionService) =>
         {
-            var sessions = await cashSessionService.GetCashSessionsAsync();
+            var sessions = await cashSessionService.GetCashSessionsAsync(branchId);
             return Results.Ok(ApiResponse<List<CashSessionListItemDto>>.Ok(sessions));
         })
         .RequireAuthorization()
@@ -40,9 +42,29 @@ public static class CashSessionEndpoints
                 ? Results.Ok(ApiResponse<string>.Ok("Session closed successfully."))
                 : Results.BadRequest(ApiResponse<string>.Fail(error ?? "Failed to close session."));
         })
-        .RequireAuthorization()
+        .RequireAuthorization("CashCountApprove")
         .WithName("CloseCashSession")
-        .WithSummary("Close a cash session");
+        .WithSummary("Close a cash session (requires all closing counts approved)");
+
+        group.MapPost("/{sessionId:long}/close-agent/{agentId:long}", async (
+            long sessionId,
+            long agentId,
+            ClaimsPrincipal principal,
+            ICashCountService cashCountService) =>
+        {
+            var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? principal.FindFirstValue(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub);
+            if (string.IsNullOrEmpty(userId))
+                return Results.Unauthorized();
+
+            var result = await cashCountService.AdminCloseAgentSessionAsync(userId, sessionId, agentId);
+            return result.Success
+                ? Results.Ok(ApiResponse<CashCountSaveResult>.Ok(result))
+                : Results.BadRequest(ApiResponse<CashCountSaveResult>.Fail(result.ErrorMessage ?? "Failed to close agent session."));
+        })
+        .RequireAuthorization("VaultApprove")
+        .WithName("CloseAgentSession")
+        .WithSummary("Admin closes session for a specific agent (rule 22)");
 
         return group;
     }

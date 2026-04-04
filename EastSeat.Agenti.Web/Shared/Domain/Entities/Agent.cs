@@ -25,5 +25,5 @@ public class Agent
     // Navigation properties
     public ApplicationUser? User { get; set; }
     public ICollection<Wallet> Wallets { get; set; } = new List<Wallet>();
-    public ICollection<CashSession> CashSessions { get; set; } = new List<CashSession>();
+    public ICollection<CashCount> CashCounts { get; set; } = new List<CashCount>();
 }

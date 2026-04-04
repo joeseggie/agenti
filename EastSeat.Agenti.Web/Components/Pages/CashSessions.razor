@@ -14,9 +14,9 @@
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
     <MudGrid>
         <MudItem xs="12" sm="8">
-            <MudText Typo="Typo.h4" Class="mb-2">📅 Cash Sessions</MudText>
+            <MudText Typo="Typo.h4" Class="mb-2">Cash Sessions</MudText>
             <MudText Typo="Typo.body2" Color="Color.Secondary">
-                View all cash sessions with opening and closing counts
+                Branch-level daily cash sessions with agent participation
             </MudText>
         </MudItem>
         <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
@@ -51,49 +51,46 @@
             Breakpoint="Breakpoint.Md">
             <HeaderContent>
                 <MudTh>Date</MudTh>
-                <MudTh>Agent</MudTh>
                 <MudTh Style="text-align: center;">Status</MudTh>
+                <MudTh Style="text-align: center;">Agents</MudTh>
                 <MudTh Style="text-align: right;">Opening (UGX)</MudTh>
                 <MudTh Style="text-align: right;">Closing (UGX)</MudTh>
-                <MudTh Style="text-align: right;">Variance (UGX)</MudTh>
+                <MudTh Style="text-align: center;">Pending</MudTh>
                 <MudTh Style="text-align: center;">Actions</MudTh>
             </HeaderContent>
             <RowTemplate>
                 <MudTd DataLabel="Date">
                     <MudText Typo="Typo.body2">@context.SessionDate.ToString("ddd, MMM dd, yyyy")</MudText>
                 </MudTd>
-                <MudTd DataLabel="Agent">
-                    <MudText Typo="Typo.body2">@context.AgentName</MudText>
-                    <MudText Typo="Typo.caption" Color="Color.Secondary">@context.AgentCode</MudText>
-                </MudTd>
                 <MudTd DataLabel="Status" Style="text-align: center;">
                     <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">
                         @GetStatusText(context.Status)
                     </MudChip>
                 </MudTd>
+                <MudTd DataLabel="Agents" Style="text-align: center;">
+                    <MudText Typo="Typo.body2">
+                        @context.ApprovedClosingCount / @context.AgentCount
+                    </MudText>
+                </MudTd>
                 <MudTd DataLabel="Opening" Style="text-align: right;">
-                    <MudText Typo="Typo.body2">@context.OpeningTotal.ToString("N0")</MudText>
+                    <MudText Typo="Typo.body2">@context.TotalOpeningAmount.ToString("N0")</MudText>
                 </MudTd>
                 <MudTd DataLabel="Closing" Style="text-align: right;">
-                    @if (context.ClosingTotal.HasValue)
+                    @if (context.TotalClosingAmount.HasValue)
                     {
-                        <MudText Typo="Typo.body2">@context.ClosingTotal.Value.ToString("N0")</MudText>
+                        <MudText Typo="Typo.body2">@context.TotalClosingAmount.Value.ToString("N0")</MudText>
                     }
                     else
                     {
                         <MudText Typo="Typo.body2" Color="Color.Default" Style="opacity: 0.5;">---</MudText>
                     }
                 </MudTd>
-                <MudTd DataLabel="Variance" Style="text-align: right;">
-                    @if (context.Variance.HasValue)
+                <MudTd DataLabel="Pending" Style="text-align: center;">
+                    @if (context.PendingApprovalCount > 0)
                     {
-                        <MudText Typo="Typo.body2" Color="@GetVarianceColor(context.Variance.Value)">
-                            @(context.Variance.Value >= 0 ? "" : "")@context.Variance.Value.ToString("N0")
-                        </MudText>
-                    }
-                    else
-                    {
-                        <MudText Typo="Typo.body2" Color="Color.Default" Style="opacity: 0.5;">---</MudText>
+                        <MudBadge Content="@context.PendingApprovalCount" Color="Color.Warning" Overlap="true">
+                            <MudIcon Icon="@Icons.Material.Filled.HourglassTop" Size="Size.Small" />
+                        </MudBadge>
                     }
                 </MudTd>
                 <MudTd DataLabel="Actions" Style="text-align: center;">
@@ -101,13 +98,17 @@
                         <MudIconButton Icon="@Icons.Material.Filled.Visibility" Color="Color.Primary" Size="Size.Small"
                             OnClick="@(() => ViewSession(context.Id))" />
                     </MudTooltip>
-                    @if (context.Status == CashSessionStatus.Open)
-                    {
-                        <MudTooltip Text="Close Session">
-                            <MudIconButton Icon="@Icons.Material.Filled.Close" Color="Color.Error" Size="Size.Small"
-                                OnClick="@(() => ConfirmCloseSession(context))" />
-                        </MudTooltip>
-                    }
+                    <AuthorizeView Roles="Admin,Supervisor">
+                        <Authorized Context="authCtx">
+                            @if (context.Status == CashSessionStatus.Open && context.AllClosingCountsApproved)
+                            {
+                                <MudTooltip Text="Close Session">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Close" Color="Color.Error" Size="Size.Small"
+                                        OnClick="@(() => ConfirmCloseSession(context))" />
+                                </MudTooltip>
+                            }
+                        </Authorized>
+                    </AuthorizeView>
                 </MudTd>
             </RowTemplate>
         </MudTable>
@@ -147,12 +148,12 @@
     private async Task ConfirmCloseSession(CashSessionListItemDto session)
     {
         var parameters = new DialogParameters<MudMessageBox>
-{
-{ x => x.Title, "Close Cash Session" },
-{ x => x.MarkupMessage, new MarkupString($"Are you sure you want to close the session for <b>{session.AgentName}</b> on <b>{session.SessionDate:MMM dd, yyyy}</b>?<br/><br/>This action cannot be undone.") },
-{ x => x.YesText, "Close Session" },
-{ x => x.NoText, "Cancel" }
-};
+        {
+            { x => x.Title, "Close Cash Session" },
+            { x => x.MarkupMessage, new MarkupString($"Are you sure you want to close the session for <b>{session.SessionDate:MMM dd, yyyy}</b>?<br/><br/>All agents' closing counts must be approved. This action cannot be undone.") },
+            { x => x.YesText, "Close Session" },
+            { x => x.NoText, "Cancel" }
+        };
 
         var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small };
         var dialog = await DialogService.ShowAsync<MudMessageBox>("Close Session", parameters, options);
@@ -200,10 +201,4 @@
         CashSessionStatus.Closed => "Closed",
         _ => "Unknown"
     };
-
-    private static Color GetVarianceColor(decimal variance)
-    {
-        if (variance == 0) return Color.Success;
-        return Color.Warning;
-    }
 }
