@@ -21,7 +21,8 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
                     ? (n.Sender.FirstName + " " + n.Sender.LastName).Trim()
                     : "System",
                 IsRead = n.IsRead,
-                CreatedAt = n.CreatedAt
+                CreatedAt = n.CreatedAt,
+                TransactionId = n.TransactionId
             })
             .ToListAsync();
     }
@@ -58,7 +59,8 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
             Message = dto.Message,
             Priority = dto.Priority,
             IsRead = false,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = DateTimeOffset.UtcNow,
+            TransactionId = dto.TransactionId
         };
 
         dbContext.Notifications.Add(notification);

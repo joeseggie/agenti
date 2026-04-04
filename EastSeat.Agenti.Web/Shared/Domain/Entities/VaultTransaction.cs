@@ -9,6 +9,7 @@ namespace EastSeat.Agenti.Shared.Domain.Entities;
 public class VaultTransaction
 {
     public long Id { get; set; }
+    public Guid PublicId { get; set; } = Guid.NewGuid();
     public long VaultId { get; set; }
     public long? CashSessionId { get; set; }
     public decimal Amount { get; set; }

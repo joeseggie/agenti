@@ -7,7 +7,6 @@ using EastSeat.Agenti.Web.Features.Vaults;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Moq;
 
 namespace EastSeat.Agenti.UnitTests.Services;
 
@@ -16,7 +15,6 @@ namespace EastSeat.Agenti.UnitTests.Services;
 public class VaultServiceTests : IDisposable
 {
     private readonly ApplicationDbContext _dbContext;
-    private readonly Mock<INotificationService> _notificationServiceMock;
     private readonly VaultService _sut;
     private readonly Branch _testBranch;
     private readonly Vault _testVault;
@@ -32,10 +30,6 @@ public class VaultServiceTests : IDisposable
             .Options;
 
         _dbContext = new ApplicationDbContext(options);
-        _notificationServiceMock = new Mock<INotificationService>();
-        _notificationServiceMock
-            .Setup(x => x.SendNotificationAsync(It.IsAny<string?>(), It.IsAny<CreateNotificationDto>()))
-            .ReturnsAsync(NotificationSaveResult.Ok(Guid.NewGuid()));
 
         // Seed required data
         _testBranch = new Branch
@@ -65,7 +59,7 @@ public class VaultServiceTests : IDisposable
         _dbContext.Users.AddRange(_testUser, _testAdmin);
         _dbContext.SaveChanges();
 
-        _sut = new VaultService(_dbContext, _notificationServiceMock.Object);
+        _sut = new VaultService(_dbContext);
     }
 
     public void Dispose()
@@ -506,62 +500,84 @@ public class VaultServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RequestManualAdjustmentAsync_NotifiesOtherAdmins()
+    public async Task RequestManualAdjustmentAsync_WithNotificationService_SendsNotificationsToOtherAdmins()
     {
-        // Arrange - add a second admin who should receive notification
+        // Arrange
         var secondAdmin = UserBuilder.Default()
             .WithEmail("admin2@test.com")
             .WithRole(UserRole.Admin)
+            .WithBranchId(_testBranch.Id)
             .Build();
         _dbContext.Users.Add(secondAdmin);
         await _dbContext.SaveChangesAsync();
 
+        var notificationService = new NotificationService(_dbContext);
+        var sutWithNotifications = new VaultService(_dbContext, null, notificationService);
+
         // Act
-        var result = await _sut.RequestManualAdjustmentAsync(
+        var result = await sutWithNotifications.RequestManualAdjustmentAsync(
             _testBranch.Id,
             500m,
             isDeposit: true,
-            "Need to deposit cash from safe",
+            "Deposit request from teller",
             _testAdmin.Id);
 
         // Assert
         result.Success.Should().BeTrue();
 
-        // Only secondAdmin should be notified (not the creator _testAdmin)
-        _notificationServiceMock.Verify(
-            x => x.SendNotificationAsync(
-                _testAdmin.Id,
-                It.Is<CreateNotificationDto>(dto =>
-                    dto.RecipientUserId == secondAdmin.Id &&
-                    dto.Message.Contains("deposit") &&
-                    dto.Message.Contains("500") &&
-                    dto.Priority == NotificationPriority.High)),
-            Times.Once);
+        var savedTransaction = await _dbContext.VaultTransactions.FindAsync(result.TransactionId);
+        savedTransaction.Should().NotBeNull();
 
-        // Creator should NOT receive a notification
-        _notificationServiceMock.Verify(
-            x => x.SendNotificationAsync(
-                It.IsAny<string?>(),
-                It.Is<CreateNotificationDto>(dto => dto.RecipientUserId == _testAdmin.Id)),
-            Times.Never);
+        var notifications = await _dbContext.Notifications.ToListAsync();
+        notifications.Should().ContainSingle();
+        notifications[0].RecipientUserId.Should().Be(secondAdmin.Id);
+        notifications[0].SenderUserId.Should().Be(_testAdmin.Id);
+        notifications[0].TransactionId.Should().Be(savedTransaction!.PublicId);
+        notifications[0].Priority.Should().Be(NotificationPriority.High);
     }
 
     [Fact]
-    public async Task RequestManualAdjustmentAsync_DoesNotNotifyWhenRequestFails()
+    public async Task RequestManualAdjustmentAsync_WithNotificationService_DoesNotNotifyRequester()
     {
-        // Act - request with invalid notes (too short)
+        // Arrange
+        var notificationService = new NotificationService(_dbContext);
+        var sutWithNotifications = new VaultService(_dbContext, null, notificationService);
+
+        // Act
+        var result = await sutWithNotifications.RequestManualAdjustmentAsync(
+            _testBranch.Id,
+            300m,
+            isDeposit: false,
+            "Withdrawal request for operations",
+            _testAdmin.Id);
+
+        // Assert
+        result.Success.Should().BeTrue();
+
+        // _testAdmin made the request - should NOT be notified
+        var notificationsToRequester = await _dbContext.Notifications
+            .Where(n => n.RecipientUserId == _testAdmin.Id)
+            .ToListAsync();
+        notificationsToRequester.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RequestManualAdjustmentAsync_WithoutNotificationService_SucceedsWithoutNotifications()
+    {
+        // _sut does not have notificationService (uses default null)
+        // Act
         var result = await _sut.RequestManualAdjustmentAsync(
             _testBranch.Id,
             500m,
             isDeposit: true,
-            "Short",
+            "Deposit without notifications",
             _testUser.Id);
 
         // Assert
-        result.Success.Should().BeFalse();
-        _notificationServiceMock.Verify(
-            x => x.SendNotificationAsync(It.IsAny<string?>(), It.IsAny<CreateNotificationDto>()),
-            Times.Never);
+        result.Success.Should().BeTrue();
+
+        var notifications = await _dbContext.Notifications.ToListAsync();
+        notifications.Should().BeEmpty();
     }
 
     #endregion

@@ -10,6 +10,11 @@ public class NotificationListItemDto
     public string SenderName { get; set; } = string.Empty;
     public bool IsRead { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>
+    /// Optional vault transaction public ID for notifications that require an approve/reject action.
+    /// </summary>
+    public Guid? TransactionId { get; set; }
 }
 
 public class CreateNotificationDto
@@ -17,6 +22,11 @@ public class CreateNotificationDto
     public string RecipientUserId { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public NotificationPriority Priority { get; set; } = NotificationPriority.Normal;
+
+    /// <summary>
+    /// Optional vault transaction public ID to associate with this notification.
+    /// </summary>
+    public Guid? TransactionId { get; set; }
 }
 
 public class UnreadCountDto

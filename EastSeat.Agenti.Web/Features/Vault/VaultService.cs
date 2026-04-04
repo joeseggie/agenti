@@ -13,7 +13,7 @@ namespace EastSeat.Agenti.Web.Features.Vaults;
 /// <summary>
 /// Service implementation for vault operations with pessimistic locking.
 /// </summary>
-public class VaultService(ApplicationDbContext dbContext, INotificationService notificationService, TelemetryClient? telemetryClient = null) : IVaultService
+public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telemetryClient = null, INotificationService? notificationService = null) : IVaultService
 {
     private const int PendingExpiryHours = 12;
 
@@ -172,6 +172,12 @@ public class VaultService(ApplicationDbContext dbContext, INotificationService n
         dbContext.VaultTransactions.Add(transaction);
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        // Notify all other admins in the same branch that a vault adjustment requires approval
+        if (notificationService != null)
+        {
+            await NotifyAdminsOfPendingAdjustmentAsync(branchId, userId, transaction.PublicId, amount, isDeposit, cancellationToken);
+        }
+
         // Track manual adjustment request
         telemetryClient?.TrackEvent("vault_adjustment_requested", new Dictionary<string, string>
         {
@@ -182,9 +188,6 @@ public class VaultService(ApplicationDbContext dbContext, INotificationService n
             { "TransactionId", transaction.Id.ToString() },
             { "ExpiresAt", transaction.ExpiresAt?.ToString("O") ?? "N/A" }
         });
-
-        // Notify other admins about the pending vault adjustment
-        await NotifyAdminsOfAdjustmentRequestAsync(userId, amount, isDeposit, cancellationToken);
 
         return VaultOperationResult.Ok(transaction.Id);
     }
@@ -312,6 +315,28 @@ public class VaultService(ApplicationDbContext dbContext, INotificationService n
         return VaultOperationResult.Ok(transaction.Id);
     }
 
+    public async Task<VaultOperationResult> ApproveManualAdjustmentByPublicIdAsync(Guid publicId, string adminUserId, CancellationToken cancellationToken = default)
+    {
+        var transaction = await dbContext.VaultTransactions.FirstOrDefaultAsync(t => t.PublicId == publicId, cancellationToken);
+        if (transaction == null)
+        {
+            return VaultOperationResult.Error("Transaction not found.");
+        }
+
+        return await ApproveManualAdjustmentAsync(transaction.Id, adminUserId, cancellationToken);
+    }
+
+    public async Task<VaultOperationResult> RejectManualAdjustmentByPublicIdAsync(Guid publicId, string adminUserId, CancellationToken cancellationToken = default)
+    {
+        var transaction = await dbContext.VaultTransactions.FirstOrDefaultAsync(t => t.PublicId == publicId, cancellationToken);
+        if (transaction == null)
+        {
+            return VaultOperationResult.Error("Transaction not found.");
+        }
+
+        return await RejectManualAdjustmentAsync(transaction.Id, adminUserId, cancellationToken);
+    }
+
     public async Task<int> ExpirePendingTransactionsAsync(CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
@@ -416,28 +441,6 @@ public class VaultService(ApplicationDbContext dbContext, INotificationService n
         return vault;
     }
 
-    private async Task NotifyAdminsOfAdjustmentRequestAsync(string creatorUserId, decimal amount, bool isDeposit, CancellationToken cancellationToken)
-    {
-        var creator = await dbContext.Users.FirstOrDefaultAsync(u => u.Id == creatorUserId, cancellationToken);
-        var creatorName = creator?.FullName ?? "A user";
-        var adjustmentType = isDeposit ? "deposit" : "withdrawal";
-        var message = $"{creatorName} requested a vault {adjustmentType} of {amount:N2}. Your approval is required.";
-
-        var adminUserIds = await dbContext.Users
-            .Where(u => u.Role == UserRole.Admin && u.Id != creatorUserId && !u.IsDeleted)
-            .Select(u => u.Id)
-            .ToListAsync(cancellationToken);
-
-        foreach (var adminUserId in adminUserIds)
-        {
-            await notificationService.SendNotificationAsync(creatorUserId, new CreateNotificationDto
-            {
-                RecipientUserId = adminUserId,
-                Message = message,
-                Priority = NotificationPriority.High
-            });
-        }
-    }
 
     private async Task<Vault?> LockVaultAsync(long branchId, CancellationToken cancellationToken)
     {
@@ -469,5 +472,45 @@ public class VaultService(ApplicationDbContext dbContext, INotificationService n
         return await dbContext.Vaults
             .FromSqlRaw("SELECT * FROM \"Vaults\" WHERE \"BranchId\" = {0} FOR UPDATE", branchId)
             .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private async Task NotifyAdminsOfPendingAdjustmentAsync(long branchId, string requestingUserId, Guid publicId, decimal amount, bool isDeposit, CancellationToken cancellationToken)
+    {
+        var adminUsers = await dbContext.Users
+            .Where(u => u.Role == UserRole.Admin
+                        && u.BranchId == branchId
+                        && u.Id != requestingUserId
+                        && !u.IsDeleted
+                        && u.IsActive)
+            .Select(u => u.Id)
+            .ToListAsync(cancellationToken);
+
+        if (adminUsers.Count == 0)
+        {
+            return;
+        }
+
+        var requester = await dbContext.Users
+            .Where(u => u.Id == requestingUserId)
+            .Select(u => new { u.FirstName, u.LastName })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var requesterName = requester != null
+            ? $"{requester.FirstName} {requester.LastName}".Trim()
+            : "A user";
+
+        var adjustmentType = isDeposit ? "deposit" : "withdrawal";
+        var message = $"{requesterName} has requested a manual vault {adjustmentType} of UGX {amount:N0} that requires your approval.";
+
+        foreach (var adminUserId in adminUsers)
+        {
+            await notificationService!.SendNotificationAsync(requestingUserId, new CreateNotificationDto
+            {
+                RecipientUserId = adminUserId,
+                Message = message,
+                Priority = NotificationPriority.High,
+                TransactionId = publicId
+            });
+        }
     }
 }
