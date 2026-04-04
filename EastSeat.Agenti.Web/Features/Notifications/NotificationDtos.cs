@@ -12,9 +12,9 @@ public class NotificationListItemDto
     public DateTimeOffset CreatedAt { get; set; }
 
     /// <summary>
-    /// Optional vault transaction ID for notifications that require an approve/reject action.
+    /// Optional vault transaction public ID for notifications that require an approve/reject action.
     /// </summary>
-    public long? TransactionId { get; set; }
+    public Guid? TransactionId { get; set; }
 }
 
 public class CreateNotificationDto
@@ -24,9 +24,9 @@ public class CreateNotificationDto
     public NotificationPriority Priority { get; set; } = NotificationPriority.Normal;
 
     /// <summary>
-    /// Optional vault transaction ID to associate with this notification.
+    /// Optional vault transaction public ID to associate with this notification.
     /// </summary>
-    public long? TransactionId { get; set; }
+    public Guid? TransactionId { get; set; }
 }
 
 public class UnreadCountDto

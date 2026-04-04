@@ -16,7 +16,7 @@ public class NotificationBuilder
     private bool _isRead = false;
     private DateTimeOffset _createdAt = DateTimeOffset.UtcNow;
     private DateTimeOffset? _readAt = null;
-    private long? _transactionId = null;
+    private Guid? _transactionId = null;
 
     public NotificationBuilder WithId(Guid id)
     {
@@ -67,7 +67,7 @@ public class NotificationBuilder
         return this;
     }
 
-    public NotificationBuilder WithTransactionId(long transactionId)
+    public NotificationBuilder WithTransactionId(Guid transactionId)
     {
         _transactionId = transactionId;
         return this;

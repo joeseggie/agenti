@@ -13,6 +13,8 @@ public interface IVaultService
     Task<VaultOperationResult> DepositForSessionAsync(long sessionId, long branchId, decimal amount, string userId, bool ensureTransaction = true, CancellationToken cancellationToken = default);
     Task<VaultOperationResult> RequestManualAdjustmentAsync(long branchId, decimal amount, bool isDeposit, string notes, string userId, CancellationToken cancellationToken = default);
     Task<VaultOperationResult> ApproveManualAdjustmentAsync(long transactionId, string adminUserId, CancellationToken cancellationToken = default);
+    Task<VaultOperationResult> ApproveManualAdjustmentByPublicIdAsync(Guid publicId, string adminUserId, CancellationToken cancellationToken = default);
     Task<VaultOperationResult> RejectManualAdjustmentAsync(long transactionId, string adminUserId, CancellationToken cancellationToken = default);
+    Task<VaultOperationResult> RejectManualAdjustmentByPublicIdAsync(Guid publicId, string adminUserId, CancellationToken cancellationToken = default);
     Task<int> ExpirePendingTransactionsAsync(CancellationToken cancellationToken = default);
 }

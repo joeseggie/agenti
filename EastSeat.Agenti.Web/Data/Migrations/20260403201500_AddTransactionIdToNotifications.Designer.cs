@@ -369,8 +369,8 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .HasMaxLength(450)
                         .HasColumnType("character varying(450)");
 
-                    b.Property<long?>("TransactionId")
-                        .HasColumnType("bigint");
+                    b.Property<Guid?>("TransactionId")
+                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
@@ -528,9 +528,17 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                     b.Property<long>("VaultId")
                         .HasColumnType("bigint");
 
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasDefaultValueSql("gen_random_uuid()");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ApprovedByUserId");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
 
                     b.HasIndex("CashSessionId");
 

@@ -175,7 +175,7 @@ public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telem
         // Notify all other admins in the same branch that a vault adjustment requires approval
         if (notificationService != null)
         {
-            await NotifyAdminsOfPendingAdjustmentAsync(branchId, userId, transaction.Id, amount, isDeposit, cancellationToken);
+            await NotifyAdminsOfPendingAdjustmentAsync(branchId, userId, transaction.PublicId, amount, isDeposit, cancellationToken);
         }
 
         // Track manual adjustment request
@@ -315,6 +315,28 @@ public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telem
         return VaultOperationResult.Ok(transaction.Id);
     }
 
+    public async Task<VaultOperationResult> ApproveManualAdjustmentByPublicIdAsync(Guid publicId, string adminUserId, CancellationToken cancellationToken = default)
+    {
+        var transaction = await dbContext.VaultTransactions.FirstOrDefaultAsync(t => t.PublicId == publicId, cancellationToken);
+        if (transaction == null)
+        {
+            return VaultOperationResult.Error("Transaction not found.");
+        }
+
+        return await ApproveManualAdjustmentAsync(transaction.Id, adminUserId, cancellationToken);
+    }
+
+    public async Task<VaultOperationResult> RejectManualAdjustmentByPublicIdAsync(Guid publicId, string adminUserId, CancellationToken cancellationToken = default)
+    {
+        var transaction = await dbContext.VaultTransactions.FirstOrDefaultAsync(t => t.PublicId == publicId, cancellationToken);
+        if (transaction == null)
+        {
+            return VaultOperationResult.Error("Transaction not found.");
+        }
+
+        return await RejectManualAdjustmentAsync(transaction.Id, adminUserId, cancellationToken);
+    }
+
     public async Task<int> ExpirePendingTransactionsAsync(CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
@@ -451,7 +473,7 @@ public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telem
             .FirstOrDefaultAsync(cancellationToken);
     }
 
-    private async Task NotifyAdminsOfPendingAdjustmentAsync(long branchId, string requestingUserId, long transactionId, decimal amount, bool isDeposit, CancellationToken cancellationToken)
+    private async Task NotifyAdminsOfPendingAdjustmentAsync(long branchId, string requestingUserId, Guid publicId, decimal amount, bool isDeposit, CancellationToken cancellationToken)
     {
         var adminUsers = await dbContext.Users
             .Where(u => u.Role == UserRole.Admin
@@ -486,7 +508,7 @@ public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telem
                 RecipientUserId = adminUserId,
                 Message = message,
                 Priority = NotificationPriority.High,
-                TransactionId = transactionId
+                TransactionId = publicId
             });
         }
     }

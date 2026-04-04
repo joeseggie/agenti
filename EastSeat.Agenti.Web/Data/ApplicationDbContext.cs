@@ -97,6 +97,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<VaultTransaction>(entity =>
         {
             entity.HasKey(e => e.Id);
+            entity.Property(e => e.PublicId).HasDefaultValueSql("gen_random_uuid()");
+            entity.HasIndex(e => e.PublicId).IsUnique();
             entity.Property(e => e.Amount).HasPrecision(18, 2);
             entity.Property(e => e.BalanceAfter).HasPrecision(18, 2);
             entity.Property(e => e.Type)

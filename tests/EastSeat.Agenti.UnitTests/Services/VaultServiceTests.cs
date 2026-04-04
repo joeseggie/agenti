@@ -525,11 +525,14 @@ public class VaultServiceTests : IDisposable
         // Assert
         result.Success.Should().BeTrue();
 
+        var savedTransaction = await _dbContext.VaultTransactions.FindAsync(result.TransactionId);
+        savedTransaction.Should().NotBeNull();
+
         var notifications = await _dbContext.Notifications.ToListAsync();
         notifications.Should().ContainSingle();
         notifications[0].RecipientUserId.Should().Be(secondAdmin.Id);
         notifications[0].SenderUserId.Should().Be(_testAdmin.Id);
-        notifications[0].TransactionId.Should().Be(result.TransactionId);
+        notifications[0].TransactionId.Should().Be(savedTransaction!.PublicId);
         notifications[0].Priority.Should().Be(NotificationPriority.High);
     }
 

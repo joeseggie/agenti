@@ -181,14 +181,14 @@
         }
     }
 
-    private async Task ApproveVaultTransaction(Guid notificationId, long transactionId)
+    private async Task ApproveVaultTransaction(Guid notificationId, Guid transactionPublicId)
     {
         if (_userId is null) return;
 
         _isActioning = true;
         try
         {
-            var result = await VaultService.ApproveManualAdjustmentAsync(transactionId, _userId);
+            var result = await VaultService.ApproveManualAdjustmentByPublicIdAsync(transactionPublicId, _userId);
             if (result.Success)
             {
                 Snackbar.Add("Vault adjustment approved.", Severity.Success);
@@ -206,14 +206,14 @@
         }
     }
 
-    private async Task RejectVaultTransaction(Guid notificationId, long transactionId)
+    private async Task RejectVaultTransaction(Guid notificationId, Guid transactionPublicId)
     {
         if (_userId is null) return;
 
         _isActioning = true;
         try
         {
-            var result = await VaultService.RejectManualAdjustmentAsync(transactionId, _userId);
+            var result = await VaultService.RejectManualAdjustmentByPublicIdAsync(transactionPublicId, _userId);
             if (result.Success)
             {
                 Snackbar.Add("Vault adjustment rejected.", Severity.Info);
