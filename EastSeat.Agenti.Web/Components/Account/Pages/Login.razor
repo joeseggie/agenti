@@ -214,6 +214,8 @@
             Logger.LogWarning("Invalid login attempt for email: {Email}", Input.Email);
             errorMessage = "Error: Invalid login attempt.";
         }
+
+        _isLoggingIn = false;
     }
 
     private sealed class InputModel
