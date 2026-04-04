@@ -268,8 +268,7 @@
         CashSessionStatus.Pending => Color.Warning,
         CashSessionStatus.DiscrepancyUnderReview => Color.Warning,
         CashSessionStatus.Blocked => Color.Error,
-        CashSessionStatus.Closed => Color.Default,
-        _ => Color.Default
+        CashSessionStatus.Closed => Color.Default
     };
 
     private static string GetStatusText(CashSessionStatus status) => status switch
@@ -279,8 +278,7 @@
         CashSessionStatus.Pending => "Pending",
         CashSessionStatus.DiscrepancyUnderReview => "Under Review",
         CashSessionStatus.Blocked => "Blocked",
-        CashSessionStatus.Closed => "Closed",
-        _ => "Unknown"
+        CashSessionStatus.Closed => "Closed"
     };
 
     private static Color GetCountStatusColor(CashCountStatus status) => status switch
@@ -289,8 +287,7 @@
         CashCountStatus.Submitted => Color.Info,
         CashCountStatus.PendingApproval => Color.Warning,
         CashCountStatus.Approved => Color.Success,
-        CashCountStatus.Rejected => Color.Error,
-        _ => Color.Default
+        CashCountStatus.Rejected => Color.Error
     };
 
     private static string GetCountStatusText(CashCountStatus status) => status switch
@@ -299,7 +296,6 @@
         CashCountStatus.Submitted => "Submitted",
         CashCountStatus.PendingApproval => "Pending Approval",
         CashCountStatus.Approved => "Approved",
-        CashCountStatus.Rejected => "Rejected",
-        _ => "Unknown"
+        CashCountStatus.Rejected => "Rejected"
     };
 }

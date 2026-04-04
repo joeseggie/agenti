@@ -427,7 +427,7 @@ public class CashCountServiceTests : IDisposable
         _vaultServiceMock
             .Setup(x => x.DepositForSessionAsync(
                 It.IsAny<long>(), It.IsAny<long>(), It.IsAny<decimal>(),
-                It.IsAny<string>(), true, default))
+                It.IsAny<string>(), false, default))
             .ReturnsAsync(VaultOperationResult.Ok(1));
 
         var result = await _sut.SubmitCashCountAsync(_testUser.Id, closingCount.Id);
@@ -542,7 +542,7 @@ public class CashCountServiceTests : IDisposable
 
         _vaultServiceMock
             .Setup(x => x.WithdrawForSessionAsync(
-                session.Id, _testBranch.Id, 1000m, adminUser.Id, true, default))
+                session.Id, _testBranch.Id, 1000m, adminUser.Id, false, default))
             .ReturnsAsync(VaultOperationResult.Ok(1));
 
         var result = await _sut.ApproveCashCountAsync(adminUser.Id, cashCount.Id);
@@ -555,7 +555,7 @@ public class CashCountServiceTests : IDisposable
         updated.ApprovedByUserId.Should().Be(adminUser.Id);
 
         _vaultServiceMock.Verify(x => x.WithdrawForSessionAsync(
-            session.Id, _testBranch.Id, 1000m, adminUser.Id, true, default), Times.Once);
+            session.Id, _testBranch.Id, 1000m, adminUser.Id, false, default), Times.Once);
     }
 
     [Fact]
@@ -658,6 +658,140 @@ public class CashCountServiceTests : IDisposable
         result[0].CashCountId.Should().Be(pendingCount.Id);
         result[0].IsOpening.Should().BeTrue();
         result[0].TotalAmount.Should().Be(500m);
+    }
+
+    #endregion
+
+    #region AdminCloseAgentSessionAsync Tests
+
+    [Fact]
+    public async Task AdminCloseAgentSessionAsync_CreatesClosingCountAndApproves()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var openingCount = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .Build();
+        _dbContext.CashCounts.Add(openingCount);
+
+        var detail = CashCountDetailBuilder.Default()
+            .WithCashCountId(openingCount.Id)
+            .WithWalletId(_testWallet.Id)
+            .WithAmount(1000m)
+            .Build();
+        _dbContext.CashCountDetails.Add(detail);
+        await _dbContext.SaveChangesAsync();
+
+        _vaultServiceMock
+            .Setup(x => x.DepositForSessionAsync(
+                It.IsAny<long>(), It.IsAny<long>(), 1000m,
+                adminUser.Id, false, default))
+            .ReturnsAsync(VaultOperationResult.Ok(1));
+
+        var result = await _sut.AdminCloseAgentSessionAsync(adminUser.Id, session.Id, _testAgent.Id);
+
+        result.Success.Should().BeTrue();
+
+        var closingCounts = await _dbContext.CashCounts
+            .Where(c => c.CashSessionId == session.Id && !c.IsOpening)
+            .ToListAsync();
+        closingCounts.Should().ContainSingle();
+        closingCounts[0].Status.Should().Be(CashCountStatus.Approved);
+        closingCounts[0].TotalAmount.Should().Be(1000m);
+    }
+
+    [Fact]
+    public async Task AdminCloseAgentSessionAsync_NonAdmin_ReturnsError()
+    {
+        var agentUser = UserBuilder.Default()
+            .WithEmail("agent2@test.com")
+            .WithRole(UserRole.Agent)
+            .Build();
+        _dbContext.Users.Add(agentUser);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.AdminCloseAgentSessionAsync(agentUser.Id, 1, 1);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Only administrators");
+    }
+
+    [Fact]
+    public async Task AdminCloseAgentSessionAsync_NoApprovedOpening_ReturnsError()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.AdminCloseAgentSessionAsync(adminUser.Id, session.Id, _testAgent.Id);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("no approved opening count");
+    }
+
+    [Fact]
+    public async Task AdminCloseAgentSessionAsync_AlreadyApprovedClosing_ReturnsError()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var opening = CashCountBuilder.Default()
+            .WithId(1)
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .Build();
+        var closing = CashCountBuilder.Default()
+            .WithId(2)
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsClosing()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .Build();
+        _dbContext.CashCounts.AddRange(opening, closing);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.AdminCloseAgentSessionAsync(adminUser.Id, session.Id, _testAgent.Id);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("already approved");
     }
 
     #endregion
