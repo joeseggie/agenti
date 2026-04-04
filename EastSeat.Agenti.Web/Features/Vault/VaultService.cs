@@ -441,6 +441,7 @@ public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telem
         return vault;
     }
 
+
     private async Task<Vault?> LockVaultAsync(long branchId, CancellationToken cancellationToken)
     {
         var branchExists = await dbContext.Branches.AnyAsync(b => b.Id == branchId, cancellationToken);
