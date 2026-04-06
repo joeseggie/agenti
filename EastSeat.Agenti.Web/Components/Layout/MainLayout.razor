@@ -52,12 +52,16 @@
 
                 @* Mobile: compact menu with profile and logout *@
                 <MudHidden Breakpoint="Breakpoint.MdAndUp">
+                    <form id="mobile-logout-form" action="Account/Logout" method="post" style="display:none">
+                        <AntiforgeryToken />
+                        <input type="hidden" name="ReturnUrl" value="/" />
+                    </form>
                     <MudMenu Icon="@Icons.Material.Filled.Person" Color="Color.Inherit"
                         AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
                         <MudMenuItem Href="/profile" Icon="@Icons.Material.Filled.Person">
                             @context.User.Identity?.Name
                         </MudMenuItem>
-                        <MudMenuItem Href="Account/Logout" Icon="@Icons.Material.Filled.Logout">
+                        <MudMenuItem Icon="@Icons.Material.Filled.Logout" OnClick="@SubmitMobileLogoutAsync">
                             Logout
                         </MudMenuItem>
                     </MudMenu>
@@ -168,6 +172,11 @@
         {
             // Silently ignore polling errors
         }
+    }
+
+    private async Task SubmitMobileLogoutAsync()
+    {
+        await JS.InvokeVoidAsync("submitForm", "mobile-logout-form");
     }
 
     private void ToggleDrawer()
