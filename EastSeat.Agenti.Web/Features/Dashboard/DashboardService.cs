@@ -19,9 +19,9 @@ public class DashboardService : IDashboardService
     /// <inheritdoc />
     public async Task<DashboardViewModel> GetDashboardAsync(string userId)
     {
-        await using var _context = await _dbContextFactory.CreateDbContextAsync();
+        await using var context = await _dbContextFactory.CreateDbContextAsync();
 
-        var wallets = await _context.Wallets
+        var wallets = await context.Wallets
             .Include(w => w.WalletType)
             .Where(w => w.IsActive)
             .OrderBy(w => w.WalletType!.Type)
@@ -39,7 +39,7 @@ public class DashboardService : IDashboardService
             .ToListAsync();
 
         // Get agent wallet summaries (each agent's total wallet balance)
-        var agentSummaries = await _context.Agents
+        var agentSummaries = await context.Agents
             .Where(a => a.IsActive)
             .Include(a => a.User)
             .Include(a => a.Wallets.Where(w => w.IsActive))
@@ -56,13 +56,13 @@ public class DashboardService : IDashboardService
             .ToListAsync();
 
         // Get vault balance for the branch
-        var vaultBalance = await _context.Vaults
+        var vaultBalance = await context.Vaults
             .Select(v => v.CurrentBalance)
             .FirstOrDefaultAsync();
 
         // Get the current session for today
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var currentSession = await _context.CashSessions
+        var currentSession = await context.CashSessions
             .Where(s => s.SessionDate == today)
             .OrderByDescending(s => s.OpenedAt)
             .FirstOrDefaultAsync();

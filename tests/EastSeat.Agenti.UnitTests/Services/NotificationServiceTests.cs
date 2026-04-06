@@ -317,9 +317,10 @@ public class NotificationServiceTests : IDisposable
         // Assert
         result.Success.Should().BeTrue();
 
-        await _dbContext.Entry(notification).ReloadAsync();
-        notification.IsRead.Should().BeTrue();
-        notification.ReadAt.Should().NotBeNull();
+        await using var verifyCtx = _dbContextFactory.CreateDbContext();
+        var updated = await verifyCtx.Notifications.FindAsync(notification.Id);
+        updated!.IsRead.Should().BeTrue();
+        updated.ReadAt.Should().NotBeNull();
     }
 
     [Fact]
@@ -398,18 +399,20 @@ public class NotificationServiceTests : IDisposable
         // Assert
         result.Success.Should().BeTrue();
 
-        foreach (var n in new[] { unread1, unread2 })
+        await using var verifyCtx = _dbContextFactory.CreateDbContext();
+        var recipientNotifications = await verifyCtx.Notifications
+            .Where(n => n.RecipientUserId == _recipientUser.Id)
+            .ToListAsync();
+        recipientNotifications.Should().AllSatisfy(n =>
         {
-            await _dbContext.Entry(n).ReloadAsync();
-        }
-        unread1.IsRead.Should().BeTrue();
-        unread1.ReadAt.Should().NotBeNull();
-        unread2.IsRead.Should().BeTrue();
-        unread2.ReadAt.Should().NotBeNull();
+            n.IsRead.Should().BeTrue();
+            n.ReadAt.Should().NotBeNull();
+        });
 
         // Other user's notification should remain unread
-        await _dbContext.Entry(otherUserNotification).ReloadAsync();
-        otherUserNotification.IsRead.Should().BeFalse();
+        var otherNotification = await verifyCtx.Notifications
+            .FirstAsync(n => n.RecipientUserId == _senderUser.Id);
+        otherNotification.IsRead.Should().BeFalse();
     }
 
     #endregion
