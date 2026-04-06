@@ -13,7 +13,7 @@
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
     <MudGrid>
         <MudItem xs="12" sm="8">
-            <MudText Typo="Typo.h4" Class="mb-2">💳 Wallet Types</MudText>
+            <MudText Typo="Typo.h4" Class="mb-2">Wallet Types</MudText>
             <MudText Typo="Typo.body2" Color="Color.Secondary">
                 Manage wallet types for agent wallets
             </MudText>
@@ -36,16 +36,17 @@
     }
     else if (_walletTypes.Count == 0)
     {
-        <MudGrid Class="mt-4">
-            <MudItem xs="12">
-                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
-                    <MudText Typo="Typo.body1">No wallet types configured yet.</MudText>
-                    <MudText Typo="Typo.body2" Class="mt-2">
-                        Click "Add Wallet Type" to create your first wallet type.
-                    </MudText>
-                </MudAlert>
-            </MudItem>
-        </MudGrid>
+        <MudPaper Class="mt-8 pa-8 d-flex flex-column align-center" Elevation="0">
+            <MudIcon Icon="@Icons.Material.Filled.Wallet" Size="Size.Large" Color="Color.Default" Style="font-size: 4rem; opacity: 0.4;" />
+            <MudText Typo="Typo.h6" Class="mt-4" Color="Color.Default">No wallet types yet</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-1">
+                Create your first wallet type to get started.
+            </MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                OnClick="OpenCreateDialog" Class="mt-4">
+                Add Wallet Type
+            </MudButton>
+        </MudPaper>
     }
     else
     {
@@ -98,20 +99,41 @@
                             </MudChip>
                         </MudTd>
                         <MudTd DataLabel="Actions" Style="text-align: center;">
-                            <MudButtonGroup Size="Size.Small" Variant="Variant.Text">
-                                <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Default"
-                                    OnClick="@(() => OpenEditDialog(context))" Title="Edit" />
-                                <MudIconButton
-                                    Icon="@(context.IsActive? Icons.Material.Filled.Block : Icons.Material.Filled.CheckCircle)"
-                                    Color="@(context.IsActive? Color.Warning: Color.Success)"
-                                    OnClick="@(() => ToggleStatus(context))"
-                                    Title="@(context.IsActive ? "Deactivate" : "Activate")" />
-                                @if (context.CanDelete)
-                                {
-                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
-                                        OnClick="@(() => DeleteWalletType(context))" Title="Delete" />
-                                }
-                            </MudButtonGroup>
+                            @* Desktop: inline action buttons *@
+                            <MudHidden Breakpoint="Breakpoint.SmAndDown">
+                                <MudButtonGroup Size="Size.Small" Variant="Variant.Text">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Default"
+                                        OnClick="@(() => OpenEditDialog(context))" Title="Edit" />
+                                    <MudIconButton
+                                        Icon="@(context.IsActive? Icons.Material.Filled.Block : Icons.Material.Filled.CheckCircle)"
+                                        Color="@(context.IsActive? Color.Warning: Color.Success)"
+                                        OnClick="@(() => ToggleStatus(context))"
+                                        Title="@(context.IsActive ? "Deactivate" : "Activate")" />
+                                    @if (context.CanDelete)
+                                    {
+                                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                            OnClick="@(() => DeleteWalletType(context))" Title="Delete" />
+                                    }
+                                </MudButtonGroup>
+                            </MudHidden>
+                            @* Mobile: overflow menu *@
+                            <MudHidden Breakpoint="Breakpoint.MdAndUp">
+                                <MudMenu Icon="@Icons.Material.Filled.MoreVert" Size="Size.Small"
+                                    AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                                    <MudMenuItem Icon="@Icons.Material.Filled.Edit"
+                                        OnClick="@(() => OpenEditDialog(context))">Edit</MudMenuItem>
+                                    <MudMenuItem
+                                        Icon="@(context.IsActive? Icons.Material.Filled.Block : Icons.Material.Filled.CheckCircle)"
+                                        OnClick="@(() => ToggleStatus(context))">
+                                        @(context.IsActive ? "Deactivate" : "Activate")
+                                    </MudMenuItem>
+                                    @if (context.CanDelete)
+                                    {
+                                        <MudMenuItem Icon="@Icons.Material.Filled.Delete"
+                                            OnClick="@(() => DeleteWalletType(context))">Delete</MudMenuItem>
+                                    }
+                                </MudMenu>
+                            </MudHidden>
                         </MudTd>
                     </RowTemplate>
                 </MudTable>

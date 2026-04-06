@@ -16,9 +16,11 @@
 
     @if (_isLoading)
     {
-        <MudContainer Class="d-flex justify-center align-center" Style="height: 400px;">
-            <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
-        </MudContainer>
+        <MudGrid Class="mt-4">
+            <MudItem xs="12" Class="d-flex justify-center">
+                <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+            </MudItem>
+        </MudGrid>
     }
     else if (_vault != null)
     {
@@ -27,7 +29,7 @@
             <MudItem xs="12" sm="6">
                 <MudCard>
                     <MudCardContent>
-                        <MudText Typo="Typo.subtitle2" Color="Color.Default">Current Vault Balance</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Default">Current Vault Balance</MudText>
                         <MudText Typo="Typo.h3" Color="Color.Primary">
                             UGX @(_vault.CurrentBalance.ToString("N0"))
                         </MudText>
