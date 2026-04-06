@@ -28,6 +28,10 @@
                         Title="Notifications" />
                 </MudBadge>
 
+                <form id="logout-form" action="Account/Logout" method="post" style="display:none">
+                    <AntiforgeryToken />
+                    <input type="hidden" name="ReturnUrl" value="/" />
+                </form>
                 <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
                     <ActivatorContent>
                         <MudIconButton Color="Color.Inherit">
@@ -49,7 +53,7 @@
                             Profile
                         </MudMenuItem>
                         <MudDivider />
-                        <MudMenuItem Href="Account/Logout" Icon="@Icons.Material.Filled.Logout">
+                        <MudMenuItem Icon="@Icons.Material.Filled.Logout" OnClick="@SubmitLogoutAsync">
                             Logout
                         </MudMenuItem>
                     </ChildContent>
@@ -160,6 +164,11 @@
         {
             // Silently ignore polling errors
         }
+    }
+
+    private async Task SubmitLogoutAsync()
+    {
+        await JS.InvokeVoidAsync("submitForm", "logout-form");
     }
 
     private void ToggleDrawer()
