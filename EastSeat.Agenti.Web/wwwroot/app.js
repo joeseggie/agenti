@@ -14,6 +14,8 @@ window.submitForm = function(formId) {
     const form = document.getElementById(formId);
     if (form) {
         form.submit();
+    } else {
+        console.error('submitForm: form not found:', formId);
     }
 };
 
