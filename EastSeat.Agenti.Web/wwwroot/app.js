@@ -9,6 +9,14 @@ window.copyToClipboard = async function(text) {
     }
 };
 
+// Form submission utility
+window.submitForm = function(formId) {
+    const form = document.getElementById(formId);
+    if (form) {
+        form.submit();
+    }
+};
+
 // Theme detection utilities
 window.themeHelpers = {
     // Get current system theme preference
