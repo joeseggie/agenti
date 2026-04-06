@@ -5,6 +5,7 @@ using EastSeat.Agenti.Web.Features.Notifications;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace EastSeat.Agenti.UnitTests.Services;
 
@@ -12,19 +13,24 @@ namespace EastSeat.Agenti.UnitTests.Services;
 [Trait("Feature", "Notifications")]
 public class NotificationServiceTests : IDisposable
 {
+    private readonly ServiceProvider _serviceProvider;
     private readonly ApplicationDbContext _dbContext;
+    private readonly IDbContextFactory<ApplicationDbContext> _dbContextFactory;
     private readonly NotificationService _sut;
     private readonly ApplicationUser _recipientUser;
     private readonly ApplicationUser _senderUser;
 
     public NotificationServiceTests()
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .ConfigureWarnings(x => x.Ignore(InMemoryEventId.TransactionIgnoredWarning))
-            .Options;
+        var services = new ServiceCollection();
+        var dbName = Guid.NewGuid().ToString();
+        services.AddDbContextFactory<ApplicationDbContext>(opts =>
+            opts.UseInMemoryDatabase(databaseName: dbName)
+                .ConfigureWarnings(x => x.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
 
-        _dbContext = new ApplicationDbContext(options);
+        _serviceProvider = services.BuildServiceProvider();
+        _dbContextFactory = _serviceProvider.GetRequiredService<IDbContextFactory<ApplicationDbContext>>();
+        _dbContext = _dbContextFactory.CreateDbContext();
 
         _recipientUser = UserBuilder.Default()
             .WithId("recipient-1")
@@ -43,13 +49,14 @@ public class NotificationServiceTests : IDisposable
         _dbContext.Users.AddRange(_recipientUser, _senderUser);
         _dbContext.SaveChanges();
 
-        _sut = new NotificationService(_dbContext);
+        _sut = new NotificationService(_dbContextFactory);
     }
 
     public void Dispose()
     {
         _dbContext.Database.EnsureDeleted();
         _dbContext.Dispose();
+        _serviceProvider.Dispose();
     }
 
     #region GetNotificationsAsync Tests
@@ -310,9 +317,9 @@ public class NotificationServiceTests : IDisposable
         // Assert
         result.Success.Should().BeTrue();
 
-        var updated = await _dbContext.Notifications.FindAsync(notification.Id);
-        updated!.IsRead.Should().BeTrue();
-        updated.ReadAt.Should().NotBeNull();
+        await _dbContext.Entry(notification).ReloadAsync();
+        notification.IsRead.Should().BeTrue();
+        notification.ReadAt.Should().NotBeNull();
     }
 
     [Fact]
@@ -391,19 +398,18 @@ public class NotificationServiceTests : IDisposable
         // Assert
         result.Success.Should().BeTrue();
 
-        var recipientNotifications = await _dbContext.Notifications
-            .Where(n => n.RecipientUserId == _recipientUser.Id)
-            .ToListAsync();
-        recipientNotifications.Should().AllSatisfy(n =>
+        foreach (var n in new[] { unread1, unread2 })
         {
-            n.IsRead.Should().BeTrue();
-            n.ReadAt.Should().NotBeNull();
-        });
+            await _dbContext.Entry(n).ReloadAsync();
+        }
+        unread1.IsRead.Should().BeTrue();
+        unread1.ReadAt.Should().NotBeNull();
+        unread2.IsRead.Should().BeTrue();
+        unread2.ReadAt.Should().NotBeNull();
 
         // Other user's notification should remain unread
-        var otherNotification = await _dbContext.Notifications
-            .FirstAsync(n => n.RecipientUserId == _senderUser.Id);
-        otherNotification.IsRead.Should().BeFalse();
+        await _dbContext.Entry(otherUserNotification).ReloadAsync();
+        otherUserNotification.IsRead.Should().BeFalse();
     }
 
     #endregion

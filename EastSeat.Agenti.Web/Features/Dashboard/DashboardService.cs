@@ -9,16 +9,18 @@ namespace EastSeat.Agenti.Web.Features.Dashboard;
 /// </summary>
 public class DashboardService : IDashboardService
 {
-    private readonly ApplicationDbContext _context;
+    private readonly IDbContextFactory<ApplicationDbContext> _dbContextFactory;
 
-    public DashboardService(ApplicationDbContext context)
+    public DashboardService(IDbContextFactory<ApplicationDbContext> dbContextFactory)
     {
-        _context = context;
+        _dbContextFactory = dbContextFactory;
     }
 
     /// <inheritdoc />
     public async Task<DashboardViewModel> GetDashboardAsync(string userId)
     {
+        await using var _context = await _dbContextFactory.CreateDbContextAsync();
+
         var wallets = await _context.Wallets
             .Include(w => w.WalletType)
             .Where(w => w.IsActive)

@@ -7,6 +7,7 @@ using EastSeat.Agenti.Web.Features.Vaults;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace EastSeat.Agenti.UnitTests.Services;
 
@@ -14,7 +15,9 @@ namespace EastSeat.Agenti.UnitTests.Services;
 [Trait("Feature", "VaultOperations")]
 public class VaultServiceTests : IDisposable
 {
+    private readonly ServiceProvider _serviceProvider;
     private readonly ApplicationDbContext _dbContext;
+    private readonly IDbContextFactory<ApplicationDbContext> _dbContextFactory;
     private readonly VaultService _sut;
     private readonly Branch _testBranch;
     private readonly Vault _testVault;
@@ -24,12 +27,14 @@ public class VaultServiceTests : IDisposable
     public VaultServiceTests()
     {
         // Setup in-memory database
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .ConfigureWarnings(x => x.Ignore(InMemoryEventId.TransactionIgnoredWarning))
-            .Options;
+        var services = new ServiceCollection();
+        services.AddDbContextFactory<ApplicationDbContext>(opts =>
+            opts.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+                .ConfigureWarnings(x => x.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
 
-        _dbContext = new ApplicationDbContext(options);
+        _serviceProvider = services.BuildServiceProvider();
+        _dbContextFactory = _serviceProvider.GetRequiredService<IDbContextFactory<ApplicationDbContext>>();
+        _dbContext = _dbContextFactory.CreateDbContext();
 
         // Seed required data
         _testBranch = new Branch
@@ -62,10 +67,14 @@ public class VaultServiceTests : IDisposable
         _sut = new VaultService(_dbContext);
     }
 
+    private NotificationService CreateNotificationService()
+        => new NotificationService(_dbContextFactory);
+
     public void Dispose()
     {
         _dbContext.Database.EnsureDeleted();
         _dbContext.Dispose();
+        _serviceProvider.Dispose();
     }
 
     #region GetVaultAsync Tests
@@ -511,7 +520,7 @@ public class VaultServiceTests : IDisposable
         _dbContext.Users.Add(secondAdmin);
         await _dbContext.SaveChangesAsync();
 
-        var notificationService = new NotificationService(_dbContext);
+        var notificationService = CreateNotificationService();
         var sutWithNotifications = new VaultService(_dbContext, null, notificationService);
 
         // Act
@@ -540,7 +549,7 @@ public class VaultServiceTests : IDisposable
     public async Task RequestManualAdjustmentAsync_WithNotificationService_DoesNotNotifyRequester()
     {
         // Arrange
-        var notificationService = new NotificationService(_dbContext);
+        var notificationService = CreateNotificationService();
         var sutWithNotifications = new VaultService(_dbContext, null, notificationService);
 
         // Act
