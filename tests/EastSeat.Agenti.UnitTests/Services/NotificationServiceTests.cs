@@ -416,4 +416,205 @@ public class NotificationServiceTests : IDisposable
     }
 
     #endregion
+
+    #region CreateSystemNotificationAsync Tests
+
+    [Fact]
+    public async Task CreateSystemNotificationAsync_CreatesNotificationWithCorrectFields()
+    {
+        // Act
+        await _sut.CreateSystemNotificationAsync(
+            _recipientUser.Id, "Alert Title", "Alert body", NotificationType.CountPendingApproval, "/some/link");
+
+        // Assert
+        var saved = await _dbContext.Notifications.FirstAsync();
+        saved.RecipientUserId.Should().Be(_recipientUser.Id);
+        saved.SenderUserId.Should().BeNull();
+        saved.Title.Should().Be("Alert Title");
+        saved.Message.Should().Be("Alert body");
+        saved.Type.Should().Be(NotificationType.CountPendingApproval);
+        saved.LinkUrl.Should().Be("/some/link");
+        saved.Priority.Should().Be(NotificationPriority.Normal);
+        saved.IsRead.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreateSystemNotificationAsync_SessionBlocked_SetsHighPriority()
+    {
+        // Act
+        await _sut.CreateSystemNotificationAsync(
+            _recipientUser.Id, "Blocked", "Session blocked", NotificationType.SessionBlocked);
+
+        // Assert
+        var saved = await _dbContext.Notifications.FirstAsync();
+        saved.Priority.Should().Be(NotificationPriority.High);
+    }
+
+    [Fact]
+    public async Task CreateSystemNotificationAsync_NullLinkUrl_SavesWithoutLink()
+    {
+        // Act
+        await _sut.CreateSystemNotificationAsync(
+            _recipientUser.Id, "Title", "Message", NotificationType.CountApproved);
+
+        // Assert
+        var saved = await _dbContext.Notifications.FirstAsync();
+        saved.LinkUrl.Should().BeNull();
+    }
+
+    #endregion
+
+    #region NotifyBranchAdminsAsync Tests
+
+    [Fact]
+    public async Task NotifyBranchAdminsAsync_SendsToAdminsAndSupervisors()
+    {
+        // Arrange
+        var branch = new EastSeat.Agenti.Shared.Domain.Entities.Branch
+        {
+            Id = 10,
+            Name = "Test Branch",
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.Branches.Add(branch);
+
+        var admin = UserBuilder.Default()
+            .WithId("admin-1")
+            .WithEmail("admin@test.com")
+            .WithRole(UserRole.Admin)
+            .WithBranchId(10)
+            .Build();
+
+        var supervisor = UserBuilder.Default()
+            .WithId("supervisor-1")
+            .WithEmail("supervisor@test.com")
+            .WithRole(UserRole.Supervisor)
+            .WithBranchId(10)
+            .Build();
+
+        var agent = UserBuilder.Default()
+            .WithId("agent-1")
+            .WithEmail("agent@test.com")
+            .WithRole(UserRole.Agent)
+            .WithBranchId(10)
+            .Build();
+
+        _dbContext.Users.AddRange(admin, supervisor, agent);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        await _sut.NotifyBranchAdminsAsync(10, "Test", "Test message", NotificationType.CountPendingApproval);
+
+        // Assert — only admin and supervisor should get notifications
+        var notifications = await _dbContext.Notifications
+            .Where(n => n.Title == "Test")
+            .ToListAsync();
+
+        notifications.Should().HaveCount(2);
+        notifications.Select(n => n.RecipientUserId).Should().BeEquivalentTo(new[] { "admin-1", "supervisor-1" });
+        notifications.Should().AllSatisfy(n =>
+        {
+            n.SenderUserId.Should().BeNull();
+            n.Message.Should().Be("Test message");
+            n.Type.Should().Be(NotificationType.CountPendingApproval);
+            n.Priority.Should().Be(NotificationPriority.Normal);
+        });
+    }
+
+    [Fact]
+    public async Task NotifyBranchAdminsAsync_SessionBlocked_SetsHighPriority()
+    {
+        // Arrange
+        var branch = new EastSeat.Agenti.Shared.Domain.Entities.Branch
+        {
+            Id = 11,
+            Name = "Branch 2",
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.Branches.Add(branch);
+
+        var admin = UserBuilder.Default()
+            .WithId("admin-hp")
+            .WithEmail("admin-hp@test.com")
+            .WithRole(UserRole.Admin)
+            .WithBranchId(11)
+            .Build();
+
+        _dbContext.Users.Add(admin);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        await _sut.NotifyBranchAdminsAsync(11, "Blocked", "Session blocked", NotificationType.SessionBlocked);
+
+        // Assert
+        var saved = await _dbContext.Notifications.FirstAsync(n => n.RecipientUserId == "admin-hp");
+        saved.Priority.Should().Be(NotificationPriority.High);
+    }
+
+    [Fact]
+    public async Task NotifyBranchAdminsAsync_NoAdminsInBranch_DoesNotSave()
+    {
+        // Arrange
+        var branch = new EastSeat.Agenti.Shared.Domain.Entities.Branch
+        {
+            Id = 12,
+            Name = "Empty Branch",
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.Branches.Add(branch);
+        await _dbContext.SaveChangesAsync();
+
+        var countBefore = await _dbContext.Notifications.CountAsync();
+
+        // Act
+        await _sut.NotifyBranchAdminsAsync(12, "Title", "Message", NotificationType.CountApproved);
+
+        // Assert
+        var countAfter = await _dbContext.Notifications.CountAsync();
+        countAfter.Should().Be(countBefore);
+    }
+
+    [Fact]
+    public async Task NotifyBranchAdminsAsync_ExcludesInactiveUsers()
+    {
+        // Arrange
+        var branch = new EastSeat.Agenti.Shared.Domain.Entities.Branch
+        {
+            Id = 13,
+            Name = "Mixed Branch",
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.Branches.Add(branch);
+
+        var activeAdmin = UserBuilder.Default()
+            .WithId("active-admin")
+            .WithEmail("active@test.com")
+            .WithRole(UserRole.Admin)
+            .WithBranchId(13)
+            .Build();
+
+        var inactiveAdmin = UserBuilder.Default()
+            .WithId("inactive-admin")
+            .WithEmail("inactive@test.com")
+            .WithRole(UserRole.Admin)
+            .WithBranchId(13)
+            .IsInactive()
+            .Build();
+
+        _dbContext.Users.AddRange(activeAdmin, inactiveAdmin);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        await _sut.NotifyBranchAdminsAsync(13, "Title", "Message", NotificationType.CountApproved);
+
+        // Assert
+        var notifications = await _dbContext.Notifications
+            .Where(n => n.Title == "Title")
+            .ToListAsync();
+
+        notifications.Should().HaveCount(1);
+        notifications[0].RecipientUserId.Should().Be("active-admin");
+    }
+
+    #endregion
 }

@@ -944,4 +944,78 @@ public class VaultServiceTests : IDisposable
     }
 
     #endregion
+
+    #region ApproveManualAdjustmentByPublicIdAsync Tests
+
+    [Fact]
+    public async Task ApproveManualAdjustmentByPublicIdAsync_WithValidPublicId_DelegatesToApproveById()
+    {
+        // Arrange — admin creates a transaction, then tries to approve their own
+        var transaction = VaultTransactionBuilder.Default()
+            .WithVaultId(_testVault.Id)
+            .AsPending()
+            .WithCreatedByUserId(_testAdmin.Id)
+            .WithNotes("Test transaction")
+            .Build();
+        _dbContext.VaultTransactions.Add(transaction);
+        await _dbContext.SaveChangesAsync();
+
+        // Act — creator (admin) tries to approve their own request via PublicId
+        var result = await _sut.ApproveManualAdjustmentByPublicIdAsync(transaction.PublicId, _testAdmin.Id);
+
+        // Assert — should fail with dual-approval error, proving the delegation happened
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Creator cannot approve their own transaction");
+    }
+
+    [Fact]
+    public async Task ApproveManualAdjustmentByPublicIdAsync_WithNonExistentPublicId_ReturnsError()
+    {
+        // Act
+        var result = await _sut.ApproveManualAdjustmentByPublicIdAsync(Guid.NewGuid(), _testAdmin.Id);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("not found");
+    }
+
+    #endregion
+
+    #region RejectManualAdjustmentByPublicIdAsync Tests
+
+    [Fact]
+    public async Task RejectManualAdjustmentByPublicIdAsync_WithValidPublicId_RejectsTransaction()
+    {
+        // Arrange
+        var transaction = VaultTransactionBuilder.Default()
+            .WithVaultId(_testVault.Id)
+            .AsPending()
+            .WithCreatedByUserId(_testUser.Id)
+            .WithNotes("Test transaction")
+            .Build();
+        _dbContext.VaultTransactions.Add(transaction);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.RejectManualAdjustmentByPublicIdAsync(transaction.PublicId, _testAdmin.Id);
+
+        // Assert
+        result.Success.Should().BeTrue();
+
+        var updated = await _dbContext.VaultTransactions.FindAsync(transaction.Id);
+        updated!.Status.Should().Be(VaultTransactionStatus.Rejected);
+    }
+
+    [Fact]
+    public async Task RejectManualAdjustmentByPublicIdAsync_WithNonExistentPublicId_ReturnsError()
+    {
+        // Act
+        var result = await _sut.RejectManualAdjustmentByPublicIdAsync(Guid.NewGuid(), _testAdmin.Id);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("not found");
+    }
+
+    #endregion
 }
