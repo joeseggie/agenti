@@ -20,13 +20,13 @@
                 </AuthorizeView>
             </MudNavGroup>
 
-            <AuthorizeView Policy="VaultAccess">
+            <AuthorizeView Policy="VaultView">
                 <Authorized Context="vaultCtx">
                     <MudNavGroup Title="Vault" Icon="@Icons.Material.Filled.SafetyDivider" Expanded="true">
                         <MudNavLink Href="vault" Icon="@Icons.Material.Filled.AccountBalance">
                             Vault
                         </MudNavLink>
-                        <AuthorizeView Roles="Admin,Supervisor">
+                        <AuthorizeView Policy="CashCountApprove">
                             <Authorized Context="approvalCtx">
                                 <MudNavLink Href="cashcount-approvals" Icon="@Icons.Material.Filled.FactCheck">
                                     Approvals
