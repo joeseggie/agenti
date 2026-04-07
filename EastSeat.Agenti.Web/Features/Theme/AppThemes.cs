@@ -32,7 +32,7 @@ public static class AppThemes
     {
         PaletteDark = new PaletteDark()
         {
-            Primary = "#90caf9",
+            Primary = "#bbdefb",
             Secondary = "#ce93d8",
             AppbarBackground = "#1e1e1e",
             Background = "#121212",

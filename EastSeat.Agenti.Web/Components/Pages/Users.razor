@@ -7,20 +7,24 @@
 @inject ISnackbar Snackbar
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
-<h3>Users</h3>
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudGrid>
+        <MudItem xs="12" sm="8">
+            <MudText Typo="Typo.h4" Class="mb-2">Users</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Manage user accounts and roles
+            </MudText>
+        </MudItem>
+        <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Add"
+                OnClick="OpenCreateUserDialog">Create User</MudButton>
+        </MudItem>
+    </MudGrid>
 
-<MudGrid Class="mb-4" Spacing="2">
-    <MudItem xs="12" sm="8">
-        <MudTextField @bind-Value="search" Placeholder="Search users..." Adornment="Adornment.Start"
-            AdornmentIcon="@Icons.Material.Filled.Search" FullWidth="true" />
-    </MudItem>
-    <MudItem xs="12" sm="4" Class="d-flex align-center">
-        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Add"
-            OnClick="OpenCreateUserDialog" FullWidth="true">Create User</MudButton>
-    </MudItem>
-</MudGrid>
+    <MudTextField @bind-Value="search" Placeholder="Search users..." Adornment="Adornment.Start"
+        AdornmentIcon="@Icons.Material.Filled.Search" FullWidth="true" Class="mt-4 mb-4" />
 
-<MudTable Items="filtered" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+    <MudTable Items="filtered" Dense="true" Hover="true" Striped="true" Elevation="2" Breakpoint="Breakpoint.Md">
     <HeaderContent>
         <MudTh>Full Name</MudTh>
         <MudTh>Email</MudTh>
@@ -53,6 +57,7 @@
         </MudTd>
     </RowTemplate>
 </MudTable>
+</MudContainer>
 
 @if (showCreateDialog)
 {

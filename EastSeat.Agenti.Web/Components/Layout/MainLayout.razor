@@ -28,44 +28,36 @@
                         Title="Notifications" />
                 </MudBadge>
 
-                <MudIconButton Icon="@(_isDarkMode ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
-                    Color="Color.Inherit"
-                    OnClick="@ToggleTheme"
-                    Title="@(_isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode")" />
-
-                @* Desktop: show username button and logout *@
-                <MudHidden Breakpoint="Breakpoint.SmAndDown">
-                    <MudButton Href="/profile" Variant="Variant.Text" Color="Color.Inherit"
-                        StartIcon="@Icons.Material.Filled.Person" Class="mr-4" Style="text-transform:none"
-                        Title="View my profile">
-                        @context.User.Identity?.Name
-                    </MudButton>
-                    <form action="Account/Logout" method="post">
-                        <AntiforgeryToken />
-                        <input type="hidden" name="ReturnUrl" value="/" />
-                        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Color="Color.Inherit"
-                            StartIcon="@Icons.Material.Filled.Logout">
-                            Logout
-                        </MudButton>
-                    </form>
-                </MudHidden>
-
-                @* Mobile: compact menu with profile and logout *@
-                <MudHidden Breakpoint="Breakpoint.MdAndUp">
-                    <form id="mobile-logout-form" action="Account/Logout" method="post" style="display:none">
-                        <AntiforgeryToken />
-                        <input type="hidden" name="ReturnUrl" value="/" />
-                    </form>
-                    <MudMenu Icon="@Icons.Material.Filled.Person" Color="Color.Inherit"
-                        AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                <form id="logout-form" action="Account/Logout" method="post" style="display:none">
+                    <AntiforgeryToken />
+                    <input type="hidden" name="ReturnUrl" value="/" />
+                </form>
+                <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                    <ActivatorContent>
+                        <MudIconButton Color="Color.Inherit" Title="User menu" aria-label="User menu">
+                            <MudAvatar Size="Size.Small" Color="Color.Secondary">
+                                @GetInitials(context.User.Identity?.Name)
+                            </MudAvatar>
+                        </MudIconButton>
+                    </ActivatorContent>
+                    <ChildContent>
+                        <MudMenuItem Disabled="true">
+                            <MudText Typo="Typo.body2"><strong>@context.User.Identity?.Name</strong></MudText>
+                        </MudMenuItem>
+                        <MudDivider />
+                        <MudMenuItem Icon="@(_isDarkMode ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)"
+                            OnClick="@ToggleTheme">
+                            @GetThemeLabel()
+                        </MudMenuItem>
                         <MudMenuItem Href="/profile" Icon="@Icons.Material.Filled.Person">
-                            @context.User.Identity?.Name
+                            Profile
                         </MudMenuItem>
-                        <MudMenuItem Icon="@Icons.Material.Filled.Logout" OnClick="@SubmitMobileLogoutAsync">
+                        <MudDivider />
+                        <MudMenuItem Icon="@Icons.Material.Filled.Logout" OnClick="@SubmitLogoutAsync">
                             Logout
                         </MudMenuItem>
-                    </MudMenu>
-                </MudHidden>
+                    </ChildContent>
+                </MudMenu>
             </Authorized>
         </AuthorizeView>
     </MudAppBar>
@@ -174,9 +166,9 @@
         }
     }
 
-    private async Task SubmitMobileLogoutAsync()
+    private async Task SubmitLogoutAsync()
     {
-        await JS.InvokeVoidAsync("submitForm", "mobile-logout-form");
+        await JS.InvokeVoidAsync("submitForm", "logout-form");
     }
 
     private void ToggleDrawer()
@@ -219,6 +211,17 @@
             await ThemeService.InitializeAsync(newTheme);
         }
     }
+
+    private static string GetInitials(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant()
+            : name[..1].ToUpperInvariant();
+    }
+
+    private string GetThemeLabel() => _isDarkMode ? "Light Mode" : "Dark Mode";
 
     public void Dispose()
     {

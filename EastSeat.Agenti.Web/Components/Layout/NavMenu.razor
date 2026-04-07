@@ -4,45 +4,63 @@
 <MudNavMenu>
     <AuthorizeView>
         <Authorized>
-            <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">
-                Home
-            </MudNavLink>
+            <MudNavGroup Title="Operations" Icon="@Icons.Material.Filled.Work" Expanded="true">
+                <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">
+                    Home
+                </MudNavLink>
+                <MudNavLink Href="cashcount" Icon="@Icons.Material.Filled.AccountBalanceWallet">
+                    Cash Count
+                </MudNavLink>
+                <AuthorizeView Roles="Admin,Supervisor">
+                    <Authorized Context="sessionCtx">
+                        <MudNavLink Href="cashsessions" Icon="@Icons.Material.Filled.EventNote">
+                            Cash Sessions
+                        </MudNavLink>
+                    </Authorized>
+                </AuthorizeView>
+            </MudNavGroup>
+
+            <AuthorizeView Policy="VaultView">
+                <Authorized Context="vaultCtx">
+                    <MudNavGroup Title="Vault" Icon="@Icons.Material.Filled.SafetyDivider" Expanded="true">
+                        <MudNavLink Href="vault" Icon="@Icons.Material.Filled.AccountBalance">
+                            Vault
+                        </MudNavLink>
+                        <AuthorizeView Policy="CashCountApprove">
+                            <Authorized Context="approvalCtx">
+                                <MudNavLink Href="cashcount-approvals" Icon="@Icons.Material.Filled.FactCheck">
+                                    Approvals
+                                </MudNavLink>
+                            </Authorized>
+                        </AuthorizeView>
+                    </MudNavGroup>
+                </Authorized>
+            </AuthorizeView>
+
+            <AuthorizeView Roles="Admin,Supervisor">
+                <Authorized Context="adminCtx">
+                    <MudNavGroup Title="Administration" Icon="@Icons.Material.Filled.AdminPanelSettings" Expanded="true">
+                        <MudNavLink Href="agents" Icon="@Icons.Material.Filled.People">
+                            Agents
+                        </MudNavLink>
+                        <MudNavLink Href="wallettypes" Icon="@Icons.Material.Filled.Wallet">
+                            Wallet Types
+                        </MudNavLink>
+                        <AuthorizeView Policy="UserManagement">
+                            <Authorized Context="userMgmtCtx">
+                                <MudNavLink Href="users" Icon="@Icons.Material.Filled.ManageAccounts">
+                                    Users
+                                </MudNavLink>
+                            </Authorized>
+                        </AuthorizeView>
+                    </MudNavGroup>
+                </Authorized>
+            </AuthorizeView>
+
+            <MudDivider Class="my-2" />
             <MudNavLink Href="notifications" Icon="@Icons.Material.Filled.Notifications">
                 Notifications
             </MudNavLink>
-            <MudNavLink Href="cashcount" Icon="@Icons.Material.Filled.AccountBalanceWallet">
-                Cash Count
-            </MudNavLink>
-            <AuthorizeView Roles="Admin,Supervisor">
-                <Authorized Context="adminOrSupervisorCtx">
-                    <MudNavLink Href="cashcount-approvals" Icon="@Icons.Material.Filled.FactCheck">
-                        Approvals
-                    </MudNavLink>
-                    <MudNavLink Href="cashsessions" Icon="@Icons.Material.Filled.EventNote">
-                        Cash Sessions
-                    </MudNavLink>
-                    <MudNavLink Href="agents" Icon="@Icons.Material.Filled.People">
-                        Agents
-                    </MudNavLink>
-                    <MudNavLink Href="wallettypes" Icon="@Icons.Material.Filled.Wallet">
-                        Wallet Types
-                    </MudNavLink>
-                </Authorized>
-            </AuthorizeView>
-            <AuthorizeView Policy="VaultAccess">
-                <Authorized Context="vaultCtx">
-                    <MudNavLink Href="vault" Icon="@Icons.Material.Filled.SafetyDivider">
-                        Vault
-                    </MudNavLink>
-                </Authorized>
-            </AuthorizeView>
-            <AuthorizeView Policy="UserManagement">
-                <Authorized Context="adminCtx">
-                    <MudNavLink Href="users" Icon="@Icons.Material.Filled.ManageAccounts">
-                        Users
-                    </MudNavLink>
-                </Authorized>
-            </AuthorizeView>
         </Authorized>
         <NotAuthorized>
             <MudNavLink Href="Account/Register" Icon="@Icons.Material.Filled.PersonAdd">
