@@ -29,6 +29,16 @@
             </MudItem>
         </MudGrid>
     }
+    else if (_errorMessage is not null)
+    {
+        <MudGrid>
+            <MudItem xs="12">
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-4">
+                    <MudText Typo="Typo.body1">@_errorMessage</MudText>
+                </MudAlert>
+            </MudItem>
+        </MudGrid>
+    }
     else if (_dashboard is null || !_dashboard.HasWallets)
     {
         <MudGrid>
@@ -143,6 +153,7 @@
 @code {
     private DashboardViewModel? _dashboard;
     private bool _loading = true;
+    private string? _errorMessage;
 
     protected override async Task OnInitializedAsync()
     {
@@ -152,6 +163,7 @@
     private async Task LoadDashboard()
     {
         _loading = true;
+        _errorMessage = null;
         StateHasChanged();
 
         try
@@ -159,6 +171,10 @@
             var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
             var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
             _dashboard = await DashboardService.GetDashboardAsync(userId);
+        }
+        catch (Exception)
+        {
+            _errorMessage = "An error occurred while loading the dashboard. Please try refreshing.";
         }
         finally
         {

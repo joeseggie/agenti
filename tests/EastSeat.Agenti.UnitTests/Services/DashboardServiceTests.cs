@@ -6,6 +6,7 @@ using EastSeat.Agenti.Web.Features.Dashboard;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace EastSeat.Agenti.UnitTests.Services;
 
@@ -14,24 +15,28 @@ namespace EastSeat.Agenti.UnitTests.Services;
 /// </summary>
 public class DashboardServiceTests : IDisposable
 {
+    private readonly ServiceProvider _serviceProvider;
     private readonly ApplicationDbContext _dbContext;
     private readonly DashboardService _dashboardService;
 
     public DashboardServiceTests()
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .ConfigureWarnings(x => x.Ignore(InMemoryEventId.TransactionIgnoredWarning))
-            .Options;
+        var services = new ServiceCollection();
+        services.AddDbContextFactory<ApplicationDbContext>(opts =>
+            opts.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+                .ConfigureWarnings(x => x.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
 
-        _dbContext = new ApplicationDbContext(options);
-        _dashboardService = new DashboardService(_dbContext);
+        _serviceProvider = services.BuildServiceProvider();
+        var factory = _serviceProvider.GetRequiredService<IDbContextFactory<ApplicationDbContext>>();
+        _dbContext = factory.CreateDbContext();
+        _dashboardService = new DashboardService(factory);
     }
 
     public void Dispose()
     {
         _dbContext.Database.EnsureDeleted();
         _dbContext.Dispose();
+        _serviceProvider.Dispose();
     }
 
     #region GetDashboardAsync Tests
