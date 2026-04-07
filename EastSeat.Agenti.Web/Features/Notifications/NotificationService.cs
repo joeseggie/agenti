@@ -5,10 +5,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace EastSeat.Agenti.Web.Features.Notifications;
 
-public class NotificationService(ApplicationDbContext dbContext) : INotificationService
+public class NotificationService(IDbContextFactory<ApplicationDbContext> dbContextFactory) : INotificationService
 {
     public async Task<List<NotificationListItemDto>> GetNotificationsAsync(string userId)
     {
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync();
         return await dbContext.Notifications
             .Where(n => n.RecipientUserId == userId)
             .OrderByDescending(n => n.CreatedAt)
@@ -32,6 +33,7 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
 
     public async Task<int> GetUnreadCountAsync(string userId)
     {
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync();
         return await dbContext.Notifications
             .CountAsync(n => n.RecipientUserId == userId && !n.IsRead);
     }
@@ -43,6 +45,8 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
 
         if (string.IsNullOrWhiteSpace(dto.RecipientUserId))
             return NotificationSaveResult.Error("Recipient is required.");
+
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync();
 
         var recipientExists = await dbContext.Users.AnyAsync(u => u.Id == dto.RecipientUserId);
         if (!recipientExists)
@@ -74,6 +78,7 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
 
     public async Task<NotificationSaveResult> MarkAsReadAsync(Guid notificationId, string userId)
     {
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync();
         var notification = await dbContext.Notifications
             .FirstOrDefaultAsync(n => n.Id == notificationId && n.RecipientUserId == userId);
 
@@ -92,6 +97,7 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
 
     public async Task<NotificationSaveResult> MarkAllAsReadAsync(string userId)
     {
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync();
         var now = DateTimeOffset.UtcNow;
 
         var unreadNotifications = await dbContext.Notifications
@@ -111,6 +117,7 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
 
     public async Task CreateSystemNotificationAsync(string recipientUserId, string title, string message, NotificationType type, string? linkUrl = null)
     {
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync();
         dbContext.Notifications.Add(new Notification
         {
             RecipientUserId = recipientUserId,
@@ -128,6 +135,7 @@ public class NotificationService(ApplicationDbContext dbContext) : INotification
 
     public async Task NotifyBranchAdminsAsync(long branchId, string title, string message, NotificationType type, string? linkUrl = null)
     {
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync();
         var adminUserIds = await dbContext.Users
             .Where(u => u.BranchId == branchId &&
                         (u.Role == UserRole.Admin || u.Role == UserRole.Supervisor) &&
