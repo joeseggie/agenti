@@ -566,7 +566,7 @@ public class NotificationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task NotifyBranchAdminsAsync_ExcludesInactiveAndDeletedUsers()
+    public async Task NotifyBranchAdminsAsync_ExcludesInactiveUsers()
     {
         // Arrange
         var branch = new EastSeat.Agenti.Shared.Domain.Entities.Branch
