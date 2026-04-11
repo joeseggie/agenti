@@ -139,6 +139,7 @@
                             <th>Wallet</th>
                             <th>Reason</th>
                             <th style="text-align: right;">Amount (UGX)</th>
+                            <th>Status</th>
                             <th>Notes</th>
                             <th>Recorded</th>
                         </tr>
@@ -150,7 +151,12 @@
                                 <td>@adj.WalletName</td>
                                 <td>@adj.ReasonDisplay</td>
                                 <td style="text-align: right;">@adj.Amount.ToString("N0")</td>
-                                <td>@(adj.Notes ?? "—")</td>
+                                <td>
+                                    <MudChip T="string" Size="Size.Small" Color="@GetAdjustmentStatusColor(adj.Status)">
+                                        @adj.StatusDisplay
+                                    </MudChip>
+                                </td>
+                                <td>@(adj.RejectionReason ?? adj.Notes ?? "—")</td>
                                 <td>@adj.CreatedAt.ToLocalTime().ToString("HH:mm")</td>
                             </tr>
                         }
@@ -555,5 +561,13 @@
         CashCountStatus.PendingApproval => "Pending Approval",
         CashCountStatus.Approved => "Approved",
         CashCountStatus.Rejected => "Rejected"
+    };
+
+    private static Color GetAdjustmentStatusColor(WalletAdjustmentStatus status) => status switch
+    {
+        WalletAdjustmentStatus.Pending => Color.Warning,
+        WalletAdjustmentStatus.Approved => Color.Success,
+        WalletAdjustmentStatus.Rejected => Color.Error,
+        _ => Color.Default
     };
 }

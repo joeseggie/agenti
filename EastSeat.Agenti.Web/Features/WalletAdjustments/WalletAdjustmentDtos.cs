@@ -24,10 +24,12 @@ public class WalletAdjustmentDto
     public string WalletTypeName { get; set; } = string.Empty;
     public string AgentName { get; set; } = string.Empty;
     public string AgentCode { get; set; } = string.Empty;
+    public WalletAdjustmentStatus Status { get; set; }
     public WalletAdjustmentReason Reason { get; set; }
     public decimal Amount { get; set; }
     public string? Notes { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+    public string? RejectionReason { get; set; }
 
     public string ReasonDisplay => Reason switch
     {
@@ -37,6 +39,14 @@ public class WalletAdjustmentDto
         WalletAdjustmentReason.UnpaidCustomer => "Unpaid Customer",
         WalletAdjustmentReason.Other => "Other",
         _ => Reason.ToString()
+    };
+
+    public string StatusDisplay => Status switch
+    {
+        WalletAdjustmentStatus.Pending => "Pending",
+        WalletAdjustmentStatus.Approved => "Approved",
+        WalletAdjustmentStatus.Rejected => "Rejected",
+        _ => Status.ToString()
     };
 }
 
@@ -60,6 +70,14 @@ public class WalletAdjustmentSaveResult
         Success = false,
         ErrorMessage = message
     };
+}
+
+/// <summary>
+/// Request body for rejecting a wallet adjustment.
+/// </summary>
+public class RejectAdjustmentRequest
+{
+    public string Reason { get; set; } = string.Empty;
 }
 
 /// <summary>

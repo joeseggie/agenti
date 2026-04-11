@@ -313,7 +313,7 @@ public class WalletAdjustmentServiceTests : IDisposable
             x => x.NotifyBranchAdminsAsync(
                 _testBranch.Id,
                 It.IsAny<string>(),
-                It.Is<string>(msg => msg.Contains("20,000") && msg.Contains("fake notes")),
+                It.Is<string>(msg => msg.Contains("fake notes")),
                 NotificationType.WalletAdjustmentRecorded,
                 It.IsAny<string?>()),
             Times.Once);
@@ -355,7 +355,7 @@ public class WalletAdjustmentServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetWalletAdjustmentTotalsAsync_WithMultipleAdjustments_ReturnsSumPerWallet()
+    public async Task GetWalletAdjustmentTotalsAsync_OnlyCountsApprovedAdjustments()
     {
         _dbContext.WalletAdjustments.AddRange(
             new WalletAdjustment
@@ -363,6 +363,7 @@ public class WalletAdjustmentServiceTests : IDisposable
                 CashSessionId = _testSession.Id,
                 WalletId = _testWallet.Id,
                 AgentId = _testAgent.Id,
+                Status = WalletAdjustmentStatus.Approved,
                 Reason = WalletAdjustmentReason.BankShortage,
                 Amount = 30_000m,
                 RecordedByUserId = _testUser.Id,
@@ -373,8 +374,20 @@ public class WalletAdjustmentServiceTests : IDisposable
                 CashSessionId = _testSession.Id,
                 WalletId = _testWallet.Id,
                 AgentId = _testAgent.Id,
+                Status = WalletAdjustmentStatus.Pending,
                 Reason = WalletAdjustmentReason.FakeNotes,
                 Amount = 20_000m,
+                RecordedByUserId = _testUser.Id,
+                CreatedAt = DateTimeOffset.UtcNow
+            },
+            new WalletAdjustment
+            {
+                CashSessionId = _testSession.Id,
+                WalletId = _testWallet.Id,
+                AgentId = _testAgent.Id,
+                Status = WalletAdjustmentStatus.Rejected,
+                Reason = WalletAdjustmentReason.OwnerPayment,
+                Amount = 10_000m,
                 RecordedByUserId = _testUser.Id,
                 CreatedAt = DateTimeOffset.UtcNow
             }
@@ -384,7 +397,7 @@ public class WalletAdjustmentServiceTests : IDisposable
         var result = await _sut.GetWalletAdjustmentTotalsAsync(_testSession.Id, _testAgent.Id);
 
         result.Should().ContainKey(_testWallet.Id);
-        result[_testWallet.Id].Should().Be(50_000m);
+        result[_testWallet.Id].Should().Be(30_000m); // Only the approved one
     }
 
     #endregion
@@ -514,6 +527,162 @@ public class WalletAdjustmentServiceTests : IDisposable
 
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Contain("exceeds");
+    }
+
+    #endregion
+
+    #region ApproveAdjustmentAsync Tests
+
+    [Fact]
+    public async Task ApproveAdjustmentAsync_WithValidAdmin_ApprovesAdjustment()
+    {
+        SeedApprovedOpeningCount();
+
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var adjustment = new WalletAdjustment
+        {
+            CashSessionId = _testSession.Id,
+            WalletId = _testWallet.Id,
+            AgentId = _testAgent.Id,
+            Status = WalletAdjustmentStatus.Pending,
+            Reason = WalletAdjustmentReason.BankShortage,
+            Amount = 50_000m,
+            RecordedByUserId = _testUser.Id,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.WalletAdjustments.Add(adjustment);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.ApproveAdjustmentAsync(adminUser.Id, adjustment.Id);
+
+        result.Success.Should().BeTrue();
+        var updated = await _dbContext.WalletAdjustments.FindAsync(adjustment.Id);
+        updated!.Status.Should().Be(WalletAdjustmentStatus.Approved);
+        updated.ApprovedByUserId.Should().Be(adminUser.Id);
+        updated.ApprovedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ApproveAdjustmentAsync_WithNonAdmin_ReturnsError()
+    {
+        var adjustment = new WalletAdjustment
+        {
+            CashSessionId = _testSession.Id,
+            WalletId = _testWallet.Id,
+            AgentId = _testAgent.Id,
+            Status = WalletAdjustmentStatus.Pending,
+            Reason = WalletAdjustmentReason.BankShortage,
+            Amount = 50_000m,
+            RecordedByUserId = _testUser.Id,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.WalletAdjustments.Add(adjustment);
+        await _dbContext.SaveChangesAsync();
+
+        // _testUser is an Agent role, not Admin/Supervisor
+        var result = await _sut.ApproveAdjustmentAsync(_testUser.Id, adjustment.Id);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("administrators or supervisors");
+    }
+
+    [Fact]
+    public async Task ApproveAdjustmentAsync_AlreadyApproved_ReturnsError()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var adjustment = new WalletAdjustment
+        {
+            CashSessionId = _testSession.Id,
+            WalletId = _testWallet.Id,
+            AgentId = _testAgent.Id,
+            Status = WalletAdjustmentStatus.Approved,
+            Reason = WalletAdjustmentReason.BankShortage,
+            Amount = 50_000m,
+            RecordedByUserId = _testUser.Id,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.WalletAdjustments.Add(adjustment);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.ApproveAdjustmentAsync(adminUser.Id, adjustment.Id);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("not pending");
+    }
+
+    #endregion
+
+    #region RejectAdjustmentAsync Tests
+
+    [Fact]
+    public async Task RejectAdjustmentAsync_WithValidAdmin_RejectsAdjustment()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var adjustment = new WalletAdjustment
+        {
+            CashSessionId = _testSession.Id,
+            WalletId = _testWallet.Id,
+            AgentId = _testAgent.Id,
+            Status = WalletAdjustmentStatus.Pending,
+            Reason = WalletAdjustmentReason.BankShortage,
+            Amount = 50_000m,
+            RecordedByUserId = _testUser.Id,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.WalletAdjustments.Add(adjustment);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.RejectAdjustmentAsync(adminUser.Id, adjustment.Id, "Amount seems incorrect, please verify");
+
+        result.Success.Should().BeTrue();
+        var updated = await _dbContext.WalletAdjustments.FindAsync(adjustment.Id);
+        updated!.Status.Should().Be(WalletAdjustmentStatus.Rejected);
+        updated.RejectedByUserId.Should().Be(adminUser.Id);
+        updated.RejectionReason.Should().Contain("Amount seems incorrect");
+    }
+
+    [Fact]
+    public async Task RejectAdjustmentAsync_WithShortReason_ReturnsError()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var adjustment = new WalletAdjustment
+        {
+            CashSessionId = _testSession.Id,
+            WalletId = _testWallet.Id,
+            AgentId = _testAgent.Id,
+            Status = WalletAdjustmentStatus.Pending,
+            Reason = WalletAdjustmentReason.BankShortage,
+            Amount = 50_000m,
+            RecordedByUserId = _testUser.Id,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.WalletAdjustments.Add(adjustment);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.RejectAdjustmentAsync(adminUser.Id, adjustment.Id, "too short");
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("at least 10 characters");
     }
 
     #endregion

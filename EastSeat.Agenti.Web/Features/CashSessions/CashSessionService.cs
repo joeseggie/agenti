@@ -1,6 +1,5 @@
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Web.Data;
-using EastSeat.Agenti.Web.Features.WalletAdjustments;
 using Microsoft.ApplicationInsights;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,7 +10,6 @@ namespace EastSeat.Agenti.Web.Features.CashSessions;
 /// </summary>
 public class CashSessionService(
     ApplicationDbContext dbContext,
-    IWalletAdjustmentService walletAdjustmentService,
     TelemetryClient? telemetryClient = null) : ICashSessionService
 {
     /// <inheritdoc />
@@ -96,18 +94,21 @@ public class CashSessionService(
             .GroupBy(c => c.AgentId)
             .ToList();
 
-        // Load wallet adjustment totals per agent for this session
+        // Load wallet adjustment totals for all session agents in a single query
         var agentIds = agentGroups.Select(g => g.Key).ToList();
-        var adjustmentsByAgent = new Dictionary<long, decimal>();
-        foreach (var agentId in agentIds)
-        {
-            var totals = await walletAdjustmentService.GetWalletAdjustmentTotalsAsync(sessionId, agentId);
-            var sum = totals.Values.Sum();
-            if (sum > 0)
-            {
-                adjustmentsByAgent[agentId] = sum;
-            }
-        }
+        var rawAdjustments = agentIds.Count == 0
+            ? []
+            : await dbContext.WalletAdjustments
+                .Where(wa => wa.CashSessionId == sessionId &&
+                             agentIds.Contains(wa.AgentId) &&
+                             wa.Status == WalletAdjustmentStatus.Approved)
+                .Select(wa => new { wa.AgentId, wa.Amount })
+                .ToListAsync();
+
+        var adjustmentsByAgent = rawAdjustments
+            .GroupBy(a => a.AgentId)
+            .Where(g => g.Sum(a => a.Amount) > 0)
+            .ToDictionary(g => g.Key, g => g.Sum(a => a.Amount));
 
         var agentSummaries = agentGroups.Select(g =>
         {

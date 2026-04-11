@@ -59,6 +59,43 @@ public static class WalletAdjustmentEndpoints
         .WithName("GetSessionAdjustments")
         .WithSummary("Get all wallet adjustments for a session (admin/supervisor only)");
 
+        group.MapPost("/{adjustmentId:long}/approve", async (
+            long adjustmentId,
+            ClaimsPrincipal principal,
+            IWalletAdjustmentService walletAdjustmentService) =>
+        {
+            var userId = GetUserId(principal);
+            if (string.IsNullOrEmpty(userId))
+                return Results.Unauthorized();
+
+            var result = await walletAdjustmentService.ApproveAdjustmentAsync(userId, adjustmentId);
+            return result.Success
+                ? Results.Ok(ApiResponse<WalletAdjustmentSaveResult>.Ok(result))
+                : Results.BadRequest(ApiResponse<WalletAdjustmentSaveResult>.Fail(result.ErrorMessage ?? "Failed to approve adjustment."));
+        })
+        .RequireAuthorization("CashCountApprove")
+        .WithName("ApproveWalletAdjustment")
+        .WithSummary("Approve a pending wallet adjustment (admin/supervisor only)");
+
+        group.MapPost("/{adjustmentId:long}/reject", async (
+            long adjustmentId,
+            RejectAdjustmentRequest request,
+            ClaimsPrincipal principal,
+            IWalletAdjustmentService walletAdjustmentService) =>
+        {
+            var userId = GetUserId(principal);
+            if (string.IsNullOrEmpty(userId))
+                return Results.Unauthorized();
+
+            var result = await walletAdjustmentService.RejectAdjustmentAsync(userId, adjustmentId, request.Reason);
+            return result.Success
+                ? Results.Ok(ApiResponse<WalletAdjustmentSaveResult>.Ok(result))
+                : Results.BadRequest(ApiResponse<WalletAdjustmentSaveResult>.Fail(result.ErrorMessage ?? "Failed to reject adjustment."));
+        })
+        .RequireAuthorization("CashCountApprove")
+        .WithName("RejectWalletAdjustment")
+        .WithSummary("Reject a pending wallet adjustment (admin/supervisor only)");
+
         return group;
     }
 

@@ -320,6 +320,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Amount).HasPrecision(18, 2);
+            entity.Property(e => e.Status)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(50);
             entity.Property(e => e.Reason)
                 .IsRequired()
                 .HasConversion<string>()
@@ -327,6 +331,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.Property(e => e.Currency).IsRequired().HasMaxLength(3);
             entity.Property(e => e.Notes).HasMaxLength(2000);
             entity.Property(e => e.RecordedByUserId).IsRequired().HasMaxLength(450);
+            entity.Property(e => e.ApprovedByUserId).HasMaxLength(450);
+            entity.Property(e => e.RejectedByUserId).HasMaxLength(450);
+            entity.Property(e => e.RejectionReason).HasMaxLength(2000);
 
             entity.HasOne(e => e.CashSession)
                 .WithMany(s => s.WalletAdjustments)
@@ -344,9 +351,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .WithMany()
                 .HasForeignKey(e => e.RecordedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.ApprovedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.ApprovedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.RejectedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.RejectedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasIndex(e => new { e.CashSessionId, e.WalletId });
             entity.HasIndex(e => new { e.CashSessionId, e.AgentId });
+            entity.HasIndex(e => new { e.Status, e.CashSessionId });
         });
 
         // Configure AuditLog

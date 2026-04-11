@@ -677,9 +677,11 @@ public class CashCountService(
                 openingTotalsLookup[(oc.CashSessionId, oc.AgentId)] = oc.TotalAmount;
             }
 
-            // Batch load wallet adjustment totals for closing counts
+            // Batch load wallet adjustment totals for closing counts (only approved)
             var rawAdjustments = await dbContext.WalletAdjustments
-                .Where(a => sessionIds.Contains(a.CashSessionId) && agentIds.Contains(a.AgentId))
+                .Where(a => sessionIds.Contains(a.CashSessionId) &&
+                            agentIds.Contains(a.AgentId) &&
+                            a.Status == WalletAdjustmentStatus.Approved)
                 .Select(a => new { a.CashSessionId, a.AgentId, a.Amount })
                 .ToListAsync();
 

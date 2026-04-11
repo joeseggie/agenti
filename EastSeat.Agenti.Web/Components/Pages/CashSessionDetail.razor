@@ -231,6 +231,7 @@
                             <MudTh>Wallet</MudTh>
                             <MudTh>Reason</MudTh>
                             <MudTh Style="text-align: right;">Amount (UGX)</MudTh>
+                            <MudTh>Status</MudTh>
                             <MudTh>Notes</MudTh>
                             <MudTh>Recorded At</MudTh>
                         </HeaderContent>
@@ -239,6 +240,14 @@
                             <MudTd DataLabel="Wallet">@context.WalletName</MudTd>
                             <MudTd DataLabel="Reason">@context.ReasonDisplay</MudTd>
                             <MudTd DataLabel="Amount" Style="text-align: right;">@context.Amount.ToString("N0")</MudTd>
+                            <MudTd DataLabel="Status">
+                                <MudChip T="string" Size="Size.Small" Color="@(context.Status switch {
+                                    WalletAdjustmentStatus.Pending => Color.Warning,
+                                    WalletAdjustmentStatus.Approved => Color.Success,
+                                    WalletAdjustmentStatus.Rejected => Color.Error,
+                                    _ => Color.Default
+                                })">@context.StatusDisplay</MudChip>
+                            </MudTd>
                             <MudTd DataLabel="Notes">@(context.Notes ?? "—")</MudTd>
                             <MudTd DataLabel="Recorded At">@context.CreatedAt.ToLocalTime().ToString("HH:mm")</MudTd>
                         </RowTemplate>

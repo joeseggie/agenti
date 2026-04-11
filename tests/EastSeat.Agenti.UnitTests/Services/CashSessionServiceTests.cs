@@ -3,7 +3,6 @@ using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.UnitTests.Helpers.TestDataBuilders;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.CashSessions;
-using EastSeat.Agenti.Web.Features.WalletAdjustments;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -26,9 +25,7 @@ public class CashSessionServiceTests : IDisposable
             .Options;
 
         _dbContext = new ApplicationDbContext(options);
-        var walletAdjustmentService = new WalletAdjustmentService(
-            _dbContext, new Moq.Mock<EastSeat.Agenti.Web.Features.Notifications.INotificationService>().Object);
-        _cashSessionService = new CashSessionService(_dbContext, walletAdjustmentService);
+        _cashSessionService = new CashSessionService(_dbContext);
     }
 
     public void Dispose()

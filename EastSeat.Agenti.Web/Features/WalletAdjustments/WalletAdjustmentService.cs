@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace EastSeat.Agenti.Web.Features.WalletAdjustments;
 
 /// <summary>
-/// Service for recording and querying wallet adjustments (debit-only withdrawals).
+/// Service for recording, approving, and querying wallet adjustments (debit-only withdrawals).
 /// </summary>
 public class WalletAdjustmentService(
     ApplicationDbContext dbContext,
@@ -82,18 +82,6 @@ public class WalletAdjustmentService(
             return WalletAdjustmentSaveResult.Error("Wallet not found or does not belong to this agent.");
         }
 
-        // Check amount doesn't exceed effective balance (wallet.Balance - existing adjustments)
-        var existingAdjustmentTotal = await dbContext.WalletAdjustments
-            .Where(a => a.CashSessionId == session.Id && a.WalletId == form.WalletId)
-            .SumAsync(a => a.Amount);
-
-        var effectiveBalance = wallet.Balance - existingAdjustmentTotal;
-        if (form.Amount > effectiveBalance)
-        {
-            return WalletAdjustmentSaveResult.Error(
-                $"Adjustment amount ({form.Amount:N0}) exceeds the wallet's effective balance ({effectiveBalance:N0}).");
-        }
-
         // Validate notes required for Other reason
         if (form.Reason == WalletAdjustmentReason.Other &&
             (string.IsNullOrWhiteSpace(form.Notes) || form.Notes.Trim().Length < 10))
@@ -101,40 +89,63 @@ public class WalletAdjustmentService(
             return WalletAdjustmentSaveResult.Error("Notes are required (minimum 10 characters) when reason is 'Other'.");
         }
 
-        var adjustment = new WalletAdjustment
+        // Use serializable transaction to prevent concurrent adjustments exceeding wallet balance
+        long adjustmentId;
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable);
+
+        try
         {
-            CashSessionId = session.Id,
-            WalletId = form.WalletId,
-            AgentId = agent.Id,
-            Reason = form.Reason,
-            Amount = form.Amount,
-            Currency = wallet.Currency,
-            Notes = form.Notes?.Trim(),
-            RecordedByUserId = userId,
-            CreatedAt = DateTimeOffset.UtcNow
-        };
+            // Check amount doesn't exceed effective balance (wallet.Balance - existing non-rejected adjustments)
+            var existingAdjustmentTotal = await dbContext.WalletAdjustments
+                .Where(a => a.CashSessionId == session.Id &&
+                            a.WalletId == form.WalletId &&
+                            a.Status != WalletAdjustmentStatus.Rejected)
+                .SumAsync(a => a.Amount);
 
-        dbContext.WalletAdjustments.Add(adjustment);
-        await dbContext.SaveChangesAsync();
+            var effectiveBalance = wallet.Balance - existingAdjustmentTotal;
+            if (form.Amount > effectiveBalance)
+            {
+                await transaction.RollbackAsync();
+                return WalletAdjustmentSaveResult.Error(
+                    $"Adjustment amount ({form.Amount:N0}) exceeds the wallet's effective balance ({effectiveBalance:N0}).");
+            }
 
-        // Notify branch admins
+            var adjustment = new WalletAdjustment
+            {
+                CashSessionId = session.Id,
+                WalletId = form.WalletId,
+                AgentId = agent.Id,
+                Status = WalletAdjustmentStatus.Pending,
+                Reason = form.Reason,
+                Amount = form.Amount,
+                Currency = wallet.Currency,
+                Notes = form.Notes?.Trim(),
+                RecordedByUserId = userId,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+
+            dbContext.WalletAdjustments.Add(adjustment);
+            await dbContext.SaveChangesAsync();
+            adjustmentId = adjustment.Id;
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+
+        // Notify branch admins for approval
         var agentName = agent.User != null ? $"{agent.User.FirstName} {agent.User.LastName}".Trim() : agent.Code;
-        var reasonDisplay = form.Reason switch
-        {
-            WalletAdjustmentReason.BankShortage => "bank shortage",
-            WalletAdjustmentReason.FakeNotes => "fake notes confiscated",
-            WalletAdjustmentReason.OwnerPayment => "owner payment request",
-            WalletAdjustmentReason.UnpaidCustomer => "unpaid customer",
-            WalletAdjustmentReason.Other => "other reason",
-            _ => form.Reason.ToString()
-        };
+        var reasonDisplay = GetReasonDisplayText(form.Reason);
 
         await notificationService.NotifyBranchAdminsAsync(
             branchId,
-            "Wallet Adjustment Recorded",
-            $"{agentName} recorded a {wallet.WalletType?.Name} wallet adjustment of UGX {form.Amount:N0} ({reasonDisplay}).",
+            "Wallet Adjustment Pending Approval",
+            $"{agentName} recorded a {wallet.WalletType?.Name} wallet adjustment of UGX {form.Amount:N0} ({reasonDisplay}) requiring your approval.",
             NotificationType.WalletAdjustmentRecorded,
-            "/cashsessions");
+            "/cashcount-approvals");
 
         telemetryClient?.TrackEvent("wallet_adjustment_recorded", new Dictionary<string, string>
         {
@@ -145,7 +156,124 @@ public class WalletAdjustmentService(
             { "Amount", form.Amount.ToString("F2") }
         });
 
-        return WalletAdjustmentSaveResult.Ok(adjustment.Id);
+        return WalletAdjustmentSaveResult.Ok(adjustmentId);
+    }
+
+    /// <inheritdoc />
+    public async Task<WalletAdjustmentSaveResult> ApproveAdjustmentAsync(string adminUserId, long adjustmentId)
+    {
+        var admin = await dbContext.Users.FirstOrDefaultAsync(u => u.Id == adminUserId);
+        if (admin == null || (admin.Role != UserRole.Admin && admin.Role != UserRole.Supervisor))
+        {
+            return WalletAdjustmentSaveResult.Error("Only administrators or supervisors can approve wallet adjustments.");
+        }
+
+        var adjustment = await dbContext.WalletAdjustments
+            .Include(a => a.Agent)
+                .ThenInclude(a => a!.User)
+            .FirstOrDefaultAsync(a => a.Id == adjustmentId);
+
+        if (adjustment == null)
+        {
+            return WalletAdjustmentSaveResult.Error("Wallet adjustment not found.");
+        }
+
+        if (adjustment.Status != WalletAdjustmentStatus.Pending)
+        {
+            return WalletAdjustmentSaveResult.Error("Wallet adjustment is not pending approval.");
+        }
+
+        adjustment.Status = WalletAdjustmentStatus.Approved;
+        adjustment.ApprovedByUserId = adminUserId;
+        adjustment.ApprovedAt = DateTimeOffset.UtcNow;
+
+        await dbContext.SaveChangesAsync();
+
+        // Notify the agent
+        if (adjustment.Agent?.UserId != null)
+        {
+            await notificationService.CreateSystemNotificationAsync(
+                adjustment.Agent.UserId,
+                "Wallet Adjustment Approved",
+                $"Your wallet adjustment of UGX {adjustment.Amount:N0} has been approved.",
+                NotificationType.WalletAdjustmentRecorded,
+                "/cashcount");
+        }
+
+        telemetryClient?.TrackEvent("wallet_adjustment_approved", new Dictionary<string, string>
+        {
+            { "AdjustmentId", adjustmentId.ToString() },
+            { "AdminUserId", adminUserId },
+            { "Amount", adjustment.Amount.ToString("F2") }
+        });
+
+        return WalletAdjustmentSaveResult.Ok(adjustmentId);
+    }
+
+    /// <inheritdoc />
+    public async Task<WalletAdjustmentSaveResult> RejectAdjustmentAsync(string adminUserId, long adjustmentId, string reason)
+    {
+        var admin = await dbContext.Users.FirstOrDefaultAsync(u => u.Id == adminUserId);
+        if (admin == null || (admin.Role != UserRole.Admin && admin.Role != UserRole.Supervisor))
+        {
+            return WalletAdjustmentSaveResult.Error("Only administrators or supervisors can reject wallet adjustments.");
+        }
+
+        if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 10)
+        {
+            return WalletAdjustmentSaveResult.Error("Rejection reason must be at least 10 characters.");
+        }
+
+        var adjustment = await dbContext.WalletAdjustments
+            .Include(a => a.Agent)
+                .ThenInclude(a => a!.User)
+            .FirstOrDefaultAsync(a => a.Id == adjustmentId);
+
+        if (adjustment == null)
+        {
+            return WalletAdjustmentSaveResult.Error("Wallet adjustment not found.");
+        }
+
+        if (adjustment.Status != WalletAdjustmentStatus.Pending)
+        {
+            return WalletAdjustmentSaveResult.Error("Wallet adjustment is not pending approval.");
+        }
+
+        adjustment.Status = WalletAdjustmentStatus.Rejected;
+        adjustment.RejectedByUserId = adminUserId;
+        adjustment.RejectedAt = DateTimeOffset.UtcNow;
+        adjustment.RejectionReason = reason.Trim();
+
+        await dbContext.SaveChangesAsync();
+
+        // Notify the agent
+        if (adjustment.Agent?.UserId != null)
+        {
+            await notificationService.CreateSystemNotificationAsync(
+                adjustment.Agent.UserId,
+                "Wallet Adjustment Rejected",
+                $"Your wallet adjustment of UGX {adjustment.Amount:N0} was rejected. Reason: {reason.Trim()}",
+                NotificationType.WalletAdjustmentRecorded,
+                "/cashcount");
+        }
+
+        return WalletAdjustmentSaveResult.Ok(adjustmentId);
+    }
+
+    /// <inheritdoc />
+    public async Task<List<WalletAdjustmentDto>> GetPendingAdjustmentsAsync(long branchId)
+    {
+        return await dbContext.WalletAdjustments
+            .Include(a => a.Wallet)
+                .ThenInclude(w => w!.WalletType)
+            .Include(a => a.Agent)
+                .ThenInclude(a => a!.User)
+            .Include(a => a.CashSession)
+            .Where(a => a.CashSession!.BranchId == branchId &&
+                        a.Status == WalletAdjustmentStatus.Pending)
+            .OrderBy(a => a.CreatedAt)
+            .Select(a => MapToDto(a))
+            .ToListAsync();
     }
 
     /// <inheritdoc />
@@ -165,35 +293,22 @@ public class WalletAdjustmentService(
 
         return await query
             .OrderBy(a => a.CreatedAt)
-            .Select(a => new WalletAdjustmentDto
-            {
-                Id = a.Id,
-                WalletId = a.WalletId,
-                WalletName = a.Wallet != null ? a.Wallet.Name : "Unknown",
-                WalletTypeName = a.Wallet != null && a.Wallet.WalletType != null ? a.Wallet.WalletType.Name : "Unknown",
-                AgentName = a.Agent != null && a.Agent.User != null
-                    ? (a.Agent.User.FirstName + " " + a.Agent.User.LastName).Trim()
-                    : "Unknown",
-                AgentCode = a.Agent != null ? a.Agent.Code : "N/A",
-                Reason = a.Reason,
-                Amount = a.Amount,
-                Notes = a.Notes,
-                CreatedAt = a.CreatedAt
-            })
+            .Select(a => MapToDto(a))
             .ToListAsync();
     }
 
     /// <inheritdoc />
     public async Task<Dictionary<long, decimal>> GetWalletAdjustmentTotalsAsync(long cashSessionId, long agentId)
     {
-        var adjustments = await dbContext.WalletAdjustments
-            .Where(a => a.CashSessionId == cashSessionId && a.AgentId == agentId)
-            .Select(a => new { a.WalletId, a.Amount })
-            .ToListAsync();
-
-        return adjustments
+        // Only approved adjustments affect expected closing balances.
+        // Server-side aggregation via GroupBy + Select projection.
+        return await dbContext.WalletAdjustments
+            .Where(a => a.CashSessionId == cashSessionId &&
+                        a.AgentId == agentId &&
+                        a.Status == WalletAdjustmentStatus.Approved)
             .GroupBy(a => a.WalletId)
-            .ToDictionary(g => g.Key, g => g.Sum(a => a.Amount));
+            .Select(g => new { WalletId = g.Key, TotalAmount = g.Sum(a => a.Amount) })
+            .ToDictionaryAsync(a => a.WalletId, a => a.TotalAmount);
     }
 
     /// <inheritdoc />
@@ -224,4 +339,32 @@ public class WalletAdjustmentService(
             .Include(a => a.User)
             .FirstOrDefaultAsync(a => a.UserId == userId);
     }
+
+    private static WalletAdjustmentDto MapToDto(WalletAdjustment a) => new()
+    {
+        Id = a.Id,
+        WalletId = a.WalletId,
+        WalletName = a.Wallet != null ? a.Wallet.Name : "Unknown",
+        WalletTypeName = a.Wallet != null && a.Wallet.WalletType != null ? a.Wallet.WalletType.Name : "Unknown",
+        AgentName = a.Agent != null && a.Agent.User != null
+            ? $"{a.Agent.User.FirstName} {a.Agent.User.LastName}".Trim()
+            : "Unknown",
+        AgentCode = a.Agent != null ? a.Agent.Code : "N/A",
+        Status = a.Status,
+        Reason = a.Reason,
+        Amount = a.Amount,
+        Notes = a.Notes,
+        CreatedAt = a.CreatedAt,
+        RejectionReason = a.RejectionReason
+    };
+
+    private static string GetReasonDisplayText(WalletAdjustmentReason reason) => reason switch
+    {
+        WalletAdjustmentReason.BankShortage => "bank shortage",
+        WalletAdjustmentReason.FakeNotes => "fake notes confiscated",
+        WalletAdjustmentReason.OwnerPayment => "owner payment request",
+        WalletAdjustmentReason.UnpaidCustomer => "unpaid customer",
+        WalletAdjustmentReason.Other => "other reason",
+        _ => reason.ToString()
+    };
 }
