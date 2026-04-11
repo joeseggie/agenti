@@ -76,43 +76,48 @@ public class BankRunService(
             return BankRunSaveResult.Error("Source and destination wallets must be different.");
         }
 
-        // Validate FromWallet (must be a Cash wallet belonging to this agent)
-        var fromWallet = await dbContext.Wallets
-            .Include(w => w.WalletType)
-            .FirstOrDefaultAsync(w => w.Id == model.FromWalletId && w.AgentId == agent.Id && w.IsActive);
-
-        if (fromWallet == null)
-        {
-            return BankRunSaveResult.Error("Source wallet not found or does not belong to this agent.");
-        }
-
-        if (fromWallet.WalletType?.Type != WalletTypeEnum.Cash)
-        {
-            return BankRunSaveResult.Error("The source wallet must be a Cash wallet.");
-        }
-
-        // Validate ToWallet (must be a Bank wallet belonging to this agent)
-        var toWallet = await dbContext.Wallets
-            .Include(w => w.WalletType)
-            .FirstOrDefaultAsync(w => w.Id == model.ToWalletId && w.AgentId == agent.Id && w.IsActive);
-
-        if (toWallet == null)
-        {
-            return BankRunSaveResult.Error("Destination wallet not found or does not belong to this agent.");
-        }
-
-        if (toWallet.WalletType?.Type != WalletTypeEnum.Bank)
-        {
-            return BankRunSaveResult.Error("The destination wallet must be a Bank wallet.");
-        }
-
-        // Use a serializable transaction to prevent concurrent race conditions
+        // Start serializable transaction before loading wallets so the balance read
+        // and the balance update are protected against concurrent modifications.
         long bankRunId;
+        string toWalletName;
         await using var dbTransaction = await dbContext.Database.BeginTransactionAsync(
             System.Data.IsolationLevel.Serializable);
 
         try
         {
+            // Re-read wallets inside the transaction so their balances are current
+            var fromWallet = await dbContext.Wallets
+                .Include(w => w.WalletType)
+                .FirstOrDefaultAsync(w => w.Id == model.FromWalletId && w.AgentId == agent.Id && w.IsActive);
+
+            if (fromWallet == null)
+            {
+                await dbTransaction.RollbackAsync();
+                return BankRunSaveResult.Error("Source wallet not found or does not belong to this agent.");
+            }
+
+            if (fromWallet.WalletType?.Type != WalletTypeEnum.Cash)
+            {
+                await dbTransaction.RollbackAsync();
+                return BankRunSaveResult.Error("The source wallet must be a Cash wallet.");
+            }
+
+            var toWallet = await dbContext.Wallets
+                .Include(w => w.WalletType)
+                .FirstOrDefaultAsync(w => w.Id == model.ToWalletId && w.AgentId == agent.Id && w.IsActive);
+
+            if (toWallet == null)
+            {
+                await dbTransaction.RollbackAsync();
+                return BankRunSaveResult.Error("Destination wallet not found or does not belong to this agent.");
+            }
+
+            if (toWallet.WalletType?.Type != WalletTypeEnum.Bank)
+            {
+                await dbTransaction.RollbackAsync();
+                return BankRunSaveResult.Error("The destination wallet must be a Bank wallet.");
+            }
+
             if (model.Amount > fromWallet.Balance)
             {
                 await dbTransaction.RollbackAsync();
@@ -126,6 +131,7 @@ public class BankRunService(
 
             toWallet.Balance += model.Amount;
             toWallet.UpdatedAt = DateTimeOffset.UtcNow;
+            toWalletName = toWallet.Name;
 
             var bankRun = new BankRun
             {
@@ -158,7 +164,7 @@ public class BankRunService(
         await notificationService.NotifyBranchAdminsAsync(
             branchId,
             "Bank Run Recorded",
-            $"{agentName} recorded a bank run of UGX {model.Amount:N0} to {toWallet.Name}.",
+            $"{agentName} recorded a bank run of UGX {model.Amount:N0} to {toWalletName}.",
             NotificationType.BankRunRecorded,
             "/bank-runs");
 
