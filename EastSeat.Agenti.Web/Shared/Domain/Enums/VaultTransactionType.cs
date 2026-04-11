@@ -9,5 +9,6 @@ public enum VaultTransactionType
     Closing = 2,
     ManualDeposit = 3,
     ManualWithdrawal = 4,
-    Adjustment = 5
+    Adjustment = 5,
+    SurplusDeposit = 6
 }
