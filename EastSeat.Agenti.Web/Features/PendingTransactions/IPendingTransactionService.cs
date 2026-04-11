@@ -21,15 +21,19 @@ public interface IPendingTransactionService
     Task<List<PendingTransactionDto>> GetPendingTransactionsForAgentAsync(string userId);
 
     /// <summary>
-    /// Gets pending transactions for a branch (all agents, admin view).
+    /// Gets pending transactions for a branch (all agents, admin/supervisor view).
     /// Only returns Open and ReportedToBank records.
+    /// The implementation must validate that the caller identified by <paramref name="userId"/>
+    /// is authorized to view data for <paramref name="branchId"/>.
     /// </summary>
-    Task<List<PendingTransactionDto>> GetOpenPendingTransactionsForBranchAsync(long branchId);
+    Task<List<PendingTransactionDto>> GetOpenPendingTransactionsForBranchAsync(string userId, long branchId);
 
     /// <summary>
     /// Gets all pending transactions (any status) for a branch, optionally filtered by agent.
+    /// The implementation must validate that the caller identified by <paramref name="userId"/>
+    /// is authorized to view data for <paramref name="branchId"/>.
     /// </summary>
-    Task<List<PendingTransactionDto>> GetAllPendingTransactionsForBranchAsync(long branchId, long? agentId = null);
+    Task<List<PendingTransactionDto>> GetAllPendingTransactionsForBranchAsync(string userId, long branchId, long? agentId = null);
 
     /// <summary>
     /// Gets the active wallets for the agent identified by <paramref name="userId"/>.
