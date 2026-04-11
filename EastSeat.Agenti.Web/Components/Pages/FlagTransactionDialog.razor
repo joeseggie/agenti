@@ -1,0 +1,75 @@
+@using EastSeat.Agenti.Web.Features.Transactions
+@inject ITransactionService TransactionService
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-4">
+            Describe the error in detail. A supervisor will review and investigate the flagged transaction.
+        </MudText>
+        <MudTextField @bind-Value="_reason"
+                      Label="Reason for flagging"
+                      Variant="Variant.Outlined"
+                      Lines="4"
+                      HelperText="Minimum 10 characters. Describe what went wrong."
+                      MaxLength="2000"
+                      Counter="2000"
+                      Immediate="true"
+                      Error="@(!string.IsNullOrEmpty(_validationError))"
+                      ErrorText="@_validationError" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel" Disabled="_isSaving">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Warning" OnClick="Submit"
+                   Disabled="@(_isSaving || string.IsNullOrWhiteSpace(_reason))"
+                   StartIcon="@Icons.Material.Filled.Flag">
+            @(_isSaving ? "Saving…" : "Flag as Erroneous")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public long TransactionId { get; set; }
+
+    [Parameter]
+    public string UserId { get; set; } = string.Empty;
+
+    private string _reason = string.Empty;
+    private string? _validationError;
+    private bool _isSaving;
+
+    private async Task Submit()
+    {
+        _validationError = null;
+
+        if (string.IsNullOrWhiteSpace(_reason) || _reason.Trim().Length < 10)
+        {
+            _validationError = "Reason must be at least 10 characters.";
+            return;
+        }
+
+        _isSaving = true;
+
+        var result = await TransactionService.FlagTransactionAsync(UserId, new FlagTransactionFormModel
+        {
+            TransactionId = TransactionId,
+            Reason = _reason
+        });
+
+        _isSaving = false;
+
+        if (result.Success)
+        {
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        else
+        {
+            _validationError = result.ErrorMessage;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

@@ -12,5 +12,6 @@ public enum NotificationType
     DiscrepancyPendingReview = 4,
     SessionClosed = 5,
     CountAutoApproved = 6,
-    WalletAdjustmentRecorded = 7
+    WalletAdjustmentRecorded = 7,
+    TransactionFlagged = 8
 }
