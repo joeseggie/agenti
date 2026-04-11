@@ -3,9 +3,11 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using EastSeat.Agenti.Web.Features.CashCounts
 @using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Web.Features.WalletAdjustments
 @attribute [Authorize(Policy = "CashCountApprove")]
 @rendermode InteractiveServer
 @inject ICashCountService CashCountService
+@inject IWalletAdjustmentService WalletAdjustmentService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
@@ -112,10 +114,66 @@
             </MudAlert>
         }
     }
+
+    @* Pending Wallet Adjustments Section *@
+    <MudText Typo="Typo.h5" Class="mt-6 mb-2">Wallet Adjustments</MudText>
+    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">
+        Review and approve or reject pending wallet adjustments
+    </MudText>
+
+    @if (!_isLoading && _pendingAdjustments.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+            No wallet adjustments pending approval.
+        </MudAlert>
+    }
+    else if (_pendingAdjustments.Count > 0)
+    {
+        <MudTable Items="@_pendingAdjustments" Hover="true" Striped="true" Dense="true" Elevation="2"
+            Breakpoint="Breakpoint.Md">
+            <HeaderContent>
+                <MudTh>Agent</MudTh>
+                <MudTh>Wallet</MudTh>
+                <MudTh>Reason</MudTh>
+                <MudTh Style="text-align: right;">Amount (UGX)</MudTh>
+                <MudTh>Notes</MudTh>
+                <MudTh>Recorded</MudTh>
+                <MudTh Style="text-align: center;">Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Agent">
+                    <MudText Typo="Typo.body2">@context.AgentName</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@context.AgentCode</MudText>
+                </MudTd>
+                <MudTd DataLabel="Wallet">@context.WalletName</MudTd>
+                <MudTd DataLabel="Reason">@context.ReasonDisplay</MudTd>
+                <MudTd DataLabel="Amount" Style="text-align: right;">@context.Amount.ToString("N0")</MudTd>
+                <MudTd DataLabel="Notes">
+                    <MudText Typo="Typo.caption">@(context.Notes ?? "—")</MudText>
+                </MudTd>
+                <MudTd DataLabel="Recorded">
+                    <MudText Typo="Typo.caption">@context.CreatedAt.ToLocalTime().ToString("HH:mm")</MudText>
+                </MudTd>
+                <MudTd DataLabel="Actions" Style="text-align: center;">
+                    <MudStack Row="true" Spacing="1" Justify="Justify.Center">
+                        <MudTooltip Text="Approve">
+                            <MudIconButton Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small"
+                                OnClick="@(() => ApproveAdjustmentAsync(context))" Disabled="_isProcessing" />
+                        </MudTooltip>
+                        <MudTooltip Text="Reject">
+                            <MudIconButton Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small"
+                                OnClick="@(() => ShowRejectAdjustmentDialogAsync(context))" Disabled="_isProcessing" />
+                        </MudTooltip>
+                    </MudStack>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
 </MudContainer>
 
 @code {
     private List<PendingApprovalDto> _pending = [];
+    private List<WalletAdjustmentDto> _pendingAdjustments = [];
     private bool _isLoading = true;
     private bool _isProcessing = false;
     private string? _userId;
@@ -142,6 +200,7 @@
         try
         {
             _pending = await CashCountService.GetPendingApprovalsAsync(_branchId);
+            _pendingAdjustments = await WalletAdjustmentService.GetPendingAdjustmentsAsync(_branchId);
         }
         finally
         {
@@ -208,6 +267,78 @@
             if (result.Success)
             {
                 Snackbar.Add($"Cash count rejected for {item.AgentName}.", Severity.Warning);
+                await LoadPendingAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to reject.", Severity.Error);
+            }
+        }
+        finally
+        {
+            _isProcessing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ApproveAdjustmentAsync(WalletAdjustmentDto item)
+    {
+        if (string.IsNullOrEmpty(_userId)) return;
+
+        _isProcessing = true;
+        StateHasChanged();
+
+        try
+        {
+            var result = await WalletAdjustmentService.ApproveAdjustmentAsync(_userId, item.Id);
+            if (result.Success)
+            {
+                Snackbar.Add($"Wallet adjustment approved for {item.AgentName}.", Severity.Success);
+                await LoadPendingAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to approve.", Severity.Error);
+            }
+        }
+        finally
+        {
+            _isProcessing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ShowRejectAdjustmentDialogAsync(WalletAdjustmentDto item)
+    {
+        var parameters = new DialogParameters<RejectCashCountDialog>
+        {
+            { x => x.AgentName, item.AgentName },
+            { x => x.CountType, $"wallet adjustment ({item.ReasonDisplay})" }
+        };
+
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<RejectCashCountDialog>("Reject Wallet Adjustment", parameters, options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled && result.Data is string reason)
+        {
+            await RejectAdjustmentAsync(item, reason);
+        }
+    }
+
+    private async Task RejectAdjustmentAsync(WalletAdjustmentDto item, string reason)
+    {
+        if (string.IsNullOrEmpty(_userId)) return;
+
+        _isProcessing = true;
+        StateHasChanged();
+
+        try
+        {
+            var result = await WalletAdjustmentService.RejectAdjustmentAsync(_userId, item.Id, reason);
+            if (result.Success)
+            {
+                Snackbar.Add($"Wallet adjustment rejected for {item.AgentName}.", Severity.Warning);
                 await LoadPendingAsync();
             }
             else

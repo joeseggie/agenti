@@ -3,6 +3,7 @@ using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Notifications;
 using EastSeat.Agenti.Web.Features.Vaults;
+using EastSeat.Agenti.Web.Features.WalletAdjustments;
 using Microsoft.ApplicationInsights;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,6 +17,7 @@ public class CashCountService(
     ApplicationDbContext dbContext,
     IVaultService vaultService,
     INotificationService notificationService,
+    IWalletAdjustmentService walletAdjustmentService,
     TelemetryClient? telemetryClient = null) : ICashCountService
 {
     /// <inheritdoc />
@@ -130,6 +132,15 @@ public class CashCountService(
         var canOpen = agentOpeningCount == null ||
                       agentOpeningCount.Status == CashCountStatus.Rejected;
         var canClose = hasApprovedOpening && !hasSubmittedOrApprovedClosing;
+        var canRecordAdjustment = hasApprovedOpening && !hasSubmittedOrApprovedClosing;
+
+        // Get total adjustments for this agent in this session
+        decimal totalAdjustments = 0;
+        if (hasApprovedOpening)
+        {
+            var adjustmentTotals = await walletAdjustmentService.GetWalletAdjustmentTotalsAsync(todaySession.Id, agent.Id);
+            totalAdjustments = adjustmentTotals.Values.Sum();
+        }
 
         return new CurrentSessionDto
         {
@@ -142,7 +153,9 @@ public class CashCountService(
             OpeningCountStatus = agentOpeningCount?.Status,
             ClosingCountStatus = agentClosingCount?.Status,
             CanPerformOpeningCount = canOpen,
-            CanPerformClosingCount = canClose
+            CanPerformClosingCount = canClose,
+            CanRecordAdjustment = canRecordAdjustment,
+            TotalAdjustments = totalAdjustments
         };
     }
 
@@ -162,13 +175,30 @@ public class CashCountService(
             .ThenBy(w => w.Name)
             .ToListAsync();
 
+        // For closing counts, get wallet adjustment totals to compute adjusted expected balances
+        var adjustmentTotals = new Dictionary<long, decimal>();
+        if (!isOpening && agent.BranchId.HasValue)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var session = await dbContext.CashSessions
+                .Where(s => s.BranchId == agent.BranchId.Value && s.SessionDate == today && s.Status == CashSessionStatus.Open)
+                .FirstOrDefaultAsync();
+
+            if (session != null)
+            {
+                adjustmentTotals = await walletAdjustmentService.GetWalletAdjustmentTotalsAsync(session.Id, agent.Id);
+            }
+        }
+
         var walletEntries = wallets.Select(w => new WalletCountEntryDto
         {
             WalletId = w.Id,
             WalletName = w.Name,
             WalletTypeName = w.WalletType?.Name ?? "Unknown",
             SupportsDenominations = w.WalletType?.SupportsDenominations ?? false,
-            ExpectedBalance = w.Balance,
+            ExpectedBalance = isOpening
+                ? w.Balance
+                : w.Balance - adjustmentTotals.GetValueOrDefault(w.Id, 0),
             CountedAmount = 0,
             Denominations = w.WalletType?.SupportsDenominations == true
                 ? DenominationBreakdown.Empty
@@ -414,23 +444,7 @@ public class CashCountService(
         cashCount.SubmittedAt = DateTimeOffset.UtcNow;
         cashCount.Status = CashCountStatus.PendingApproval;
 
-        // Rule 12: Auto-approve matching closing counts for today only
-        if (!cashCount.IsOpening && cashCount.CountDate == today)
-        {
-            var openingCount = await dbContext.CashCounts
-                .Where(c => c.CashSessionId == cashCount.CashSessionId &&
-                            c.AgentId == agent.Id &&
-                            c.IsOpening &&
-                            c.Status == CashCountStatus.Approved)
-                .FirstOrDefaultAsync();
-
-            if (openingCount != null && cashCount.TotalAmount == openingCount.TotalAmount)
-            {
-                return await ExecuteClosingCountApproval(cashCount, branchId, userId, isAutoApproval: true);
-            }
-        }
-
-        // Rule 10, 16: If closing count has discrepancy, require explanation
+        // For closing counts, compute the adjusted expected total (opening - wallet adjustments)
         if (!cashCount.IsOpening)
         {
             var openingCount = await dbContext.CashCounts
@@ -440,30 +454,45 @@ public class CashCountService(
                             c.Status == CashCountStatus.Approved)
                 .FirstOrDefaultAsync();
 
-            if (openingCount != null && cashCount.TotalAmount != openingCount.TotalAmount)
+            if (openingCount != null)
             {
-                if (string.IsNullOrWhiteSpace(cashCount.Explanation))
+                var adjustmentTotals = await walletAdjustmentService.GetWalletAdjustmentTotalsAsync(
+                    cashCount.CashSessionId, agent.Id);
+                var totalAdjustments = adjustmentTotals.Values.Sum();
+                var adjustedExpected = openingCount.TotalAmount - totalAdjustments;
+
+                // Rule 12: Auto-approve matching closing counts for today only
+                if (cashCount.CountDate == today && cashCount.TotalAmount == adjustedExpected)
                 {
-                    cashCount.Status = CashCountStatus.Draft;
-                    cashCount.SubmittedAt = null;
-                    await dbContext.SaveChangesAsync();
-                    return CashCountSaveResult.Error("Closing count differs from opening count. Please provide an explanation for the discrepancy.");
+                    return await ExecuteClosingCountApproval(cashCount, branchId, userId, isAutoApproval: true);
                 }
 
-                var discrepancy = new Discrepancy
+                // Rule 10, 16: If closing count has discrepancy, require explanation
+                if (cashCount.TotalAmount != adjustedExpected)
                 {
-                    CashSessionId = cashCount.CashSessionId,
-                    CashCountId = cashCount.Id,
-                    Status = DiscrepancyStatus.PendingReview,
-                    ExpectedAmount = openingCount.TotalAmount,
-                    ActualAmount = cashCount.TotalAmount,
-                    Variance = cashCount.TotalAmount - openingCount.TotalAmount,
-                    Explanation = cashCount.Explanation,
-                    ExplainedByUserId = agent.Id,
-                    ExplainedAt = DateTimeOffset.UtcNow,
-                    CreatedAt = DateTimeOffset.UtcNow
-                };
-                dbContext.Discrepancies.Add(discrepancy);
+                    if (string.IsNullOrWhiteSpace(cashCount.Explanation))
+                    {
+                        cashCount.Status = CashCountStatus.Draft;
+                        cashCount.SubmittedAt = null;
+                        await dbContext.SaveChangesAsync();
+                        return CashCountSaveResult.Error("Closing count differs from expected amount. Please provide an explanation for the discrepancy.");
+                    }
+
+                    var discrepancy = new Discrepancy
+                    {
+                        CashSessionId = cashCount.CashSessionId,
+                        CashCountId = cashCount.Id,
+                        Status = DiscrepancyStatus.PendingReview,
+                        ExpectedAmount = adjustedExpected,
+                        ActualAmount = cashCount.TotalAmount,
+                        Variance = cashCount.TotalAmount - adjustedExpected,
+                        Explanation = cashCount.Explanation,
+                        ExplainedByUserId = agent.Id,
+                        ExplainedAt = DateTimeOffset.UtcNow,
+                        CreatedAt = DateTimeOffset.UtcNow
+                    };
+                    dbContext.Discrepancies.Add(discrepancy);
+                }
             }
         }
 
@@ -629,6 +658,7 @@ public class CashCountService(
             .ToList();
 
         var openingTotalsLookup = new Dictionary<(long SessionId, long AgentId), decimal>();
+        var adjustmentTotalsLookup = new Dictionary<(long SessionId, long AgentId), decimal>();
         if (closingSessionAgentPairs.Count > 0)
         {
             var sessionIds = closingSessionAgentPairs.Select(p => p.CashSessionId).Distinct().ToList();
@@ -646,15 +676,30 @@ public class CashCountService(
             {
                 openingTotalsLookup[(oc.CashSessionId, oc.AgentId)] = oc.TotalAmount;
             }
+
+            // Batch load wallet adjustment totals for closing counts (only approved)
+            var rawAdjustments = await dbContext.WalletAdjustments
+                .Where(a => sessionIds.Contains(a.CashSessionId) &&
+                            agentIds.Contains(a.AgentId) &&
+                            a.Status == WalletAdjustmentStatus.Approved)
+                .Select(a => new { a.CashSessionId, a.AgentId, a.Amount })
+                .ToListAsync();
+
+            foreach (var group in rawAdjustments.GroupBy(a => (a.CashSessionId, a.AgentId)))
+            {
+                adjustmentTotalsLookup[group.Key] = group.Sum(a => a.Amount);
+            }
         }
 
         return pendingCounts.Select(count =>
         {
-            decimal? openingTotal = null;
+            decimal? adjustedOpeningTotal = null;
             if (!count.IsOpening)
             {
                 openingTotalsLookup.TryGetValue((count.CashSessionId, count.AgentId), out var ot);
-                openingTotal = ot > 0 ? ot : null;
+                adjustmentTotalsLookup.TryGetValue((count.CashSessionId, count.AgentId), out var adjTotal);
+                var adjusted = ot - adjTotal;
+                adjustedOpeningTotal = adjusted > 0 ? adjusted : (ot > 0 ? adjusted : (decimal?)null);
             }
 
             return new PendingApprovalDto
@@ -670,10 +715,10 @@ public class CashCountService(
                 IsOpening = count.IsOpening,
                 Status = count.Status,
                 TotalAmount = count.TotalAmount,
-                OpeningTotal = openingTotal,
-                Variance = openingTotal.HasValue ? count.TotalAmount - openingTotal.Value : null,
+                OpeningTotal = adjustedOpeningTotal,
+                Variance = adjustedOpeningTotal.HasValue ? count.TotalAmount - adjustedOpeningTotal.Value : null,
                 Explanation = count.Explanation,
-                HasDiscrepancy = openingTotal.HasValue && count.TotalAmount != openingTotal.Value,
+                HasDiscrepancy = adjustedOpeningTotal.HasValue && count.TotalAmount != adjustedOpeningTotal.Value,
                 SubmittedAt = count.SubmittedAt ?? count.CreatedAt
             };
         }).ToList();
@@ -785,13 +830,23 @@ public class CashCountService(
             return null;
         }
 
+        // For closing counts, adjust expected balances by wallet adjustments
+        var adjustmentTotals = new Dictionary<long, decimal>();
+        if (!cashCount.IsOpening)
+        {
+            adjustmentTotals = await walletAdjustmentService.GetWalletAdjustmentTotalsAsync(
+                cashCount.CashSessionId, agent.Id);
+        }
+
         var walletEntries = cashCount.Details.Select(d => new WalletCountEntryDto
         {
             WalletId = d.WalletId,
             WalletName = d.Wallet?.Name ?? "Unknown",
             WalletTypeName = d.Wallet?.WalletType?.Name ?? "Unknown",
             SupportsDenominations = d.Wallet?.WalletType?.SupportsDenominations ?? false,
-            ExpectedBalance = d.Wallet?.Balance ?? 0,
+            ExpectedBalance = cashCount.IsOpening
+                ? (d.Wallet?.Balance ?? 0)
+                : (d.Wallet?.Balance ?? 0) - adjustmentTotals.GetValueOrDefault(d.WalletId, 0),
             CountedAmount = d.Amount,
             Denominations = DenominationBreakdown.FromJson(d.Denominations)
         }).ToList();

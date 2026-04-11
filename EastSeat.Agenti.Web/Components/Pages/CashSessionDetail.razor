@@ -4,10 +4,12 @@
 @using EastSeat.Agenti.Web.Features.CashSessions
 @using EastSeat.Agenti.Web.Features.CashCounts
 @using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Web.Features.WalletAdjustments
 @attribute [Authorize]
 @rendermode InteractiveServer
 @inject ICashSessionService CashSessionService
 @inject ICashCountService CashCountService
+@inject IWalletAdjustmentService WalletAdjustmentService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager NavigationManager
 @inject ISnackbar Snackbar
@@ -109,6 +111,12 @@
                         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                             <MudText Typo="Typo.h6">@agent.AgentName</MudText>
                             <MudText Typo="Typo.caption" Color="Color.Secondary">(@agent.AgentCode)</MudText>
+                            @if (agent.TotalAdjustments > 0)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Info">
+                                    Adjustments: UGX @agent.TotalAdjustments.ToString("N0")
+                                </MudChip>
+                            }
                             @if (agent.HasDiscrepancy)
                             {
                                 <MudChip T="string" Size="Size.Small" Color="Color.Warning">Discrepancy</MudChip>
@@ -206,6 +214,47 @@
                 </MudCardContent>
             </MudCard>
         }
+
+        @* Wallet Adjustments Section *@
+        @if (_adjustments.Count > 0)
+        {
+            <MudCard Elevation="2" Class="mt-4">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Wallet Adjustments</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudTable Items="@_adjustments" Dense="true" Hover="true" Striped="true" Elevation="0">
+                        <HeaderContent>
+                            <MudTh>Agent</MudTh>
+                            <MudTh>Wallet</MudTh>
+                            <MudTh>Reason</MudTh>
+                            <MudTh Style="text-align: right;">Amount (UGX)</MudTh>
+                            <MudTh>Status</MudTh>
+                            <MudTh>Notes</MudTh>
+                            <MudTh>Recorded At</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Agent">@context.AgentName (@context.AgentCode)</MudTd>
+                            <MudTd DataLabel="Wallet">@context.WalletName</MudTd>
+                            <MudTd DataLabel="Reason">@context.ReasonDisplay</MudTd>
+                            <MudTd DataLabel="Amount" Style="text-align: right;">@context.Amount.ToString("N0")</MudTd>
+                            <MudTd DataLabel="Status">
+                                <MudChip T="string" Size="Size.Small" Color="@(context.Status switch {
+                                    WalletAdjustmentStatus.Pending => Color.Warning,
+                                    WalletAdjustmentStatus.Approved => Color.Success,
+                                    WalletAdjustmentStatus.Rejected => Color.Error,
+                                    _ => Color.Default
+                                })">@context.StatusDisplay</MudChip>
+                            </MudTd>
+                            <MudTd DataLabel="Notes">@(context.Notes ?? "—")</MudTd>
+                            <MudTd DataLabel="Recorded At">@context.CreatedAt.ToLocalTime().ToString("HH:mm")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudCardContent>
+            </MudCard>
+        }
     }
 </MudContainer>
 
@@ -214,6 +263,7 @@
     public long Id { get; set; }
 
     private CashSessionDetailDto? _session;
+    private List<WalletAdjustmentDto> _adjustments = [];
     private bool _isLoading = true;
     private string? _userId;
 
@@ -232,6 +282,7 @@
         try
         {
             _session = await CashSessionService.GetCashSessionDetailAsync(Id);
+            _adjustments = await WalletAdjustmentService.GetAdjustmentsForSessionAsync(Id);
         }
         finally
         {

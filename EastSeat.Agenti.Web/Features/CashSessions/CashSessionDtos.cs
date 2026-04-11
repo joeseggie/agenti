@@ -45,8 +45,9 @@ public class AgentSessionSummaryDto
     public string AgentCode { get; set; } = string.Empty;
     public CashCountSummaryDto? OpeningCount { get; set; }
     public CashCountSummaryDto? ClosingCount { get; set; }
+    public decimal TotalAdjustments { get; set; }
     public decimal? Variance => ClosingCount != null && OpeningCount != null
-        ? ClosingCount.TotalAmount - OpeningCount.TotalAmount
+        ? ClosingCount.TotalAmount - (OpeningCount.TotalAmount - TotalAdjustments)
         : null;
     public bool HasDiscrepancy => Variance.HasValue && Variance.Value != 0;
 }

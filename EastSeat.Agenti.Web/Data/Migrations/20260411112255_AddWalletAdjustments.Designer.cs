@@ -3,6 +3,7 @@ using System;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace EastSeat.Agenti.Web.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260411112255_AddWalletAdjustments")]
+    partial class AddWalletAdjustments
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -661,13 +664,6 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
-                    b.Property<DateTimeOffset?>("ApprovedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ApprovedByUserId")
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
                     b.Property<long>("CashSessionId")
                         .HasColumnType("bigint");
 
@@ -693,22 +689,6 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .HasMaxLength(450)
                         .HasColumnType("character varying(450)");
 
-                    b.Property<DateTimeOffset?>("RejectedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("RejectedByUserId")
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<string>("RejectionReason")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
                     b.Property<long>("WalletId")
                         .HasColumnType("bigint");
 
@@ -716,19 +696,13 @@ namespace EastSeat.Agenti.Web.Data.Migrations
 
                     b.HasIndex("AgentId");
 
-                    b.HasIndex("ApprovedByUserId");
-
                     b.HasIndex("RecordedByUserId");
-
-                    b.HasIndex("RejectedByUserId");
 
                     b.HasIndex("WalletId");
 
                     b.HasIndex("CashSessionId", "AgentId");
 
                     b.HasIndex("CashSessionId", "WalletId");
-
-                    b.HasIndex("Status", "CashSessionId");
 
                     b.ToTable("WalletAdjustments");
                 });
@@ -1323,11 +1297,6 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("EastSeat.Agenti.Web.Data.ApplicationUser", "ApprovedByUser")
-                        .WithMany()
-                        .HasForeignKey("ApprovedByUserId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("EastSeat.Agenti.Shared.Domain.Entities.CashSession", "CashSession")
                         .WithMany("WalletAdjustments")
                         .HasForeignKey("CashSessionId")
@@ -1340,11 +1309,6 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("EastSeat.Agenti.Web.Data.ApplicationUser", "RejectedByUser")
-                        .WithMany()
-                        .HasForeignKey("RejectedByUserId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("EastSeat.Agenti.Shared.Domain.Entities.Wallet", "Wallet")
                         .WithMany()
                         .HasForeignKey("WalletId")
@@ -1353,13 +1317,9 @@ namespace EastSeat.Agenti.Web.Data.Migrations
 
                     b.Navigation("Agent");
 
-                    b.Navigation("ApprovedByUser");
-
                     b.Navigation("CashSession");
 
                     b.Navigation("RecordedByUser");
-
-                    b.Navigation("RejectedByUser");
 
                     b.Navigation("Wallet");
                 });

@@ -5,6 +5,7 @@ using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.CashCounts;
 using EastSeat.Agenti.Web.Features.Notifications;
 using EastSeat.Agenti.Web.Features.Vaults;
+using EastSeat.Agenti.Web.Features.WalletAdjustments;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -19,6 +20,7 @@ public class CashCountServiceTests : IDisposable
     private readonly ApplicationDbContext _dbContext;
     private readonly Mock<IVaultService> _vaultServiceMock;
     private readonly Mock<INotificationService> _notificationServiceMock;
+    private readonly Mock<IWalletAdjustmentService> _walletAdjustmentServiceMock;
     private readonly CashCountService _sut;
     private readonly Branch _testBranch;
     private readonly ApplicationUser _testUser;
@@ -37,6 +39,10 @@ public class CashCountServiceTests : IDisposable
 
         _vaultServiceMock = new Mock<IVaultService>();
         _notificationServiceMock = new Mock<INotificationService>();
+        _walletAdjustmentServiceMock = new Mock<IWalletAdjustmentService>();
+        _walletAdjustmentServiceMock
+            .Setup(x => x.GetWalletAdjustmentTotalsAsync(It.IsAny<long>(), It.IsAny<long>()))
+            .ReturnsAsync(new Dictionary<long, decimal>());
 
         _testBranch = new Branch
         {
@@ -81,7 +87,7 @@ public class CashCountServiceTests : IDisposable
 
         _dbContext.SaveChanges();
 
-        _sut = new CashCountService(_dbContext, _vaultServiceMock.Object, _notificationServiceMock.Object);
+        _sut = new CashCountService(_dbContext, _vaultServiceMock.Object, _notificationServiceMock.Object, _walletAdjustmentServiceMock.Object);
     }
 
     public void Dispose()

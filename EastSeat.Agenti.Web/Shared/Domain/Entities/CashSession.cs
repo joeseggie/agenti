@@ -22,4 +22,5 @@ public class CashSession
     public ICollection<CashCount> CashCounts { get; set; } = new List<CashCount>();
     public ICollection<Transaction> Transactions { get; set; } = new List<Transaction>();
     public ICollection<Discrepancy> Discrepancies { get; set; } = new List<Discrepancy>();
+    public ICollection<WalletAdjustment> WalletAdjustments { get; set; } = new List<WalletAdjustment>();
 }

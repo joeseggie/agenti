@@ -8,7 +8,9 @@ namespace EastSeat.Agenti.Web.Features.CashSessions;
 /// <summary>
 /// Service implementation for cash session operations (branch-level sessions).
 /// </summary>
-public class CashSessionService(ApplicationDbContext dbContext, TelemetryClient? telemetryClient = null) : ICashSessionService
+public class CashSessionService(
+    ApplicationDbContext dbContext,
+    TelemetryClient? telemetryClient = null) : ICashSessionService
 {
     /// <inheritdoc />
     public async Task<List<CashSessionListItemDto>> GetCashSessionsAsync(long? branchId = null)
@@ -92,6 +94,22 @@ public class CashSessionService(ApplicationDbContext dbContext, TelemetryClient?
             .GroupBy(c => c.AgentId)
             .ToList();
 
+        // Load wallet adjustment totals for all session agents in a single query
+        var agentIds = agentGroups.Select(g => g.Key).ToList();
+        var rawAdjustments = agentIds.Count == 0
+            ? []
+            : await dbContext.WalletAdjustments
+                .Where(wa => wa.CashSessionId == sessionId &&
+                             agentIds.Contains(wa.AgentId) &&
+                             wa.Status == WalletAdjustmentStatus.Approved)
+                .Select(wa => new { wa.AgentId, wa.Amount })
+                .ToListAsync();
+
+        var adjustmentsByAgent = rawAdjustments
+            .GroupBy(a => a.AgentId)
+            .Where(g => g.Sum(a => a.Amount) > 0)
+            .ToDictionary(g => g.Key, g => g.Sum(a => a.Amount));
+
         var agentSummaries = agentGroups.Select(g =>
         {
             var agent = g.First().Agent;
@@ -106,7 +124,8 @@ public class CashSessionService(ApplicationDbContext dbContext, TelemetryClient?
                     : "Unknown",
                 AgentCode = agent?.Code ?? "N/A",
                 OpeningCount = openingCount != null ? MapToCountSummary(openingCount) : null,
-                ClosingCount = closingCount != null ? MapToCountSummary(closingCount) : null
+                ClosingCount = closingCount != null ? MapToCountSummary(closingCount) : null,
+                TotalAdjustments = adjustmentsByAgent.GetValueOrDefault(g.Key, 0)
             };
         }).OrderBy(a => a.AgentName).ToList();
 

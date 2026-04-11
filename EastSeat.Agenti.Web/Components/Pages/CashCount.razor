@@ -3,11 +3,14 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using EastSeat.Agenti.Web.Features.CashCounts
 @using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Web.Features.WalletAdjustments
 @attribute [Authorize]
 @rendermode InteractiveServer
 @inject ICashCountService CashCountService
+@inject IWalletAdjustmentService WalletAdjustmentService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ISnackbar Snackbar
+@inject IDialogService DialogService
 
 <PageTitle>Cash Count - Agenti</PageTitle>
 
@@ -106,8 +109,61 @@
                     StartIcon="@Icons.Material.Filled.NightsStay">
                     @(_currentSession?.ClosingCountStatus == CashCountStatus.Rejected ? "Revise Closing Count" : "Start Closing Count")
                 </MudButton>
+
+                @if (_currentSession?.CanRecordAdjustment == true)
+                {
+                    <MudDivider Vertical="true" FlexItem="true" />
+
+                    <MudButton Variant="Variant.Outlined" Color="Color.Warning" Size="Size.Medium"
+                        OnClick="OpenAdjustmentDialog"
+                        StartIcon="@Icons.Material.Filled.RemoveCircleOutline">
+                        Record Wallet Adjustment
+                    </MudButton>
+                }
             </MudStack>
         </MudPaper>
+
+        @* Wallet Adjustments Summary *@
+        @if (_adjustments.Count > 0)
+        {
+            <MudPaper Class="mt-4 pa-3" Elevation="1">
+                <MudText Typo="Typo.subtitle1" Class="mb-2">
+                    Wallet Adjustments
+                    <MudChip T="string" Size="Size.Small" Color="Color.Warning">
+                        UGX @_currentSession?.TotalAdjustments.ToString("N0")
+                    </MudChip>
+                </MudText>
+                <MudSimpleTable Dense="true" Hover="true" Striped="true">
+                    <thead>
+                        <tr>
+                            <th>Wallet</th>
+                            <th>Reason</th>
+                            <th style="text-align: right;">Amount (UGX)</th>
+                            <th>Status</th>
+                            <th>Notes</th>
+                            <th>Recorded</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var adj in _adjustments)
+                        {
+                            <tr>
+                                <td>@adj.WalletName</td>
+                                <td>@adj.ReasonDisplay</td>
+                                <td style="text-align: right;">@adj.Amount.ToString("N0")</td>
+                                <td>
+                                    <MudChip T="string" Size="Size.Small" Color="@GetAdjustmentStatusColor(adj.Status)">
+                                        @adj.StatusDisplay
+                                    </MudChip>
+                                </td>
+                                <td>@(adj.RejectionReason ?? adj.Notes ?? "—")</td>
+                                <td>@adj.CreatedAt.ToLocalTime().ToString("HH:mm")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            </MudPaper>
+        }
     }
     else
     {
@@ -311,6 +367,7 @@
 @code {
     private CurrentSessionDto? _currentSession;
     private CashCountFormModel? _countForm;
+    private List<WalletAdjustmentDto> _adjustments = [];
     private bool _isLoading = true;
     private bool _isSaving = false;
     private bool _isCountingMode = false;
@@ -334,11 +391,37 @@
         try
         {
             _currentSession = await CashCountService.GetCurrentSessionAsync(_userId);
+            _adjustments = await WalletAdjustmentService.GetAdjustmentsForAgentAsync(_userId);
         }
         finally
         {
             _isLoading = false;
             StateHasChanged();
+        }
+    }
+
+    private async Task OpenAdjustmentDialog()
+    {
+        var parameters = new DialogParameters<RecordWalletAdjustmentDialog>
+        {
+            { x => x.UserId, _userId! }
+        };
+
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Small,
+            FullWidth = true,
+            CloseOnEscapeKey = true
+        };
+
+        var dialog = await DialogService.ShowAsync<RecordWalletAdjustmentDialog>(
+            "Record Wallet Adjustment", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is { Canceled: false })
+        {
+            Snackbar.Add("Wallet adjustment recorded.", Severity.Success);
+            await LoadDataAsync();
         }
     }
 
@@ -478,5 +561,13 @@
         CashCountStatus.PendingApproval => "Pending Approval",
         CashCountStatus.Approved => "Approved",
         CashCountStatus.Rejected => "Rejected"
+    };
+
+    private static Color GetAdjustmentStatusColor(WalletAdjustmentStatus status) => status switch
+    {
+        WalletAdjustmentStatus.Pending => Color.Warning,
+        WalletAdjustmentStatus.Approved => Color.Success,
+        WalletAdjustmentStatus.Rejected => Color.Error,
+        _ => Color.Default
     };
 }
