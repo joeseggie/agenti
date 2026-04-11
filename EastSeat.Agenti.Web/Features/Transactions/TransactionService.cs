@@ -135,29 +135,41 @@ public class TransactionService(
             return TransactionFlagResult.Error("Transaction does not belong to this agent.");
         }
 
-        // Check for an existing active flag on this transaction
-        var existingActiveFlag = await dbContext.TransactionFlags
-            .AnyAsync(f => f.TransactionId == form.TransactionId &&
-                           f.Status != TransactionFlagStatus.Dismissed &&
-                           f.Status != TransactionFlagStatus.Resolved);
+        TransactionFlag flag;
 
-        if (existingActiveFlag)
+        try
+        {
+            await using var transactionScope = await dbContext.Database
+                .BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+
+            // Check for an existing active flag on this transaction within the transaction
+            var existingActiveFlag = await dbContext.TransactionFlags
+                .AnyAsync(f => f.TransactionId == form.TransactionId &&
+                               f.Status != TransactionFlagStatus.Dismissed &&
+                               f.Status != TransactionFlagStatus.Resolved);
+
+            if (existingActiveFlag)
+            {
+                return TransactionFlagResult.Error("This transaction already has an active flag pending review.");
+            }
+
+            flag = new TransactionFlag
+            {
+                TransactionId = form.TransactionId,
+                FlaggedByUserId = userId,
+                FlaggedAt = DateTimeOffset.UtcNow,
+                Reason = form.Reason.Trim(),
+                Status = TransactionFlagStatus.PendingReview
+            };
+
+            dbContext.TransactionFlags.Add(flag);
+            await dbContext.SaveChangesAsync();
+            await transactionScope.CommitAsync();
+        }
+        catch (DbUpdateException)
         {
             return TransactionFlagResult.Error("This transaction already has an active flag pending review.");
         }
-
-        var flag = new TransactionFlag
-        {
-            TransactionId = form.TransactionId,
-            FlaggedByUserId = userId,
-            FlaggedAt = DateTimeOffset.UtcNow,
-            Reason = form.Reason.Trim(),
-            Status = TransactionFlagStatus.PendingReview
-        };
-
-        dbContext.TransactionFlags.Add(flag);
-        await dbContext.SaveChangesAsync();
-
         // Notify branch admins/supervisors
         var agentName = agent.User != null
             ? $"{agent.User.FirstName} {agent.User.LastName}".Trim()
