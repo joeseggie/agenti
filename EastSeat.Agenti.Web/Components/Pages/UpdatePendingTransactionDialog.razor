@@ -1,0 +1,219 @@
+@using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Web.Features.PendingTransactions
+@inject IPendingTransactionService PendingTransactionService
+@inject IWebHostEnvironment WebHostEnvironment
+
+<MudDialog>
+    <DialogContent>
+        @if (Item != null)
+        {
+            <MudStack Spacing="3">
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true">
+                    <strong>@Item.TypeDisplay</strong> — UGX @Item.Amount.ToString("N0") from @Item.WalletName
+                    @if (!string.IsNullOrWhiteSpace(Item.CustomerAccountNumber))
+                    {
+                        <span> to @Item.CustomerAccountNumber</span>
+                    }
+                </MudAlert>
+
+                <MudSelect T="PendingTransactionStatus?" @bind-Value="_newStatus" Label="Update Status"
+                    Variant="Variant.Outlined" Clearable="true" HelperText="Leave blank to keep current status">
+                    @if (Item.Status == PendingTransactionStatus.Open)
+                    {
+                        <MudSelectItem T="PendingTransactionStatus?" Value="@((PendingTransactionStatus?)PendingTransactionStatus.ReportedToBank)">
+                            Reported to Bank
+                        </MudSelectItem>
+                        <MudSelectItem T="PendingTransactionStatus?" Value="@((PendingTransactionStatus?)PendingTransactionStatus.Resolved)">
+                            Resolved
+                        </MudSelectItem>
+                        <MudSelectItem T="PendingTransactionStatus?" Value="@((PendingTransactionStatus?)PendingTransactionStatus.Cancelled)">
+                            Cancelled
+                        </MudSelectItem>
+                    }
+                    else if (Item.Status == PendingTransactionStatus.ReportedToBank)
+                    {
+                        <MudSelectItem T="PendingTransactionStatus?" Value="@((PendingTransactionStatus?)PendingTransactionStatus.Resolved)">
+                            Resolved
+                        </MudSelectItem>
+                        <MudSelectItem T="PendingTransactionStatus?" Value="@((PendingTransactionStatus?)PendingTransactionStatus.Cancelled)">
+                            Cancelled
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+
+                <MudTextField @bind-Value="_ticketNumber" Label="Ticket Number"
+                    Variant="Variant.Outlined"
+                    HelperText="Incident ticket number from the bank's customer service centre"
+                    Required="@(_newStatus == PendingTransactionStatus.ReportedToBank)"
+                    RequiredError="Ticket number is required when reporting to the bank" />
+
+                <MudStack>
+                    <MudText Typo="Typo.body2">Receipt Photo</MudText>
+                    <InputFile id="receiptUpload" OnChange="HandleFileSelected" accept="image/*" style="display:none" />
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                            OnClick="@(() => { })" HtmlTag="label" For="receiptUpload">
+                            <MudIcon Icon="@Icons.Material.Filled.Upload" Class="mr-1" Size="Size.Small" />
+                            Upload Receipt
+                        </MudButton>
+                        @if (!string.IsNullOrEmpty(_selectedFileName))
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Success">@_selectedFileName</MudText>
+                        }
+                        else if (!string.IsNullOrEmpty(Item.ReceiptPhotoPath))
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                <MudIcon Icon="@Icons.Material.Filled.AttachFile" Size="Size.Small" /> Already uploaded
+                            </MudText>
+                        }
+                    </MudStack>
+                    @if (_uploadError != null)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">@_uploadError</MudText>
+                    }
+                </MudStack>
+
+                <MudTextField @bind-Value="_notes" Label="Additional Notes" Variant="Variant.Outlined"
+                    Lines="2" HelperText="Optional additional notes to append" />
+
+                @if (_newStatus is PendingTransactionStatus.Resolved or PendingTransactionStatus.Cancelled)
+                {
+                    <MudTextField @bind-Value="_resolutionNotes" Label="Resolution Notes"
+                        Variant="Variant.Outlined" Lines="3"
+                        Required="true"
+                        RequiredError="Resolution notes are required (minimum 10 characters)"
+                        HelperText="Required: describe the resolution or reason for cancellation (minimum 10 characters)" />
+                }
+
+                @if (!string.IsNullOrEmpty(_errorMessage))
+                {
+                    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_errorMessage</MudAlert>
+                }
+            </MudStack>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="_isSaving">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit"
+            Disabled="@(!HasChanges || _isSaving)">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Save Changes
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter]
+    public PendingTransactionDto? Item { get; set; }
+
+    [Parameter]
+    public string UserId { get; set; } = string.Empty;
+
+    private PendingTransactionStatus? _newStatus;
+    private string? _ticketNumber;
+    private string? _notes;
+    private string? _resolutionNotes;
+    private string? _selectedFileName;
+    private string? _savedReceiptPath;
+    private string? _uploadError;
+    private bool _isSaving = false;
+    private string? _errorMessage;
+
+    private const long MaxFileSize = 5 * 1024 * 1024; // 5 MB
+
+    private bool HasChanges =>
+        _newStatus.HasValue ||
+        !string.IsNullOrWhiteSpace(_ticketNumber) ||
+        !string.IsNullOrWhiteSpace(_notes) ||
+        !string.IsNullOrWhiteSpace(_savedReceiptPath);
+
+    protected override void OnParametersSet()
+    {
+        if (Item != null)
+        {
+            _ticketNumber = Item.TicketNumber;
+        }
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        _uploadError = null;
+        var file = e.File;
+
+        if (file.Size > MaxFileSize)
+        {
+            _uploadError = "File size must not exceed 5 MB.";
+            return;
+        }
+
+        var allowedTypes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp" };
+        if (!allowedTypes.Contains(file.ContentType))
+        {
+            _uploadError = "Only image files (JPEG, PNG, GIF, WebP) are accepted.";
+            return;
+        }
+
+        try
+        {
+            var uploadsDir = Path.Combine(WebHostEnvironment.WebRootPath, "uploads", "pending-transactions");
+            Directory.CreateDirectory(uploadsDir);
+
+            var ext = Path.GetExtension(file.Name);
+            var fileName = $"{Guid.NewGuid():N}{ext}";
+            var filePath = Path.Combine(uploadsDir, fileName);
+
+            await using var stream = file.OpenReadStream(MaxFileSize);
+            await using var fileStream = File.Create(filePath);
+            await stream.CopyToAsync(fileStream);
+
+            _savedReceiptPath = $"uploads/pending-transactions/{fileName}";
+            _selectedFileName = file.Name;
+        }
+        catch
+        {
+            _uploadError = "Failed to upload the file. Please try again.";
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Submit()
+    {
+        _isSaving = true;
+        _errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var update = new PendingTransactionUpdateModel
+            {
+                TicketNumber = string.IsNullOrWhiteSpace(_ticketNumber) ? null : _ticketNumber.Trim(),
+                ReceiptPhotoPath = _savedReceiptPath,
+                Notes = string.IsNullOrWhiteSpace(_notes) ? null : _notes.Trim(),
+                NewStatus = _newStatus,
+                ResolutionNotes = string.IsNullOrWhiteSpace(_resolutionNotes) ? null : _resolutionNotes.Trim()
+            };
+
+            var result = await PendingTransactionService.UpdatePendingTransactionAsync(UserId, Item!.Id, update);
+            if (result.Success)
+            {
+                MudDialog.Close(DialogResult.Ok(result.PendingTransactionId));
+            }
+            else
+            {
+                _errorMessage = result.ErrorMessage;
+            }
+        }
+        finally
+        {
+            _isSaving = false;
+            StateHasChanged();
+        }
+    }
+}

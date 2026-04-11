@@ -11,6 +11,9 @@
                 <MudNavLink Href="cashcount" Icon="@Icons.Material.Filled.AccountBalanceWallet">
                     Cash Count
                 </MudNavLink>
+                <MudNavLink Href="pending-transactions" Icon="@Icons.Material.Filled.PendingActions">
+                    Pending Transactions
+                </MudNavLink>
                 <AuthorizeView Roles="Admin,Supervisor">
                     <Authorized Context="sessionCtx">
                         <MudNavLink Href="cashsessions" Icon="@Icons.Material.Filled.EventNote">
