@@ -923,6 +923,27 @@ public class CashCountService(
                 discrepancy.ApprovedByUserId = isAutoApproval ? null : userId;
                 discrepancy.ApprovedAt = DateTimeOffset.UtcNow;
                 discrepancy.ApprovalNotes = isAutoApproval ? "Auto-approved (closing matches opening)" : null;
+
+                // Create audit-only vault transaction for surplus (closing > opening)
+                if (discrepancy.Variance > 0)
+                {
+                    var vault = await dbContext.Vaults.FirstOrDefaultAsync(v => v.BranchId == branchId);
+                    if (vault != null)
+                    {
+                        dbContext.VaultTransactions.Add(new VaultTransaction
+                        {
+                            VaultId = vault.Id,
+                            CashSessionId = cashCount.CashSessionId,
+                            Amount = discrepancy.Variance,
+                            Type = VaultTransactionType.SurplusDeposit,
+                            Status = VaultTransactionStatus.Completed,
+                            BalanceAfter = null,
+                            CreatedAt = DateTimeOffset.UtcNow,
+                            CreatedByUserId = userId,
+                            Notes = $"Surplus of UGX {discrepancy.Variance:N0} on closing count (expected {discrepancy.ExpectedAmount:N0}, actual {discrepancy.ActualAmount:N0})"
+                        });
+                    }
+                }
             }
 
             await dbContext.SaveChangesAsync();

@@ -795,4 +795,223 @@ public class CashCountServiceTests : IDisposable
     }
 
     #endregion
+
+    #region Surplus Scenarios
+
+    [Fact]
+    public async Task SubmitCashCountAsync_ClosingWithSurplus_CreatesDiscrepancyWithPositiveVariance()
+    {
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var openingCount = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .Build();
+        _dbContext.CashCounts.Add(openingCount);
+        await _dbContext.SaveChangesAsync();
+
+        var closingCount = CashCountBuilder.Default()
+            .WithId(2)
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsClosing()
+            .WithStatus(CashCountStatus.Draft)
+            .WithTotalAmount(1200m) // Surplus: 200 more than opening
+            .WithExplanation("Customer returned excess change")
+            .Build();
+        _dbContext.CashCounts.Add(closingCount);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.SubmitCashCountAsync(_testUser.Id, closingCount.Id);
+
+        result.Success.Should().BeTrue();
+
+        var discrepancy = await _dbContext.Discrepancies
+            .FirstOrDefaultAsync(d => d.CashCountId == closingCount.Id);
+        discrepancy.Should().NotBeNull();
+        discrepancy!.Variance.Should().Be(200m);
+        discrepancy.ExpectedAmount.Should().Be(1000m);
+        discrepancy.ActualAmount.Should().Be(1200m);
+        discrepancy.Status.Should().Be(DiscrepancyStatus.PendingReview);
+    }
+
+    [Fact]
+    public async Task SubmitCashCountAsync_ClosingWithSurplus_RequiresExplanation()
+    {
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var openingCount = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .Build();
+        _dbContext.CashCounts.Add(openingCount);
+        await _dbContext.SaveChangesAsync();
+
+        var closingCount = CashCountBuilder.Default()
+            .WithId(2)
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsClosing()
+            .WithStatus(CashCountStatus.Draft)
+            .WithTotalAmount(1200m) // Surplus without explanation
+            .Build();
+        _dbContext.CashCounts.Add(closingCount);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.SubmitCashCountAsync(_testUser.Id, closingCount.Id);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("explanation");
+    }
+
+    [Fact]
+    public async Task ApproveCashCountAsync_ClosingWithSurplus_CreatesSurplusVaultTransaction()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+        await _dbContext.SaveChangesAsync();
+
+        // Use the auto-created vault (created when _testBranch was added)
+        var vault = await _dbContext.Vaults.FirstAsync(v => v.BranchId == _testBranch.Id);
+
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var closingCount = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsClosing()
+            .AsSubmitted()
+            .WithTotalAmount(1200m)
+            .Build();
+        _dbContext.CashCounts.Add(closingCount);
+
+        var detail = CashCountDetailBuilder.Default()
+            .WithCashCountId(closingCount.Id)
+            .WithWalletId(_testWallet.Id)
+            .WithAmount(1200m)
+            .Build();
+        _dbContext.CashCountDetails.Add(detail);
+
+        // Create a pending discrepancy with positive variance (surplus)
+        var discrepancy = new Discrepancy
+        {
+            CashSessionId = session.Id,
+            CashCountId = closingCount.Id,
+            Status = DiscrepancyStatus.PendingReview,
+            ExpectedAmount = 1000m,
+            ActualAmount = 1200m,
+            Variance = 200m,
+            Explanation = "Customer returned excess change",
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.Discrepancies.Add(discrepancy);
+        await _dbContext.SaveChangesAsync();
+
+        _vaultServiceMock
+            .Setup(x => x.DepositForSessionAsync(
+                It.IsAny<long>(), It.IsAny<long>(), It.IsAny<decimal>(),
+                It.IsAny<string>(), false, default))
+            .ReturnsAsync(VaultOperationResult.Ok(1));
+
+        var result = await _sut.ApproveCashCountAsync(adminUser.Id, closingCount.Id);
+
+        result.Success.Should().BeTrue();
+
+        var surplusTransaction = await _dbContext.VaultTransactions
+            .FirstOrDefaultAsync(vt => vt.Type == VaultTransactionType.SurplusDeposit);
+        surplusTransaction.Should().NotBeNull();
+        surplusTransaction!.Amount.Should().Be(200m);
+        surplusTransaction.VaultId.Should().Be(vault.Id);
+        surplusTransaction.Status.Should().Be(VaultTransactionStatus.Completed);
+        surplusTransaction.Notes.Should().Contain("Surplus");
+    }
+
+    [Fact]
+    public async Task ApproveCashCountAsync_ClosingWithShortage_DoesNotCreateSurplusTransaction()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+        await _dbContext.SaveChangesAsync();
+
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var closingCount = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsClosing()
+            .AsSubmitted()
+            .WithTotalAmount(800m)
+            .Build();
+        _dbContext.CashCounts.Add(closingCount);
+
+        var detail = CashCountDetailBuilder.Default()
+            .WithCashCountId(closingCount.Id)
+            .WithWalletId(_testWallet.Id)
+            .WithAmount(800m)
+            .Build();
+        _dbContext.CashCountDetails.Add(detail);
+
+        // Create a pending discrepancy with negative variance (shortage)
+        var discrepancy = new Discrepancy
+        {
+            CashSessionId = session.Id,
+            CashCountId = closingCount.Id,
+            Status = DiscrepancyStatus.PendingReview,
+            ExpectedAmount = 1000m,
+            ActualAmount = 800m,
+            Variance = -200m,
+            Explanation = "Cash was lost during the day",
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.Discrepancies.Add(discrepancy);
+        await _dbContext.SaveChangesAsync();
+
+        _vaultServiceMock
+            .Setup(x => x.DepositForSessionAsync(
+                It.IsAny<long>(), It.IsAny<long>(), It.IsAny<decimal>(),
+                It.IsAny<string>(), false, default))
+            .ReturnsAsync(VaultOperationResult.Ok(1));
+
+        var result = await _sut.ApproveCashCountAsync(adminUser.Id, closingCount.Id);
+
+        result.Success.Should().BeTrue();
+
+        var surplusTransaction = await _dbContext.VaultTransactions
+            .FirstOrDefaultAsync(vt => vt.Type == VaultTransactionType.SurplusDeposit);
+        surplusTransaction.Should().BeNull();
+    }
+
+    #endregion
 }

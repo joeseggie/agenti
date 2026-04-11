@@ -85,8 +85,8 @@
                                     </MudTd>
                                     <MudTd DataLabel="Amount">
                                         <MudText
-                                            Color="@(trx.Type == VaultTransactionType.ManualDeposit ? Color.Success : Color.Error)">
-                                            @(trx.Type == VaultTransactionType.ManualDeposit ? "+" :
+                                            Color="@(trx.Type == VaultTransactionType.ManualDeposit || trx.Type == VaultTransactionType.SurplusDeposit ? Color.Success : Color.Error)">
+                                            @(trx.Type == VaultTransactionType.ManualDeposit || trx.Type == VaultTransactionType.SurplusDeposit ? "+" :
                                                                                 "-")UGX @trx.Amount.ToString("N0")
                                         </MudText>
                                     </MudTd>
@@ -169,8 +169,8 @@
                             </MudTd>
                             <MudTd DataLabel="Amount">
                                 <MudText
-                                    Color="@(trx.Type == VaultTransactionType.ManualDeposit || trx.Type == VaultTransactionType.Closing ? Color.Success : Color.Error)">
-                                    @(trx.Type == VaultTransactionType.ManualDeposit || trx.Type == VaultTransactionType.Closing
+                                    Color="@(trx.Type == VaultTransactionType.ManualDeposit || trx.Type == VaultTransactionType.Closing || trx.Type == VaultTransactionType.SurplusDeposit ? Color.Success : Color.Error)">
+                                    @(trx.Type == VaultTransactionType.ManualDeposit || trx.Type == VaultTransactionType.Closing || trx.Type == VaultTransactionType.SurplusDeposit
                                                                 ? "+" : "-")UGX @trx.Amount.ToString("N0")
                                 </MudText>
                             </MudTd>
@@ -325,6 +325,7 @@
         VaultTransactionType.Closing => Color.Info,
         VaultTransactionType.ManualDeposit => Color.Success,
         VaultTransactionType.ManualWithdrawal => Color.Error,
+        VaultTransactionType.SurplusDeposit => Color.Success,
         _ => Color.Default
     };
 
@@ -334,6 +335,7 @@
         VaultTransactionType.Closing => Icons.Material.Filled.Output,
         VaultTransactionType.ManualDeposit => Icons.Material.Filled.AddCircle,
         VaultTransactionType.ManualWithdrawal => Icons.Material.Filled.RemoveCircle,
+        VaultTransactionType.SurplusDeposit => Icons.Material.Filled.TrendingUp,
         _ => Icons.Material.Filled.Help
     };
 
@@ -343,6 +345,7 @@
         VaultTransactionType.Closing => "Closing",
         VaultTransactionType.ManualDeposit => "Deposit",
         VaultTransactionType.ManualWithdrawal => "Withdrawal",
+        VaultTransactionType.SurplusDeposit => "Surplus",
         _ => "Unknown"
     };
 

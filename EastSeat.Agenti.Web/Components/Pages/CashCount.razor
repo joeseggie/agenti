@@ -273,8 +273,8 @@
                     @if (!_countForm.IsOpening)
                     {
                         <MudTh Style="text-align: right;">
-                            <MudText Color="@(_countForm.TotalVariance == 0 ? Color.Success : Color.Warning)">
-                                <strong>@_countForm.TotalVariance.ToString("N0")</strong>
+                            <MudText Color="@(_countForm.TotalVariance == 0 ? Color.Success : (_countForm.TotalVariance > 0 ? Color.Info : Color.Warning))">
+                                <strong>@(_countForm.TotalVariance > 0 ? "+" : "")@_countForm.TotalVariance.ToString("N0")</strong>
                             </MudText>
                         </MudTh>
                     }
@@ -285,7 +285,8 @@
             <!-- Explanation field for closing counts with discrepancy -->
             @if (!_countForm.IsOpening && _countForm.TotalVariance != 0)
             {
-                <MudTextField @bind-Value="_countForm.Explanation" Label="Explanation for discrepancy"
+                <MudTextField @bind-Value="_countForm.Explanation"
+                    Label="@(_countForm.TotalVariance > 0 ? "Explanation for surplus" : "Explanation for shortage")"
                     Variant="Variant.Outlined" Lines="3" Class="mt-3"
                     HelperText="Required: explain the difference between opening and closing amounts"
                     Required="true" RequiredError="Explanation is required when there is a discrepancy" />

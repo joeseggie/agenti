@@ -111,7 +111,14 @@
                             <MudText Typo="Typo.caption" Color="Color.Secondary">(@agent.AgentCode)</MudText>
                             @if (agent.HasDiscrepancy)
                             {
-                                <MudChip T="string" Size="Size.Small" Color="Color.Warning">Discrepancy</MudChip>
+                                @if (agent.Variance.HasValue && agent.Variance.Value > 0)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Info">Surplus</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning">Shortage</MudChip>
+                                }
                             }
                         </MudStack>
                     </CardHeaderContent>
@@ -180,8 +187,8 @@
                                 <MudText Typo="Typo.body1" Class="mt-1">UGX @agent.ClosingCount.TotalAmount.ToString("N0")</MudText>
                                 @if (agent.Variance.HasValue && agent.Variance.Value != 0)
                                 {
-                                    <MudText Typo="Typo.body2" Color="Color.Warning" Class="mt-1">
-                                        Variance: UGX @agent.Variance.Value.ToString("N0")
+                                    <MudText Typo="Typo.body2" Color="@(agent.Variance.Value > 0 ? Color.Info : Color.Warning)" Class="mt-1">
+                                        @(agent.Variance.Value > 0 ? "Surplus" : "Shortage"): UGX @(agent.Variance.Value > 0 ? "+" : "")@agent.Variance.Value.ToString("N0")
                                     </MudText>
                                 }
                                 @if (!string.IsNullOrEmpty(agent.ClosingCount.Explanation))

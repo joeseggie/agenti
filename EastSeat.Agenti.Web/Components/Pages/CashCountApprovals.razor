@@ -74,8 +74,8 @@
                 <MudTd DataLabel="Variance" Style="text-align: right;">
                     @if (context.HasDiscrepancy && context.Variance.HasValue)
                     {
-                        <MudText Typo="Typo.body2" Color="Color.Warning">
-                            @context.Variance.Value.ToString("N0")
+                        <MudText Typo="Typo.body2" Color="@(context.Variance.Value > 0 ? Color.Info : Color.Warning)">
+                            @(context.Variance.Value > 0 ? "+" : "")@context.Variance.Value.ToString("N0")
                         </MudText>
                     }
                     else if (!context.IsOpening && context.OpeningTotal.HasValue)
@@ -107,8 +107,9 @@
 
         @foreach (var item in _pending.Where(p => !string.IsNullOrEmpty(p.Explanation)))
         {
-            <MudAlert Severity="Severity.Warning" Variant="Variant.Text" Class="mt-2" Dense="true">
-                <strong>@item.AgentName (@(item.IsOpening ? "Opening" : "Closing")):</strong> @item.Explanation
+            var isSurplus = item.Variance.HasValue && item.Variance.Value > 0;
+            <MudAlert Severity="@(isSurplus ? Severity.Info : Severity.Warning)" Variant="Variant.Text" Class="mt-2" Dense="true">
+                <strong>@item.AgentName (@(item.IsOpening ? "Opening" : "Closing") — @(isSurplus ? "Surplus" : "Shortage") @(item.Variance.HasValue ? $"UGX {Math.Abs(item.Variance.Value):N0}" : "")):</strong> @item.Explanation
             </MudAlert>
         }
     }
