@@ -69,6 +69,13 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                 name: "IX_TransactionFlags_TransactionId_FlaggedByUserId",
                 table: "TransactionFlags",
                 columns: new[] { "TransactionId", "FlaggedByUserId" });
+
+            migrationBuilder.CreateIndex(
+                name: "UX_TransactionFlags_TransactionId_Active",
+                table: "TransactionFlags",
+                column: "TransactionId",
+                unique: true,
+                filter: "\"Status\" IN ('PendingReview', 'UnderInvestigation')");
         }
 
         /// <inheritdoc />
