@@ -937,7 +937,7 @@ public class CashCountService(
                             Amount = discrepancy.Variance,
                             Type = VaultTransactionType.SurplusDeposit,
                             Status = VaultTransactionStatus.Completed,
-                            BalanceAfter = null,
+                            BalanceAfter = vault.CurrentBalance,
                             CreatedAt = DateTimeOffset.UtcNow,
                             CreatedByUserId = userId,
                             Notes = $"Surplus of UGX {discrepancy.Variance:N0} on closing count (expected {discrepancy.ExpectedAmount:N0}, actual {discrepancy.ActualAmount:N0})"
