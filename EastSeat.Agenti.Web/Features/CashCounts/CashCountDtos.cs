@@ -14,9 +14,6 @@ public class WalletCountEntryDto
     public decimal ExpectedBalance { get; set; }
     public decimal CountedAmount { get; set; }
     public DenominationBreakdown? Denominations { get; set; }
-
-    public decimal Variance => CountedAmount - ExpectedBalance;
-    public bool HasDiscrepancy => Variance != 0;
 }
 
 /// <summary>

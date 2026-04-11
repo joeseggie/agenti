@@ -196,10 +196,6 @@
                         <MudTh Style="text-align: right;">Expected (UGX)</MudTh>
                     }
                     <MudTh Style="text-align: right;">Counted (UGX)</MudTh>
-                    @if (!_countForm.IsOpening)
-                    {
-                        <MudTh Style="text-align: right;">Variance</MudTh>
-                    }
                     <MudTh Style="width: 50px;"></MudTh>
                 </HeaderContent>
                 <RowTemplate>
@@ -225,15 +221,6 @@
                                 Style="max-width: 160px; display: inline-flex;" HideSpinButtons="true" />
                         }
                     </MudTd>
-                    @if (!_countForm.IsOpening)
-                    {
-                        <MudTd DataLabel="Variance" Style="text-align: right;">
-                            <MudText Typo="Typo.body2"
-                                Color="@(context.Variance == 0 ? Color.Default : (context.Variance > 0 ? Color.Info : Color.Warning))">
-                                @context.Variance.ToString("N0")
-                            </MudText>
-                        </MudTd>
-                    }
                     <MudTd Style="text-align: center;">
                         @if (context.SupportsDenominations)
                         {
@@ -326,17 +313,22 @@
                     <MudTh Style="text-align: right;">
                         <strong>@_countForm.TotalAmount.ToString("N0")</strong>
                     </MudTh>
-                    @if (!_countForm.IsOpening)
-                    {
-                        <MudTh Style="text-align: right;">
-                            <MudText Color="@(_countForm.TotalVariance == 0 ? Color.Success : (_countForm.TotalVariance > 0 ? Color.Info : Color.Warning))">
-                                <strong>@(_countForm.TotalVariance > 0 ? "+" : "")@_countForm.TotalVariance.ToString("N0")</strong>
-                            </MudText>
-                        </MudTh>
-                    }
                     <MudTh></MudTh>
                 </FooterContent>
             </MudTable>
+
+            @if (!_countForm.IsOpening)
+            {
+                <MudPaper Class="pa-3 mt-2" Elevation="1">
+                    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                        <MudText Typo="Typo.subtitle1">Total Variance</MudText>
+                        <MudText Typo="Typo.h6"
+                            Color="@(_countForm.TotalVariance == 0 ? Color.Success : (_countForm.TotalVariance > 0 ? Color.Info : Color.Warning))">
+                            @(_countForm.TotalVariance > 0 ? "+" : "")@_countForm.TotalVariance.ToString("N0") UGX
+                        </MudText>
+                    </MudStack>
+                </MudPaper>
+            }
 
             <!-- Explanation field for closing counts with discrepancy -->
             @if (!_countForm.IsOpening && _countForm.TotalVariance != 0)
