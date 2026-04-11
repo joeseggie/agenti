@@ -256,7 +256,7 @@
         {
             _branchId = bid;
         }
-        _isAdmin = authState.User.IsInRole("Admin") || authState.User.IsInRole("Supervisor");
+        _isAdmin = authState.User.IsInRole(UserRole.Admin.ToString()) || authState.User.IsInRole(UserRole.Supervisor.ToString());
 
         await LoadAsync();
     }

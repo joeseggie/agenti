@@ -152,10 +152,31 @@
             return;
         }
 
-        var allowedTypes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp" };
-        if (!allowedTypes.Contains(file.ContentType))
+        var allowedTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "image/jpeg", ".jpg" },
+            { "image/png",  ".png" },
+            { "image/gif",  ".gif" },
+            { "image/webp", ".webp" }
+        };
+
+        if (!allowedTypes.TryGetValue(file.ContentType, out var safeExtension))
         {
             _uploadError = "Only image files (JPEG, PNG, GIF, WebP) are accepted.";
+            return;
+        }
+
+        // Validate magic bytes (file signatures) to confirm the file content matches the declared type
+        byte[] buffer = new byte[12];
+        int bytesRead;
+        await using (var headerStream = file.OpenReadStream(MaxFileSize))
+        {
+            bytesRead = await headerStream.ReadAsync(buffer);
+        }
+
+        if (!IsValidImageSignature(buffer, bytesRead, file.ContentType))
+        {
+            _uploadError = "File content does not match the declared image type.";
             return;
         }
 
@@ -164,8 +185,8 @@
             var uploadsDir = Path.Combine(WebHostEnvironment.WebRootPath, "uploads", "pending-transactions");
             Directory.CreateDirectory(uploadsDir);
 
-            var ext = Path.GetExtension(file.Name);
-            var fileName = $"{Guid.NewGuid():N}{ext}";
+            // Use a sanitized extension derived from the validated MIME type, not from user input
+            var fileName = $"{Guid.NewGuid():N}{safeExtension}";
             var filePath = Path.Combine(uploadsDir, fileName);
 
             await using var stream = file.OpenReadStream(MaxFileSize);
@@ -182,6 +203,25 @@
     }
 
     private void Cancel() => MudDialog.Cancel();
+
+    /// <summary>
+    /// Validates the file content using magic number (file signature) checks.
+    /// </summary>
+    private static bool IsValidImageSignature(byte[] header, int bytesRead, string contentType)
+    {
+        if (bytesRead < 4) return false;
+
+        return contentType switch
+        {
+            "image/jpeg" => header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF,
+            "image/png"  => header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47,
+            "image/gif"  => header[0] == 0x47 && header[1] == 0x49 && header[2] == 0x46,
+            "image/webp" => bytesRead >= 12 &&
+                            header[0] == 0x52 && header[1] == 0x49 && header[2] == 0x46 && header[3] == 0x46 &&
+                            header[8] == 0x57 && header[9] == 0x45 && header[10] == 0x42 && header[11] == 0x50,
+            _ => false
+        };
+    }
 
     private async Task Submit()
     {
