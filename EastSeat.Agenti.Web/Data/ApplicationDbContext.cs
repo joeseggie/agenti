@@ -383,7 +383,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.Property(e => e.CustomerAccountNumber).HasMaxLength(100);
             entity.Property(e => e.TicketNumber).HasMaxLength(100);
             entity.Property(e => e.ReceiptPhotoPath).HasMaxLength(500);
-            entity.Property(e => e.Notes).HasMaxLength(2000);
+            entity.Property(e => e.Notes).IsRequired().HasMaxLength(2000);
             entity.Property(e => e.ResolutionNotes).HasMaxLength(2000);
             entity.Property(e => e.RecordedByUserId).IsRequired().HasMaxLength(450);
 
