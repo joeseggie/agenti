@@ -5,8 +5,8 @@ using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.BankRuns;
 using EastSeat.Agenti.Web.Features.Notifications;
 using FluentAssertions;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Moq;
 
 namespace EastSeat.Agenti.UnitTests.Services;
@@ -15,6 +15,7 @@ namespace EastSeat.Agenti.UnitTests.Services;
 [Trait("Feature", "BankRun")]
 public class BankRunServiceTests : IDisposable
 {
+    private readonly SqliteConnection _connection;
     private readonly ApplicationDbContext _dbContext;
     private readonly Mock<INotificationService> _notificationServiceMock;
     private readonly BankRunService _sut;
@@ -29,12 +30,15 @@ public class BankRunServiceTests : IDisposable
 
     public BankRunServiceTests()
     {
+        _connection = new SqliteConnection("DataSource=:memory:");
+        _connection.Open();
+
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .ConfigureWarnings(x => x.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .UseSqlite(_connection)
             .Options;
 
         _dbContext = new ApplicationDbContext(options);
+        _dbContext.Database.EnsureCreated();
         _notificationServiceMock = new Mock<INotificationService>();
 
         _testBranch = new Branch { Id = 1, Name = "Test Branch", CreatedAt = DateTimeOffset.UtcNow };
@@ -54,27 +58,10 @@ public class BankRunServiceTests : IDisposable
         _dbContext.Agents.Add(_testAgent);
         _testUser.AgentId = _testAgent.Id;
 
-        _cashWalletType = new WalletType
-        {
-            Id = 1,
-            Name = "Cash",
-            Type = WalletTypeEnum.Cash,
-            IsActive = true,
-            SupportsDenominations = true,
-            CreatedAt = DateTimeOffset.UtcNow
-        };
-        _dbContext.WalletTypes.Add(_cashWalletType);
-
-        _bankWalletType = new WalletType
-        {
-            Id = 2,
-            Name = "ABSA Bank",
-            Type = WalletTypeEnum.Bank,
-            IsActive = true,
-            SupportsDenominations = false,
-            CreatedAt = DateTimeOffset.UtcNow
-        };
-        _dbContext.WalletTypes.Add(_bankWalletType);
+        // Wallet types are seeded by EnsureCreated; retrieve the ones we need.
+        // Cash = Id 1, Bank Account = Id 4 (per ApplicationDbContext seed data).
+        _cashWalletType = _dbContext.WalletTypes.Find(1L)!;
+        _bankWalletType = _dbContext.WalletTypes.Find(4L)!;
 
         _cashWallet = WalletBuilder.Default()
             .WithId(1)
@@ -111,8 +98,8 @@ public class BankRunServiceTests : IDisposable
 
     public void Dispose()
     {
-        _dbContext.Database.EnsureDeleted();
         _dbContext.Dispose();
+        _connection.Dispose();
     }
 
     private void SeedApprovedOpeningCount()
@@ -209,7 +196,7 @@ public class BankRunServiceTests : IDisposable
     {
         var userNoBranch = UserBuilder.Default().WithEmail("nobranch@test.com").Build();
         _dbContext.Users.Add(userNoBranch);
-        var agentNoBranch = AgentBuilder.Default().WithId(99).WithUserId(userNoBranch.Id).Build();
+        var agentNoBranch = AgentBuilder.Default().WithId(99).WithCode("NOBN").WithUserId(userNoBranch.Id).Build();
         // No BranchId set
         agentNoBranch.BranchId = null;
         _dbContext.Agents.Add(agentNoBranch);
@@ -408,10 +395,9 @@ public class BankRunServiceTests : IDisposable
     public async Task RecordBankRunAsync_ToWalletNotBankType_ReturnsError()
     {
         SeedApprovedOpeningCount();
-        // Create a mobile money wallet and try to bank to it
-        var mmType = new WalletType { Id = 3, Name = "MTN", Type = WalletTypeEnum.MobileMoney, IsActive = true, CreatedAt = DateTimeOffset.UtcNow };
-        _dbContext.WalletTypes.Add(mmType);
-        var mmWallet = WalletBuilder.Default().WithId(3).WithAgentId(_testAgent.Id).WithWalletTypeId(3).WithBalance(0m).Build();
+        // Use a seeded MobileMoney type (Id=2 MTN Mobile Money) for the wrong-type wallet
+        var mmType = _dbContext.WalletTypes.Find(2L)!;
+        var mmWallet = WalletBuilder.Default().WithId(3).WithAgentId(_testAgent.Id).WithWalletTypeId(mmType.Id).WithBalance(0m).Build();
         mmWallet.WalletType = mmType;
         _dbContext.Wallets.Add(mmWallet);
         await _dbContext.SaveChangesAsync();
@@ -529,14 +515,16 @@ public class BankRunServiceTests : IDisposable
     [Fact]
     public async Task GetBankRunsForSessionAsync_FilteredByAgentId_ReturnsOnlyAgentRuns()
     {
-        var otherAgent = AgentBuilder.Default().WithId(2).WithUserId("other-user").WithBranchId(_testBranch.Id).Build();
+        var otherUser = UserBuilder.Default().WithEmail("other@test.com").Build();
+        _dbContext.Users.Add(otherUser);
+        var otherAgent = AgentBuilder.Default().WithId(2).WithCode("OTHR").WithUserId(otherUser.Id).WithBranchId(_testBranch.Id).Build();
         _dbContext.Agents.Add(otherAgent);
         await _dbContext.SaveChangesAsync();
 
         var run1 = BankRunBuilder.Default().WithId(1).WithCashSessionId(_testSession.Id).WithAgentId(_testAgent.Id)
             .WithFromWalletId(_cashWallet.Id).WithToWalletId(_bankWallet.Id).WithRecordedByUserId(_testUser.Id).Build();
         var run2 = BankRunBuilder.Default().WithId(2).WithCashSessionId(_testSession.Id).WithAgentId(otherAgent.Id)
-            .WithFromWalletId(_cashWallet.Id).WithToWalletId(_bankWallet.Id).WithRecordedByUserId("other-user").Build();
+            .WithFromWalletId(_cashWallet.Id).WithToWalletId(_bankWallet.Id).WithRecordedByUserId(otherUser.Id).Build();
         _dbContext.BankRuns.AddRange(run1, run2);
         await _dbContext.SaveChangesAsync();
 
@@ -638,12 +626,14 @@ public class BankRunServiceTests : IDisposable
     [Fact]
     public async Task GetBankRunTotalsAsync_OnlyCountsForGivenAgent()
     {
-        var otherAgent = AgentBuilder.Default().WithId(2).WithUserId("other-user").WithBranchId(_testBranch.Id).Build();
+        var otherUser = UserBuilder.Default().WithEmail("other2@test.com").Build();
+        _dbContext.Users.Add(otherUser);
+        var otherAgent = AgentBuilder.Default().WithId(2).WithCode("OTHR").WithUserId(otherUser.Id).WithBranchId(_testBranch.Id).Build();
         _dbContext.Agents.Add(otherAgent);
 
         var run = BankRunBuilder.Default().WithId(1).WithCashSessionId(_testSession.Id).WithAgentId(otherAgent.Id)
             .WithFromWalletId(_cashWallet.Id).WithToWalletId(_bankWallet.Id).WithAmount(200_000m)
-            .WithRecordedByUserId("other-user").Build();
+            .WithRecordedByUserId(otherUser.Id).Build();
         _dbContext.BankRuns.Add(run);
         await _dbContext.SaveChangesAsync();
 
@@ -690,9 +680,9 @@ public class BankRunServiceTests : IDisposable
     [Fact]
     public async Task GetAgentWalletsAsync_ExcludesInactiveWallets()
     {
-        var inactiveWalletType = new WalletType { Id = 4, Name = "Inactive Bank", Type = WalletTypeEnum.Bank, IsActive = true, CreatedAt = DateTimeOffset.UtcNow };
+        var inactiveWalletType = new WalletType { Id = 100, Name = "Inactive Bank", Type = WalletTypeEnum.Bank, IsActive = true, CreatedAt = DateTimeOffset.UtcNow };
         _dbContext.WalletTypes.Add(inactiveWalletType);
-        var inactiveWallet = WalletBuilder.Default().WithId(4).WithAgentId(_testAgent.Id).WithWalletTypeId(4).IsInactive().Build();
+        var inactiveWallet = WalletBuilder.Default().WithId(4).WithAgentId(_testAgent.Id).WithWalletTypeId(100).IsInactive().Build();
         inactiveWallet.WalletType = inactiveWalletType;
         _dbContext.Wallets.Add(inactiveWallet);
         await _dbContext.SaveChangesAsync();

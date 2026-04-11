@@ -2,6 +2,7 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
 @using EastSeat.Agenti.Web.Features.BankRuns
+@using EastSeat.Agenti.Web.Features.CashCounts
 @using EastSeat.Agenti.Shared.Domain.Enums
 @attribute [Authorize]
 @rendermode InteractiveServer
@@ -119,6 +120,81 @@
                         <MudTextField Label="Notes" @bind-Value="_formModel.Notes"
                                       Lines="3" HelperText="Optional notes about this bank run." />
                     </MudItem>
+                    <MudItem xs="12">
+                        <MudButton StartIcon="@Icons.Material.Filled.ViewList" Variant="Variant.Text"
+                                   Color="Color.Default" Size="Size.Small"
+                                   OnClick="@(() => _showDenominations = !_showDenominations)">
+                            @(_showDenominations ? "Hide" : "Show") Denomination Breakdown (Optional)
+                        </MudButton>
+                    </MudItem>
+                    @if (_showDenominations)
+                    {
+                        <MudItem xs="12">
+                            <MudSimpleTable Dense="true" Hover="true">
+                                <thead>
+                                    <tr>
+                                        <th>Denomination</th>
+                                        <th style="text-align: right; width: 90px;">Qty</th>
+                                        <th style="text-align: right;">Subtotal (UGX)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td colspan="3"><strong>Notes</strong></td>
+                                    </tr>
+                                    @foreach (var denom in UgxDenominations.Notes)
+                                    {
+                                        var denomKey = denom.ToString();
+                                        var qty = _denominations.Notes[denomKey];
+                                        <tr>
+                                            <td>UGX @denom.ToString("N0")</td>
+                                            <td style="text-align: right;">
+                                                <MudNumericField T="int"
+                                                    Value="@qty"
+                                                    ValueChanged="@((int v) => OnDenomChanged(denomKey, v, true))"
+                                                    Min="0" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                    Style="max-width: 80px;" HideSpinButtons="true" />
+                                            </td>
+                                            <td style="text-align: right;">@((qty * denom).ToString("N0"))</td>
+                                        </tr>
+                                    }
+                                    <tr style="font-weight: 600;">
+                                        <td colspan="2">Notes Subtotal</td>
+                                        <td style="text-align: right;">@_denominations.NotesTotal.ToString("N0")</td>
+                                    </tr>
+                                    <tr>
+                                        <td colspan="3"><strong>Coins</strong></td>
+                                    </tr>
+                                    @foreach (var denom in UgxDenominations.Coins)
+                                    {
+                                        var denomKey = denom.ToString();
+                                        var qty = _denominations.Coins[denomKey];
+                                        <tr>
+                                            <td>UGX @denom.ToString("N0")</td>
+                                            <td style="text-align: right;">
+                                                <MudNumericField T="int"
+                                                    Value="@qty"
+                                                    ValueChanged="@((int v) => OnDenomChanged(denomKey, v, false))"
+                                                    Min="0" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                                    Style="max-width: 80px;" HideSpinButtons="true" />
+                                            </td>
+                                            <td style="text-align: right;">@((qty * denom).ToString("N0"))</td>
+                                        </tr>
+                                    }
+                                    <tr style="font-weight: 600;">
+                                        <td colspan="2">Coins Subtotal</td>
+                                        <td style="text-align: right;">@_denominations.CoinsTotal.ToString("N0")</td>
+                                    </tr>
+                                </tbody>
+                                <tfoot>
+                                    <tr style="font-weight: 700;">
+                                        <td colspan="2">Total</td>
+                                        <td style="text-align: right;">UGX @_denominations.Total.ToString("N0")</td>
+                                    </tr>
+                                </tfoot>
+                            </MudSimpleTable>
+                        </MudItem>
+                    }
                 </MudGrid>
             </MudForm>
             @if (!string.IsNullOrEmpty(_errorMessage))
@@ -148,6 +224,8 @@
     private MudForm? _form;
     private BankRunFormModel _formModel = new();
     private string? _userId;
+    private DenominationBreakdown _denominations = DenominationBreakdown.Empty;
+    private bool _showDenominations;
 
     // Wallets for the dropdowns (loaded from the service context via user wallets)
     private List<WalletEntry> _cashWallets = [];
@@ -155,7 +233,7 @@
 
     private readonly DialogOptions _dialogOptions = new()
     {
-        MaxWidth = MaxWidth.Small,
+        MaxWidth = MaxWidth.Medium,
         FullWidth = true,
         CloseOnEscapeKey = true
     };
@@ -188,6 +266,8 @@
     private async Task OpenRecordDialog()
     {
         _formModel = new BankRunFormModel();
+        _denominations = DenominationBreakdown.Empty;
+        _showDenominations = false;
         _errorMessage = null;
         await LoadWalletsAsync();
         _showDialog = true;
@@ -216,6 +296,20 @@
     {
         _showDialog = false;
         _errorMessage = null;
+    }
+
+    private void OnDenomChanged(string denomKey, int value, bool isNote)
+    {
+        if (isNote)
+            _denominations.Notes[denomKey] = value;
+        else
+            _denominations.Coins[denomKey] = value;
+
+        // Sync the amount and the JSON breakdown with the entered denominations
+        if (_denominations.Total > 0)
+            _formModel.Amount = _denominations.Total;
+
+        _formModel.Denominations = _denominations.ToJson();
     }
 
     private async Task SubmitBankRunAsync()
