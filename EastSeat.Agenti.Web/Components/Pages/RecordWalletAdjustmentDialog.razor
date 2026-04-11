@@ -1,0 +1,142 @@
+@using Microsoft.AspNetCore.Components
+@using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Web.Features.CashCounts
+@using EastSeat.Agenti.Web.Features.WalletAdjustments
+@inject IWalletAdjustmentService WalletAdjustmentService
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        @if (_isLoading)
+        {
+            <MudStack AlignItems="AlignItems.Center" Class="pa-4">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </MudStack>
+        }
+        else
+        {
+            <MudStack Spacing="3">
+                <MudSelect T="long" @bind-Value="_form.WalletId" Label="Wallet" Variant="Variant.Outlined"
+                    Required="true" RequiredError="Please select a wallet">
+                    @foreach (var wallet in _wallets)
+                    {
+                        <MudSelectItem T="long" Value="@wallet.WalletId">
+                            @wallet.WalletName (@wallet.WalletTypeName) — Balance: UGX @wallet.ExpectedBalance.ToString("N0")
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+
+                <MudSelect T="WalletAdjustmentReason" @bind-Value="_form.Reason" Label="Reason" Variant="Variant.Outlined"
+                    Required="true" RequiredError="Please select a reason">
+                    <MudSelectItem T="WalletAdjustmentReason" Value="WalletAdjustmentReason.BankShortage">
+                        Bank Shortage
+                    </MudSelectItem>
+                    <MudSelectItem T="WalletAdjustmentReason" Value="WalletAdjustmentReason.FakeNotes">
+                        Fake Notes Confiscated
+                    </MudSelectItem>
+                    <MudSelectItem T="WalletAdjustmentReason" Value="WalletAdjustmentReason.OwnerPayment">
+                        Owner Payment Request
+                    </MudSelectItem>
+                    <MudSelectItem T="WalletAdjustmentReason" Value="WalletAdjustmentReason.UnpaidCustomer">
+                        Unpaid Customer
+                    </MudSelectItem>
+                    <MudSelectItem T="WalletAdjustmentReason" Value="WalletAdjustmentReason.Other">
+                        Other
+                    </MudSelectItem>
+                </MudSelect>
+
+                <MudNumericField T="decimal" @bind-Value="_form.Amount" Label="Amount (UGX)"
+                    Variant="Variant.Outlined" Min="1" HideSpinButtons="true"
+                    Required="true" RequiredError="Amount is required" />
+
+                <MudTextField @bind-Value="_form.Notes" Label="Notes" Variant="Variant.Outlined"
+                    Lines="3"
+                    Required="@(_form.Reason == WalletAdjustmentReason.Other)"
+                    RequiredError="Notes are required when reason is 'Other' (minimum 10 characters)"
+                    HelperText="@(_form.Reason == WalletAdjustmentReason.Other ? "Required (minimum 10 characters)" : "Optional")" />
+
+                @if (!string.IsNullOrEmpty(_errorMessage))
+                {
+                    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">
+                        @_errorMessage
+                    </MudAlert>
+                }
+            </MudStack>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="_isSaving">Cancel</MudButton>
+        <MudButton Color="Color.Warning" Variant="Variant.Filled" OnClick="Submit"
+            Disabled="@(!IsValid || _isSaving || _isLoading)">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Record Adjustment
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter]
+    public string UserId { get; set; } = string.Empty;
+
+    private WalletAdjustmentFormModel _form = new();
+    private List<WalletCountEntryDto> _wallets = [];
+    private bool _isLoading = true;
+    private bool _isSaving = false;
+    private string? _errorMessage;
+
+    private bool IsValid =>
+        _form.WalletId > 0 &&
+        _form.Amount > 0 &&
+        (_form.Reason != WalletAdjustmentReason.Other ||
+         (!string.IsNullOrWhiteSpace(_form.Notes) && _form.Notes.Trim().Length >= 10));
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            // Load agent's wallets with current balances for the closing count form
+            var countForm = await CashCountService.InitializeCashCountFormAsync(UserId, false);
+            _wallets = countForm.WalletEntries;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    [Inject]
+    private ICashCountService CashCountService { get; set; } = null!;
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Submit()
+    {
+        _isSaving = true;
+        _errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var result = await WalletAdjustmentService.RecordAdjustmentAsync(UserId, _form);
+            if (result.Success)
+            {
+                MudDialog.Close(DialogResult.Ok(result.AdjustmentId));
+            }
+            else
+            {
+                _errorMessage = result.ErrorMessage;
+            }
+        }
+        finally
+        {
+            _isSaving = false;
+            StateHasChanged();
+        }
+    }
+}

@@ -19,6 +19,7 @@ using EastSeat.Agenti.Web.Features.Users;
 using EastSeat.Agenti.Web.Features.Setup;
 using EastSeat.Agenti.Web.Features.Theme;
 using EastSeat.Agenti.Web.Features.Notifications;
+using EastSeat.Agenti.Web.Features.WalletAdjustments;
 using EastSeat.Agenti.Web.Features.Api;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using MudBlazor.Services;
@@ -151,6 +152,7 @@ builder.Services.AddScoped<ILoginTelemetryService, LoginTelemetryService>();
 builder.Services.AddScoped<ISetupService, SetupService>();
 builder.Services.AddScoped<IThemeService, ThemeService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<IWalletAdjustmentService, WalletAdjustmentService>();
 
 // Add vault background service
 builder.Services.AddHostedService<VaultExpirationService>();
@@ -365,6 +367,10 @@ apiGroup.MapGroup("/vault")
 apiGroup.MapGroup("/wallet-types")
     .WithTags("Wallet Types")
     .MapWalletTypesApi();
+
+apiGroup.MapGroup("/wallet-adjustments")
+    .WithTags("Wallet Adjustments")
+    .MapWalletAdjustmentsApi();
 
 apiGroup.MapGroup("/notifications")
     .WithTags("Notifications")

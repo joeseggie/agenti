@@ -11,5 +11,6 @@ public enum NotificationType
     CountRejected = 3,
     DiscrepancyPendingReview = 4,
     SessionClosed = 5,
-    CountAutoApproved = 6
+    CountAutoApproved = 6,
+    WalletAdjustmentRecorded = 7
 }

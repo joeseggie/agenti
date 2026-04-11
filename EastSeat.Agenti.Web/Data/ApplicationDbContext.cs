@@ -27,6 +27,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<UserAuditLog> UserAuditLogs { get; set; }
     public DbSet<AppConfig> AppConfigs { get; set; }
     public DbSet<Notification> Notifications { get; set; }
+    public DbSet<WalletAdjustment> WalletAdjustments { get; set; }
 
     public override int SaveChanges()
     {
@@ -312,6 +313,40 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .HasForeignKey(e => e.ApprovedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => new { e.Status, e.CashSessionId });
+        });
+
+        // Configure WalletAdjustment
+        builder.Entity<WalletAdjustment>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Amount).HasPrecision(18, 2);
+            entity.Property(e => e.Reason)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(50);
+            entity.Property(e => e.Currency).IsRequired().HasMaxLength(3);
+            entity.Property(e => e.Notes).HasMaxLength(2000);
+            entity.Property(e => e.RecordedByUserId).IsRequired().HasMaxLength(450);
+
+            entity.HasOne(e => e.CashSession)
+                .WithMany(s => s.WalletAdjustments)
+                .HasForeignKey(e => e.CashSessionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Wallet)
+                .WithMany()
+                .HasForeignKey(e => e.WalletId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Agent)
+                .WithMany()
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.RecordedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.RecordedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(e => new { e.CashSessionId, e.WalletId });
+            entity.HasIndex(e => new { e.CashSessionId, e.AgentId });
         });
 
         // Configure AuditLog

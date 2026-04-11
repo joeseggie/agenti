@@ -77,6 +77,8 @@ public class CurrentSessionDto
     public CashCountStatus? ClosingCountStatus { get; set; }
     public bool HasPendingApproval { get; set; }
     public string? BlockReason { get; set; }
+    public bool CanRecordAdjustment { get; set; }
+    public decimal TotalAdjustments { get; set; }
 }
 
 /// <summary>
