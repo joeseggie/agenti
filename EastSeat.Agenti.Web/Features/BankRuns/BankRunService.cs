@@ -189,10 +189,13 @@ public class BankRunService(
             query = query.Where(b => b.AgentId == agentId.Value);
         }
 
-        return await query
+        var bankRuns = await query
             .OrderBy(b => b.CreatedAt)
-            .Select(b => MapToDto(b))
             .ToListAsync();
+
+        return bankRuns
+            .Select(MapToDto)
+            .ToList();
     }
 
     /// <inheritdoc />
