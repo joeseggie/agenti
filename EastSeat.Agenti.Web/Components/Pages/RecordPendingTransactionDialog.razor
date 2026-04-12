@@ -1,0 +1,119 @@
+@using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Web.Features.PendingTransactions
+@inject IPendingTransactionService PendingTransactionService
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudSelect T="long" @bind-Value="_form.WalletId" Label="Wallet" Variant="Variant.Outlined"
+                Required="true" RequiredError="Please select a wallet">
+                @foreach (var wallet in _wallets)
+                {
+                    <MudSelectItem T="long" Value="@wallet.WalletId">
+                        @wallet.Name (@wallet.WalletTypeName)
+                    </MudSelectItem>
+                }
+            </MudSelect>
+
+            <MudSelect T="PendingTransactionType" @bind-Value="_form.Type" Label="Transaction Type"
+                Variant="Variant.Outlined" Required="true" RequiredError="Please select a type">
+                <MudSelectItem T="PendingTransactionType" Value="PendingTransactionType.OutboundTransferFailed">
+                    Outbound Transfer Failed
+                </MudSelectItem>
+                <MudSelectItem T="PendingTransactionType" Value="PendingTransactionType.SelfLiquidationFailed">
+                    Self-Liquidation Failed
+                </MudSelectItem>
+            </MudSelect>
+
+            <MudNumericField T="decimal" @bind-Value="_form.Amount" Label="Amount (UGX)"
+                Variant="Variant.Outlined" Min="1" HideSpinButtons="true"
+                Required="true" RequiredError="Amount is required" />
+
+            <MudTextField @bind-Value="_form.CustomerAccountNumber"
+                Label="Destination Account / Phone Number" Variant="Variant.Outlined"
+                HelperText="Customer account or phone number the money was sent to (optional)" />
+
+            <MudTextField @bind-Value="_form.Notes" Label="Notes" Variant="Variant.Outlined"
+                Lines="3" Required="true"
+                RequiredError="Notes are required (minimum 10 characters)"
+                HelperText="Describe what happened (required, minimum 10 characters)" />
+
+            @if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">
+                    @_errorMessage
+                </MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="_isSaving">Cancel</MudButton>
+        <MudButton Color="Color.Warning" Variant="Variant.Filled" OnClick="Submit"
+            Disabled="@(!IsValid || _isSaving || _isLoading)">
+            @if (_isSaving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Record Pending Transaction
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = null!;
+
+    [Parameter]
+    public string UserId { get; set; } = string.Empty;
+
+    private PendingTransactionFormModel _form = new();
+    private List<PendingTransactionWalletDto> _wallets = [];
+    private bool _isLoading = true;
+    private bool _isSaving = false;
+    private string? _errorMessage;
+
+    private bool IsValid =>
+        _form.WalletId > 0 &&
+        _form.Amount > 0 &&
+        !string.IsNullOrWhiteSpace(_form.Notes) &&
+        _form.Notes.Trim().Length >= 10;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _wallets = await PendingTransactionService.GetAgentWalletsForUserAsync(UserId);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Submit()
+    {
+        _isSaving = true;
+        _errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var result = await PendingTransactionService.RecordPendingTransactionAsync(UserId, _form);
+            if (result.Success)
+            {
+                MudDialog.Close(DialogResult.Ok(result.PendingTransactionId));
+            }
+            else
+            {
+                _errorMessage = result.ErrorMessage;
+            }
+        }
+        finally
+        {
+            _isSaving = false;
+            StateHasChanged();
+        }
+    }
+}

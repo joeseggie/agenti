@@ -1,0 +1,342 @@
+@page "/pending-transactions"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using EastSeat.Agenti.Web.Features.PendingTransactions
+@using EastSeat.Agenti.Shared.Domain.Enums
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject IPendingTransactionService PendingTransactionService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Pending Transactions - Agenti</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudGrid>
+        <MudItem xs="12" sm="8">
+            <MudText Typo="Typo.h4" Class="mb-2">Pending Transactions</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Track failed or unresolved transactions that require follow-up with the bank
+            </MudText>
+        </MudItem>
+        <MudItem xs="12" sm="4" Class="d-flex justify-end align-center gap-2">
+            <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="LoadAsync"
+                StartIcon="@Icons.Material.Filled.Refresh" Disabled="_isLoading">
+                Refresh
+            </MudButton>
+            <AuthorizeView Roles="Agent">
+                <Authorized>
+                    <MudButton Variant="Variant.Filled" Color="Color.Warning"
+                        StartIcon="@Icons.Material.Filled.AddCircle"
+                        OnClick="ShowRecordDialogAsync" Disabled="_isLoading">
+                        Record Pending
+                    </MudButton>
+                </Authorized>
+            </AuthorizeView>
+        </MudItem>
+    </MudGrid>
+
+    @* Info Banner *@
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-3" Dense="true">
+        <MudText Typo="Typo.body2">
+            <strong>Outbound Transfer Failed:</strong> Money deducted from your wallet but not credited to the customer's account.<br />
+            <strong>Self-Liquidation Failed:</strong> Transfer to your own wallet that did not complete.
+        </MudText>
+    </MudAlert>
+
+    @* Status filter tabs *@
+    <MudTabs @bind-ActivePanelIndex="_activeTab" Elevation="0" Class="mt-4">
+        <MudTabPanel Text="Open / Reported" Icon="@Icons.Material.Filled.HourglassEmpty">
+            @if (_isLoading)
+            {
+                <MudGrid Class="mt-4">
+                    <MudItem xs="12" Class="d-flex justify-center">
+                        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+                    </MudItem>
+                </MudGrid>
+            }
+            else if (_openItems.Count == 0)
+            {
+                <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Class="mt-4">
+                    No open pending transactions. Great work!
+                </MudAlert>
+            }
+            else
+            {
+                <MudTable Items="@_openItems" Hover="true" Striped="true" Dense="true" Elevation="2" Class="mt-4"
+                    Breakpoint="Breakpoint.Md">
+                    <HeaderContent>
+                        <MudTh>Agent</MudTh>
+                        <MudTh>Type</MudTh>
+                        <MudTh>Wallet</MudTh>
+                        <MudTh Style="text-align: right;">Amount (UGX)</MudTh>
+                        <MudTh>Destination</MudTh>
+                        <MudTh>Ticket #</MudTh>
+                        <MudTh>Receipt</MudTh>
+                        <MudTh>Status</MudTh>
+                        <MudTh>Recorded</MudTh>
+                        <MudTh Style="text-align: center;">Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Agent">
+                            <MudText Typo="Typo.body2">@context.AgentName</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@context.AgentCode</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Type">
+                            <MudChip T="string" Size="Size.Small"
+                                Color="@(context.Type == PendingTransactionType.OutboundTransferFailed ? Color.Error : Color.Warning)">
+                                @context.TypeDisplay
+                            </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Wallet">
+                            <MudText Typo="Typo.body2">@context.WalletName</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@context.WalletTypeName</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Amount" Style="text-align: right;">
+                            @context.Amount.ToString("N0")
+                        </MudTd>
+                        <MudTd DataLabel="Destination">
+                            <MudText Typo="Typo.caption">@(context.CustomerAccountNumber ?? "—")</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Ticket #">
+                            @if (!string.IsNullOrEmpty(context.TicketNumber))
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Info" Icon="@Icons.Material.Filled.ConfirmationNumber">
+                                    @context.TicketNumber
+                                </MudChip>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Style="opacity: 0.5;">—</MudText>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Receipt">
+                            @if (!string.IsNullOrEmpty(context.ReceiptPhotoPath))
+                            {
+                                <MudTooltip Text="View receipt">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Image" Color="Color.Primary"
+                                        Size="Size.Small" Href="@($"/{context.ReceiptPhotoPath}")" Target="_blank" />
+                                </MudTooltip>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Style="opacity: 0.5;">—</MudText>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Status">
+                            <MudChip T="string" Size="Size.Small"
+                                Color="@GetStatusColor(context.Status)">
+                                @context.StatusDisplay
+                            </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Recorded">
+                            <MudText Typo="Typo.caption">@context.CreatedAt.ToLocalTime().ToString("MMM dd HH:mm")</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Actions" Style="text-align: center;">
+                            <MudTooltip Text="Update">
+                                <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary"
+                                    Size="Size.Small" OnClick="@(() => ShowUpdateDialogAsync(context))"
+                                    Disabled="_isProcessing" />
+                            </MudTooltip>
+                        </MudTd>
+                    </RowTemplate>
+                    <ChildRowContent>
+                        @if (!string.IsNullOrEmpty(context.Notes))
+                        {
+                            <MudTr>
+                                <MudTd colspan="10" Class="pa-2">
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                        <strong>Notes:</strong> @context.Notes
+                                    </MudText>
+                                </MudTd>
+                            </MudTr>
+                        }
+                    </ChildRowContent>
+                </MudTable>
+            }
+        </MudTabPanel>
+
+        <MudTabPanel Text="Resolved / Cancelled" Icon="@Icons.Material.Filled.CheckCircle">
+            @if (_isLoading)
+            {
+                <MudGrid Class="mt-4">
+                    <MudItem xs="12" Class="d-flex justify-center">
+                        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+                    </MudItem>
+                </MudGrid>
+            }
+            else if (_resolvedItems.Count == 0)
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-4">
+                    No resolved or cancelled pending transactions.
+                </MudAlert>
+            }
+            else
+            {
+                <MudTable Items="@_resolvedItems" Hover="true" Striped="true" Dense="true" Elevation="2" Class="mt-4"
+                    Breakpoint="Breakpoint.Md">
+                    <HeaderContent>
+                        <MudTh>Agent</MudTh>
+                        <MudTh>Type</MudTh>
+                        <MudTh>Wallet</MudTh>
+                        <MudTh Style="text-align: right;">Amount (UGX)</MudTh>
+                        <MudTh>Ticket #</MudTh>
+                        <MudTh>Receipt</MudTh>
+                        <MudTh>Status</MudTh>
+                        <MudTh>Resolved</MudTh>
+                        <MudTh>Resolution Notes</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Agent">
+                            <MudText Typo="Typo.body2">@context.AgentName</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@context.AgentCode</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Type">
+                            <MudChip T="string" Size="Size.Small"
+                                Color="@(context.Type == PendingTransactionType.OutboundTransferFailed ? Color.Error : Color.Warning)">
+                                @context.TypeDisplay
+                            </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Wallet">
+                            <MudText Typo="Typo.body2">@context.WalletName</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@context.WalletTypeName</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Amount" Style="text-align: right;">@context.Amount.ToString("N0")</MudTd>
+                        <MudTd DataLabel="Ticket #">
+                            <MudText Typo="Typo.caption">@(context.TicketNumber ?? "—")</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Receipt">
+                            @if (!string.IsNullOrEmpty(context.ReceiptPhotoPath))
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.Image" Color="Color.Primary"
+                                    Size="Size.Small" Href="@($"/{context.ReceiptPhotoPath}")" Target="_blank" />
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Style="opacity: 0.5;">—</MudText>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Status">
+                            <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)">
+                                @context.StatusDisplay
+                            </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Resolved">
+                            <MudText Typo="Typo.caption">
+                                @(context.ResolvedAt.HasValue ? context.ResolvedAt.Value.ToLocalTime().ToString("MMM dd HH:mm") : "—")
+                            </MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Resolution Notes">
+                            <MudText Typo="Typo.caption">@(context.ResolutionNotes ?? "—")</MudText>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudTabPanel>
+    </MudTabs>
+</MudContainer>
+
+@code {
+    private List<PendingTransactionDto> _openItems = [];
+    private List<PendingTransactionDto> _resolvedItems = [];
+    private bool _isLoading = true;
+    private bool _isProcessing = false;
+    private int _activeTab = 0;
+    private string? _userId;
+    private long _branchId;
+    private bool _isAdmin;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var branchClaim = authState.User.FindFirst("BranchId")?.Value;
+        if (long.TryParse(branchClaim, out var bid))
+        {
+            _branchId = bid;
+        }
+        _isAdmin = authState.User.IsInRole(UserRole.Admin.ToString()) || authState.User.IsInRole(UserRole.Supervisor.ToString());
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            if (_isAdmin && _branchId > 0 && !string.IsNullOrEmpty(_userId))
+            {
+                var all = await PendingTransactionService.GetAllPendingTransactionsForBranchAsync(_userId, _branchId);
+                _openItems = all.Where(t => !t.IsResolved).ToList();
+                _resolvedItems = all.Where(t => t.IsResolved).ToList();
+            }
+            else if (!string.IsNullOrEmpty(_userId))
+            {
+                var agentItems = await PendingTransactionService.GetPendingTransactionsForAgentAsync(_userId);
+                _openItems = agentItems.Where(t => !t.IsResolved).ToList();
+                _resolvedItems = agentItems.Where(t => t.IsResolved).ToList();
+            }
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ShowRecordDialogAsync()
+    {
+        if (string.IsNullOrEmpty(_userId)) return;
+
+        var parameters = new DialogParameters<RecordPendingTransactionDialog>
+        {
+            { x => x.UserId, _userId }
+        };
+
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<RecordPendingTransactionDialog>(
+            "Record Pending Transaction", parameters, options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled)
+        {
+            Snackbar.Add("Pending transaction recorded.", Severity.Warning);
+            await LoadAsync();
+        }
+    }
+
+    private async Task ShowUpdateDialogAsync(PendingTransactionDto item)
+    {
+        if (string.IsNullOrEmpty(_userId)) return;
+
+        var parameters = new DialogParameters<UpdatePendingTransactionDialog>
+        {
+            { x => x.Item, item },
+            { x => x.UserId, _userId }
+        };
+
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<UpdatePendingTransactionDialog>(
+            "Update Pending Transaction", parameters, options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled)
+        {
+            Snackbar.Add("Pending transaction updated.", Severity.Success);
+            await LoadAsync();
+        }
+    }
+
+    private static Color GetStatusColor(PendingTransactionStatus status) => status switch
+    {
+        PendingTransactionStatus.Open => Color.Error,
+        PendingTransactionStatus.ReportedToBank => Color.Warning,
+        PendingTransactionStatus.Resolved => Color.Success,
+        PendingTransactionStatus.Cancelled => Color.Default,
+        _ => Color.Default
+    };
+}
