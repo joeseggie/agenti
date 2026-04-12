@@ -338,7 +338,8 @@
             {
                 Snackbar.Add("Bank run recorded successfully.", Severity.Success);
                 _showDialog = false;
-                await Task.WhenAll(LoadBankRunsAsync(), LoadCurrentSessionAsync());
+                await LoadBankRunsAsync();
+                await LoadCurrentSessionAsync();
             }
             else
             {
