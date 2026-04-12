@@ -268,9 +268,9 @@
 
         try
         {
-            if (_isAdmin && _branchId > 0)
+            if (_isAdmin && _branchId > 0 && !string.IsNullOrEmpty(_userId))
             {
-                var all = await PendingTransactionService.GetAllPendingTransactionsForBranchAsync(_branchId);
+                var all = await PendingTransactionService.GetAllPendingTransactionsForBranchAsync(_userId, _branchId);
                 _openItems = all.Where(t => !t.IsResolved).ToList();
                 _resolvedItems = all.Where(t => t.IsResolved).ToList();
             }

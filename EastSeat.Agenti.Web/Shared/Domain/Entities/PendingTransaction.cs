@@ -39,7 +39,7 @@ public class PendingTransaction
     /// <summary>Relative path to the uploaded receipt photo (e.g. uploads/pending-transactions/abc.jpg).</summary>
     public string? ReceiptPhotoPath { get; set; }
 
-    public string? Notes { get; set; }
+    public string Notes { get; set; } = string.Empty;
 
     /// <summary>Additional notes provided when resolving or cancelling the transaction.</summary>
     public string? ResolutionNotes { get; set; }

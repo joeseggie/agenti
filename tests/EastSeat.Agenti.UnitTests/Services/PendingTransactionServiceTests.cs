@@ -372,6 +372,63 @@ public class PendingTransactionServiceTests : IDisposable
         result.ErrorMessage.Should().Contain("not found");
     }
 
+    [Fact]
+    public async Task UpdatePendingTransactionAsync_UnauthorizedUser_ReturnsError()
+    {
+        var anotherUser = UserBuilder.Default()
+            .WithEmail("other@test.com")
+            .WithRole(UserRole.Agent)
+            .WithBranchId(_testBranch.Id)
+            .Build();
+        _dbContext.Users.Add(anotherUser);
+
+        var pending = CreateTestPendingTransaction(PendingTransactionStatus.Open);
+        _dbContext.PendingTransactions.Add(pending);
+        await _dbContext.SaveChangesAsync();
+
+        var update = new PendingTransactionUpdateModel { TicketNumber = "INC-001" };
+        var result = await _sut.UpdatePendingTransactionAsync(anotherUser.Id, pending.Id, update);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("not authorized");
+    }
+
+    [Fact]
+    public async Task UpdatePendingTransactionAsync_AdminCanUpdateAnyRecord_ReturnsSuccess()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin@test.com")
+            .WithRole(UserRole.Admin)
+            .WithBranchId(_testBranch.Id)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var pending = CreateTestPendingTransaction(PendingTransactionStatus.Open);
+        _dbContext.PendingTransactions.Add(pending);
+        await _dbContext.SaveChangesAsync();
+
+        var update = new PendingTransactionUpdateModel { TicketNumber = "INC-ADMIN-001" };
+        var result = await _sut.UpdatePendingTransactionAsync(adminUser.Id, pending.Id, update);
+
+        result.Success.Should().BeTrue();
+        var saved = await _dbContext.PendingTransactions.FindAsync(pending.Id);
+        saved!.TicketNumber.Should().Be("INC-ADMIN-001");
+    }
+
+    [Fact]
+    public async Task UpdatePendingTransactionAsync_ShortNotes_ReturnsError()
+    {
+        var pending = CreateTestPendingTransaction(PendingTransactionStatus.Open);
+        _dbContext.PendingTransactions.Add(pending);
+        await _dbContext.SaveChangesAsync();
+
+        var update = new PendingTransactionUpdateModel { Notes = "Short" };
+        var result = await _sut.UpdatePendingTransactionAsync(_testUser.Id, pending.Id, update);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Notes must be at least 10 characters");
+    }
+
     #endregion
 
     #region GetPendingTransactionsForAgentAsync Tests
@@ -405,18 +462,39 @@ public class PendingTransactionServiceTests : IDisposable
     #region GetOpenPendingTransactionsForBranchAsync Tests
 
     [Fact]
-    public async Task GetOpenPendingTransactionsForBranchAsync_ReturnsOnlyOpenAndReported()
+    public async Task GetOpenPendingTransactionsForBranchAsync_AdminUser_ReturnsOnlyOpenAndReported()
     {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin@test.com")
+            .WithRole(UserRole.Admin)
+            .WithBranchId(_testBranch.Id)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+        await _dbContext.SaveChangesAsync();
+
         var open = CreateTestPendingTransaction(PendingTransactionStatus.Open);
         var reported = CreateTestPendingTransaction(PendingTransactionStatus.ReportedToBank);
         var resolved = CreateTestPendingTransaction(PendingTransactionStatus.Resolved);
         _dbContext.PendingTransactions.AddRange(open, reported, resolved);
         await _dbContext.SaveChangesAsync();
 
-        var result = await _sut.GetOpenPendingTransactionsForBranchAsync(_testBranch.Id);
+        var result = await _sut.GetOpenPendingTransactionsForBranchAsync(adminUser.Id, _testBranch.Id);
 
         result.Should().HaveCount(2);
         result.Should().NotContain(t => t.Status == PendingTransactionStatus.Resolved);
+    }
+
+    [Fact]
+    public async Task GetOpenPendingTransactionsForBranchAsync_AgentUser_ReturnsEmpty()
+    {
+        var open = CreateTestPendingTransaction(PendingTransactionStatus.Open);
+        _dbContext.PendingTransactions.Add(open);
+        await _dbContext.SaveChangesAsync();
+
+        // _testUser is an Agent, not Admin/Supervisor — should be denied
+        var result = await _sut.GetOpenPendingTransactionsForBranchAsync(_testUser.Id, _testBranch.Id);
+
+        result.Should().BeEmpty();
     }
 
     #endregion

@@ -95,11 +95,27 @@ public class PendingTransactionService(
         string userId, long pendingTransactionId, PendingTransactionUpdateModel update)
     {
         var pendingTransaction = await dbContext.PendingTransactions
+            .Include(t => t.Agent)
             .FirstOrDefaultAsync(t => t.Id == pendingTransactionId);
 
         if (pendingTransaction == null)
         {
             return PendingTransactionSaveResult.Error("Pending transaction not found.");
+        }
+
+        // Authorization: only the recording agent or an Admin/Supervisor of the same branch can update
+        var caller = await dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId);
+        if (caller == null)
+        {
+            return PendingTransactionSaveResult.Error("Caller not found.");
+        }
+
+        bool isAdminOrSupervisor = caller.Role == UserRole.Admin || caller.Role == UserRole.Supervisor;
+        bool isRecordingAgent = pendingTransaction.RecordedByUserId == userId;
+
+        if (!isAdminOrSupervisor && !isRecordingAgent)
+        {
+            return PendingTransactionSaveResult.Error("You are not authorized to update this pending transaction.");
         }
 
         if (pendingTransaction.Status == PendingTransactionStatus.Resolved ||
@@ -161,6 +177,10 @@ public class PendingTransactionService(
 
         if (!string.IsNullOrWhiteSpace(update.Notes))
         {
+            if (update.Notes.Trim().Length < 10)
+            {
+                return PendingTransactionSaveResult.Error("Notes must be at least 10 characters.");
+            }
             pendingTransaction.Notes = update.Notes.Trim();
         }
 
@@ -214,8 +234,14 @@ public class PendingTransactionService(
     }
 
     /// <inheritdoc />
-    public async Task<List<PendingTransactionDto>> GetOpenPendingTransactionsForBranchAsync(long branchId)
+    public async Task<List<PendingTransactionDto>> GetOpenPendingTransactionsForBranchAsync(string userId, long branchId)
     {
+        var caller = await dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId);
+        if (caller == null || (caller.Role != UserRole.Admin && caller.Role != UserRole.Supervisor))
+        {
+            return [];
+        }
+
         return await dbContext.PendingTransactions
             .Include(t => t.Wallet)
                 .ThenInclude(w => w!.WalletType)
@@ -232,8 +258,14 @@ public class PendingTransactionService(
 
     /// <inheritdoc />
     public async Task<List<PendingTransactionDto>> GetAllPendingTransactionsForBranchAsync(
-        long branchId, long? agentId = null)
+        string userId, long branchId, long? agentId = null)
     {
+        var caller = await dbContext.Users.FirstOrDefaultAsync(u => u.Id == userId);
+        if (caller == null || (caller.Role != UserRole.Admin && caller.Role != UserRole.Supervisor))
+        {
+            return [];
+        }
+
         var query = dbContext.PendingTransactions
             .Include(t => t.Wallet)
                 .ThenInclude(w => w!.WalletType)
