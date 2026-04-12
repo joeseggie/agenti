@@ -20,7 +20,8 @@
             </MudText>
         </MudItem>
         <MudItem xs="12" sm="4" Class="d-flex justify-end align-center" Style="gap: 8px;">
-            <MudSelect T="string" @bind-Value="_statusFilter" Label="Filter by status"
+            <MudSelect T="string" Value="_statusFilter" ValueChanged="OnStatusFilterChanged"
+                       Label="Filter by status"
                        Variant="Variant.Outlined" Dense="true" Style="min-width: 180px;"
                        AnchorOrigin="Origin.BottomLeft">
                 <MudSelectItem Value="@("")">All</MudSelectItem>
@@ -250,10 +251,10 @@
             : _allFlags.Where(f => f.Status.ToString() == _statusFilter).ToList();
     }
 
-    protected override async Task OnParametersSetAsync()
+    private void OnStatusFilterChanged(string value)
     {
+        _statusFilter = value;
         ApplyFilter();
-        await Task.CompletedTask;
     }
 
     private async Task StartInvestigationAsync(TransactionFlagDto flag)
