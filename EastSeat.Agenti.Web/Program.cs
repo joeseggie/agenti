@@ -21,6 +21,7 @@ using EastSeat.Agenti.Web.Features.Theme;
 using EastSeat.Agenti.Web.Features.Notifications;
 using EastSeat.Agenti.Web.Features.WalletAdjustments;
 using EastSeat.Agenti.Web.Features.PendingTransactions;
+using EastSeat.Agenti.Web.Features.BankRuns;
 using EastSeat.Agenti.Web.Features.Api;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using MudBlazor.Services;
@@ -155,6 +156,7 @@ builder.Services.AddScoped<IThemeService, ThemeService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IWalletAdjustmentService, WalletAdjustmentService>();
 builder.Services.AddScoped<IPendingTransactionService, PendingTransactionService>();
+builder.Services.AddScoped<IBankRunService, BankRunService>();
 
 // Add vault background service
 builder.Services.AddHostedService<VaultExpirationService>();
