@@ -123,7 +123,6 @@ public class BankRunServiceTests : IDisposable
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = 200_000m,
             ReceiptNumber = "REC-001",
@@ -158,7 +157,6 @@ public class BankRunServiceTests : IDisposable
         var denominations = "{\"50000\":2,\"20000\":5}";
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = 200_000m,
             Denominations = denominations
@@ -180,7 +178,6 @@ public class BankRunServiceTests : IDisposable
 
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = 100_000m
         };
@@ -204,7 +201,6 @@ public class BankRunServiceTests : IDisposable
 
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = 100_000m
         };
@@ -223,7 +219,6 @@ public class BankRunServiceTests : IDisposable
 
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = 100_000m
         };
@@ -240,7 +235,6 @@ public class BankRunServiceTests : IDisposable
         // Session exists but no approved opening count
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = 100_000m
         };
@@ -267,7 +261,6 @@ public class BankRunServiceTests : IDisposable
 
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = 100_000m
         };
@@ -294,7 +287,6 @@ public class BankRunServiceTests : IDisposable
 
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = 100_000m
         };
@@ -311,7 +303,6 @@ public class BankRunServiceTests : IDisposable
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = 0m
         };
@@ -328,7 +319,6 @@ public class BankRunServiceTests : IDisposable
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = -100m
         };
@@ -340,12 +330,15 @@ public class BankRunServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RecordBankRunAsync_FromWalletNotFound_ReturnsError()
+    public async Task RecordBankRunAsync_NoCashWallet_ReturnsError()
     {
         SeedApprovedOpeningCount();
+        // Agent has no cash wallet — remove it after seeding the opening count
+        _dbContext.Wallets.Remove(_cashWallet);
+        await _dbContext.SaveChangesAsync();
+
         var form = new BankRunFormModel
         {
-            FromWalletId = 9999,
             ToWalletId = _bankWallet.Id,
             Amount = 100_000m
         };
@@ -353,25 +346,7 @@ public class BankRunServiceTests : IDisposable
         var result = await _sut.RecordBankRunAsync(_testUser.Id, form);
 
         result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("Source wallet not found");
-    }
-
-    [Fact]
-    public async Task RecordBankRunAsync_FromWalletNotCashType_ReturnsError()
-    {
-        SeedApprovedOpeningCount();
-        // Use bank wallet as source (wrong type)
-        var form = new BankRunFormModel
-        {
-            FromWalletId = _bankWallet.Id,
-            ToWalletId = _cashWallet.Id,
-            Amount = 100_000m
-        };
-
-        var result = await _sut.RecordBankRunAsync(_testUser.Id, form);
-
-        result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("source wallet must be a Cash wallet");
+        result.ErrorMessage.Should().Contain("No active cash wallet");
     }
 
     [Fact]
@@ -380,7 +355,6 @@ public class BankRunServiceTests : IDisposable
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = 9999,
             Amount = 100_000m
         };
@@ -404,7 +378,6 @@ public class BankRunServiceTests : IDisposable
 
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = mmWallet.Id,
             Amount = 100_000m
         };
@@ -416,29 +389,11 @@ public class BankRunServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RecordBankRunAsync_SameSourceAndDestination_ReturnsError()
-    {
-        SeedApprovedOpeningCount();
-        var form = new BankRunFormModel
-        {
-            FromWalletId = _cashWallet.Id,
-            ToWalletId = _cashWallet.Id,
-            Amount = 100_000m
-        };
-
-        var result = await _sut.RecordBankRunAsync(_testUser.Id, form);
-
-        result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("Source and destination wallets must be different");
-    }
-
-    [Fact]
     public async Task RecordBankRunAsync_AmountExceedsCashBalance_ReturnsError()
     {
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = 600_000m  // More than the 500_000 balance
         };
@@ -455,7 +410,6 @@ public class BankRunServiceTests : IDisposable
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = 100_000m
         };
@@ -478,7 +432,6 @@ public class BankRunServiceTests : IDisposable
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            FromWalletId = _cashWallet.Id,
             ToWalletId = _bankWallet.Id,
             Amount = 100_000m,
             ReceiptNumber = "  REC-001  ",

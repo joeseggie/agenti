@@ -71,11 +71,6 @@ public class BankRunService(
             return BankRunSaveResult.Error("Bank run amount must be greater than zero.");
         }
 
-        if (model.FromWalletId == model.ToWalletId)
-        {
-            return BankRunSaveResult.Error("Source and destination wallets must be different.");
-        }
-
         // Start serializable transaction before loading wallets so the balance read
         // and the balance update are protected against concurrent modifications.
         long bankRunId;
@@ -85,21 +80,15 @@ public class BankRunService(
 
         try
         {
-            // Re-read wallets inside the transaction so their balances are current
+            // Auto-discover the agent's active cash wallet — bank runs always originate from cash.
             var fromWallet = await dbContext.Wallets
                 .Include(w => w.WalletType)
-                .FirstOrDefaultAsync(w => w.Id == model.FromWalletId && w.AgentId == agent.Id && w.IsActive);
+                .FirstOrDefaultAsync(w => w.AgentId == agent.Id && w.IsActive && w.WalletType!.Type == WalletTypeEnum.Cash);
 
             if (fromWallet == null)
             {
                 await dbTransaction.RollbackAsync();
-                return BankRunSaveResult.Error("Source wallet not found or does not belong to this agent.");
-            }
-
-            if (fromWallet.WalletType?.Type != WalletTypeEnum.Cash)
-            {
-                await dbTransaction.RollbackAsync();
-                return BankRunSaveResult.Error("The source wallet must be a Cash wallet.");
+                return BankRunSaveResult.Error("No active cash wallet found for this agent.");
             }
 
             var toWallet = await dbContext.Wallets
@@ -137,7 +126,7 @@ public class BankRunService(
             {
                 CashSessionId = session.Id,
                 AgentId = agent.Id,
-                FromWalletId = model.FromWalletId,
+                FromWalletId = fromWallet.Id,
                 ToWalletId = model.ToWalletId,
                 Amount = model.Amount,
                 Currency = fromWallet.Currency,
@@ -172,7 +161,6 @@ public class BankRunService(
         {
             { "AgentId", agent.Id.ToString() },
             { "SessionId", session.Id.ToString() },
-            { "FromWalletId", model.FromWalletId.ToString() },
             { "ToWalletId", model.ToWalletId.ToString() },
             { "Amount", model.Amount.ToString("F2") }
         });

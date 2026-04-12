@@ -5,9 +5,6 @@ namespace EastSeat.Agenti.Web.Features.BankRuns;
 /// </summary>
 public class BankRunFormModel
 {
-    /// <summary>Agent's cash wallet (source).</summary>
-    public long FromWalletId { get; set; }
-
     /// <summary>Bank wallet to deposit into (destination).</summary>
     public long ToWalletId { get; set; }
 

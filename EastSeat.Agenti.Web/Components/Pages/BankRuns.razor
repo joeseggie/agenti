@@ -87,14 +87,16 @@
             <MudForm @ref="_form" Model="_formModel">
                 <MudGrid>
                     <MudItem xs="12">
-                        <MudSelect T="long" Label="Cash Wallet (Source)" @bind-Value="_formModel.FromWalletId"
-                                   Required="true" RequiredError="Source wallet is required."
-                                   HelperText="Select the cash wallet you are depositing from.">
-                            @foreach (var w in _cashWallets)
+                        <MudField Label="Cash Wallet (Source)" Variant="Variant.Outlined">
+                            @if (_cashWallet != null)
                             {
-                                <MudSelectItem T="long" Value="@w.Id">@w.Name (UGX @w.Balance.ToString("N0"))</MudSelectItem>
+                                <MudText>@_cashWallet.Name — Balance: UGX @_cashWallet.Balance.ToString("N0")</MudText>
                             }
-                        </MudSelect>
+                            else
+                            {
+                                <MudText Color="Color.Error">No active cash wallet found.</MudText>
+                            }
+                        </MudField>
                     </MudItem>
                     <MudItem xs="12">
                         <MudSelect T="long" Label="Bank Wallet (Destination)" @bind-Value="_formModel.ToWalletId"
@@ -227,8 +229,8 @@
     private DenominationBreakdown _denominations = DenominationBreakdown.Empty;
     private bool _showDenominations;
 
-    // Wallets for the dropdowns (loaded from the service context via user wallets)
-    private List<WalletEntry> _cashWallets = [];
+    // Cash wallet displayed as read-only info; only bank wallets are selectable
+    private WalletEntry? _cashWallet;
     private List<WalletEntry> _bankWallets = [];
 
     private readonly DialogOptions _dialogOptions = new()
@@ -275,19 +277,18 @@
 
     private async Task LoadWalletsAsync()
     {
-        // Load agent wallets via the service; fall back to empty lists on failure
         if (string.IsNullOrEmpty(_userId)) return;
 
         try
         {
-            _cashWallets = (await BankRunService.GetAgentWalletsAsync(_userId, WalletTypeEnum.Cash))
-                .Select(w => new WalletEntry(w.Id, w.Name, w.Balance)).ToList();
+            var cashWallets = await BankRunService.GetAgentWalletsAsync(_userId, WalletTypeEnum.Cash);
+            _cashWallet = cashWallets.Select(w => new WalletEntry(w.Id, w.Name, w.Balance)).FirstOrDefault();
             _bankWallets = (await BankRunService.GetAgentWalletsAsync(_userId, WalletTypeEnum.Bank))
                 .Select(w => new WalletEntry(w.Id, w.Name, w.Balance)).ToList();
         }
         catch
         {
-            _cashWallets = [];
+            _cashWallet = null;
             _bankWallets = [];
         }
     }
