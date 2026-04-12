@@ -2,10 +2,12 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
 @using EastSeat.Agenti.Web.Features.BankRuns
+@using EastSeat.Agenti.Web.Features.CashCounts
 @using EastSeat.Agenti.Shared.Domain.Enums
 @attribute [Authorize]
 @rendermode InteractiveServer
 @inject IBankRunService BankRunService
+@inject ICashCountService CashCountService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ISnackbar Snackbar
 
@@ -23,11 +25,29 @@
             <MudButton Variant="Variant.Filled" Color="Color.Primary"
                        StartIcon="@Icons.Material.Filled.AddCircle"
                        OnClick="OpenRecordDialog"
-                       Disabled="_isLoading">
+                       Disabled="@(_isLoading || _currentSession?.CanRecordBankRun != true)">
                 Record Bank Run
             </MudButton>
         </MudItem>
     </MudGrid>
+
+    @if (!_isLoading && _currentSession?.CanRecordBankRun != true)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mt-4">
+            @if (_currentSession == null || _currentSession.SessionId == null)
+            {
+                <span>No active cash session. An open session with an approved opening count is required to record a bank run.</span>
+            }
+            else if (_currentSession.HasClosingCount)
+            {
+                <span>A closing cash count has already been submitted. Bank runs cannot be recorded after the closing count is submitted.</span>
+            }
+            else
+            {
+                <span>An approved opening cash count is required before recording a bank run.</span>
+            }
+        </MudAlert>
+    }
 
     @if (_isLoading)
     {
@@ -189,6 +209,7 @@
     private MudForm? _form;
     private BankRunFormModel _formModel = new();
     private string? _userId;
+    private CurrentSessionDto? _currentSession;
 
     // Cash wallet displayed as read-only; wallet types listed for destination selection
     private WalletEntry? _cashWallet;
@@ -211,7 +232,15 @@
     {
         var auth = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         _userId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        await LoadBankRunsAsync();
+        await Task.WhenAll(LoadBankRunsAsync(), LoadCurrentSessionAsync());
+    }
+
+    private async Task LoadCurrentSessionAsync()
+    {
+        if (!string.IsNullOrEmpty(_userId))
+        {
+            _currentSession = await CashCountService.GetCurrentSessionAsync(_userId);
+        }
     }
 
     private async Task LoadBankRunsAsync()
@@ -304,7 +333,7 @@
             {
                 Snackbar.Add("Bank run recorded successfully.", Severity.Success);
                 _showDialog = false;
-                await LoadBankRunsAsync();
+                await Task.WhenAll(LoadBankRunsAsync(), LoadCurrentSessionAsync());
             }
             else
             {

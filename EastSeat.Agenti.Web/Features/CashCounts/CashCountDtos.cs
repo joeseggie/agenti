@@ -76,6 +76,7 @@ public class CurrentSessionDto
     public string? BlockReason { get; set; }
     public bool CanRecordAdjustment { get; set; }
     public decimal TotalAdjustments { get; set; }
+    public bool CanRecordBankRun { get; set; }
 }
 
 /// <summary>
