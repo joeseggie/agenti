@@ -1,0 +1,319 @@
+@page "/bank-runs"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using EastSeat.Agenti.Web.Features.BankRuns
+@using EastSeat.Agenti.Shared.Domain.Enums
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject IBankRunService BankRunService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>Bank Runs - Agenti</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudGrid>
+        <MudItem xs="12" sm="8">
+            <MudText Typo="Typo.h4" Class="mb-2">Bank Runs</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Record physical cash deposits made to a bank wallet during the session.
+            </MudText>
+        </MudItem>
+        <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.AddCircle"
+                       OnClick="OpenRecordDialog"
+                       Disabled="_isLoading">
+                Record Bank Run
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+
+    @if (_isLoading)
+    {
+        <MudGrid Class="mt-4">
+            <MudItem xs="12" Class="d-flex justify-center">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    }
+    else if (!_bankRuns.Any())
+    {
+        <MudAlert Severity="Severity.Info" Class="mt-4">
+            No bank runs recorded for the current session.
+        </MudAlert>
+    }
+    else
+    {
+        <MudTable Items="_bankRuns" Hover="true" Class="mt-4" Elevation="2">
+            <HeaderContent>
+                <MudTh>Time</MudTh>
+                <MudTh>Agent</MudTh>
+                <MudTh>From Wallet</MudTh>
+                <MudTh>To Wallet</MudTh>
+                <MudTh Style="text-align:right">Amount</MudTh>
+                <MudTh>Receipt #</MudTh>
+                <MudTh>Slip</MudTh>
+                <MudTh>Notes</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Time">@context.CreatedAt.ToLocalTime().ToString("HH:mm")</MudTd>
+                <MudTd DataLabel="Agent">@context.AgentName (@context.AgentCode)</MudTd>
+                <MudTd DataLabel="From Wallet">@context.FromWalletName</MudTd>
+                <MudTd DataLabel="To Wallet">@context.ToWalletName</MudTd>
+                <MudTd DataLabel="Amount" Style="text-align:right">@context.Currency @context.Amount.ToString("N0")</MudTd>
+                <MudTd DataLabel="Receipt #">@(context.ReceiptNumber ?? "-")</MudTd>
+                <MudTd DataLabel="Slip">
+                    @if (context.HasReceiptImage)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.Image" Color="Color.Success" Title="Receipt image attached" />
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Secondary">-</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Notes">@(context.Notes ?? "-")</MudTd>
+            </RowTemplate>
+        </MudTable>
+
+        <MudPaper Class="mt-4 pa-4" Elevation="0" Outlined="true">
+            <MudStack Row="true" Justify="Justify.SpaceBetween">
+                <MudText Typo="Typo.subtitle1" Color="Color.Secondary">Total Banked Today</MudText>
+                <MudText Typo="Typo.h6">UGX @_bankRuns.Sum(r => r.Amount).ToString("N0")</MudText>
+            </MudStack>
+        </MudPaper>
+    }
+
+    <!-- Record Bank Run Dialog -->
+    <MudDialog @bind-IsVisible="_showDialog" Options="_dialogOptions">
+        <TitleContent>
+            <MudText Typo="Typo.h6">
+                <MudIcon Icon="@Icons.Material.Filled.AccountBalance" Class="mr-2" />
+                Record Bank Run
+            </MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudForm @ref="_form" Model="_formModel">
+                <MudGrid>
+                    <MudItem xs="12">
+                        <MudField Label="Cash Wallet (Source)" Variant="Variant.Outlined">
+                            @if (_cashWallet != null)
+                            {
+                                <MudText>@_cashWallet.Name — Balance: UGX @_cashWallet.Balance.ToString("N0")</MudText>
+                            }
+                            else
+                            {
+                                <MudText Color="Color.Error">No active cash wallet found.</MudText>
+                            }
+                        </MudField>
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudSelect T="long" Label="Wallet Type (Destination)" @bind-Value="_formModel.ToWalletTypeId"
+                                   Required="true" RequiredError="Destination wallet type is required."
+                                   HelperText="Select the wallet type you are depositing into.">
+                            @foreach (var wt in _walletTypeOptions)
+                            {
+                                <MudSelectItem T="long" Value="@wt.WalletTypeId">@wt.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudNumericField T="decimal" Label="Amount (UGX)" @bind-Value="_formModel.Amount"
+                                         Required="true" RequiredError="Amount is required."
+                                         Min="1" Format="N0"
+                                         HelperText="Enter the amount shown on the bank deposit slip." />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField Label="Receipt / Reference Number"
+                                      @bind-Value="_formModel.ReceiptNumber"
+                                      HelperText="Bank deposit slip or receipt number." />
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudText Typo="Typo.body2" Class="mb-1">Bank Deposit Slip / Receipt Image</MudText>
+                        <InputFile id="receiptImageInput" OnChange="OnReceiptImageSelected" accept="image/*" style="display:none" />
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudButton HtmlTag="label"
+                                       for="receiptImageInput"
+                                       Variant="Variant.Outlined"
+                                       Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.CameraAlt"
+                                       Size="Size.Small">
+                                @(_formModel.ReceiptImage == null ? "Attach Photo" : "Change Photo")
+                            </MudButton>
+                            @if (_formModel.ReceiptImage != null)
+                            {
+                                <MudText Typo="Typo.body2" Color="Color.Success">
+                                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" Class="mr-1" />
+                                    @_receiptImageFileName
+                                </MudText>
+                            }
+                        </MudStack>
+                        @if (_formModel.ReceiptImage != null && _receiptImageDataUrl != null)
+                        {
+                            <MudPaper Class="mt-2 pa-2" Elevation="1" Style="max-width: 320px;">
+                                <img src="@_receiptImageDataUrl" alt="Receipt" style="max-width: 100%; border-radius: 4px;" />
+                            </MudPaper>
+                        }
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField Label="Notes" @bind-Value="_formModel.Notes"
+                                      Lines="3" HelperText="Optional notes about this bank run." />
+                    </MudItem>
+                </MudGrid>
+            </MudForm>
+            @if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                <MudAlert Severity="Severity.Error" Class="mt-2">@_errorMessage</MudAlert>
+            }
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="CloseDialog" Disabled="_isSaving">Cancel</MudButton>
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SubmitBankRunAsync" Disabled="_isSaving">
+                @if (_isSaving)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                }
+                Record
+            </MudButton>
+        </DialogActions>
+    </MudDialog>
+</MudContainer>
+
+@code {
+    private List<BankRunDto> _bankRuns = [];
+    private bool _isLoading = true;
+    private bool _showDialog;
+    private bool _isSaving;
+    private string? _errorMessage;
+    private MudForm? _form;
+    private BankRunFormModel _formModel = new();
+    private string? _userId;
+
+    // Cash wallet displayed as read-only; wallet types listed for destination selection
+    private WalletEntry? _cashWallet;
+    private List<WalletTypeOptionDto> _walletTypeOptions = [];
+
+    // Receipt image preview state
+    private string? _receiptImageFileName;
+    private string? _receiptImageDataUrl;
+
+    private readonly DialogOptions _dialogOptions = new()
+    {
+        MaxWidth = MaxWidth.Small,
+        FullWidth = true,
+        CloseOnEscapeKey = true
+    };
+
+    private record WalletEntry(long Id, string Name, decimal Balance);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _userId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        await LoadBankRunsAsync();
+    }
+
+    private async Task LoadBankRunsAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            if (!string.IsNullOrEmpty(_userId))
+            {
+                _bankRuns = await BankRunService.GetBankRunsForAgentAsync(_userId);
+            }
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task OpenRecordDialog()
+    {
+        _formModel = new BankRunFormModel();
+        _receiptImageFileName = null;
+        _receiptImageDataUrl = null;
+        _errorMessage = null;
+        await LoadWalletsAsync();
+        _showDialog = true;
+    }
+
+    private async Task LoadWalletsAsync()
+    {
+        if (string.IsNullOrEmpty(_userId)) return;
+
+        try
+        {
+            var cashWallets = await BankRunService.GetAgentWalletsAsync(_userId, WalletTypeEnum.Cash);
+            _cashWallet = cashWallets.Select(w => new WalletEntry(w.Id, w.Name, w.Balance)).FirstOrDefault();
+            _walletTypeOptions = await BankRunService.GetAgentNonCashWalletTypesAsync(_userId);
+        }
+        catch
+        {
+            _cashWallet = null;
+            _walletTypeOptions = [];
+        }
+    }
+
+    private async Task OnReceiptImageSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        const long maxSizeBytes = 5 * 1024 * 1024; // 5 MB
+        try
+        {
+            await using var stream = file.OpenReadStream(maxSizeBytes);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+
+            _formModel.ReceiptImage = ms.ToArray();
+            _formModel.ReceiptImageContentType = file.ContentType;
+            _receiptImageFileName = file.Name;
+            _receiptImageDataUrl = $"data:{file.ContentType};base64,{Convert.ToBase64String(_formModel.ReceiptImage)}";
+        }
+        catch
+        {
+            Snackbar.Add("Failed to read the image. Ensure the file is an image and under 5 MB.", Severity.Error);
+        }
+    }
+
+    private void CloseDialog()
+    {
+        _showDialog = false;
+        _errorMessage = null;
+    }
+
+    private async Task SubmitBankRunAsync()
+    {
+        if (_form != null)
+        {
+            await _form.Validate();
+            if (!_form.IsValid) return;
+        }
+
+        _isSaving = true;
+        _errorMessage = null;
+
+        try
+        {
+            var result = await BankRunService.RecordBankRunAsync(_userId!, _formModel);
+            if (result.Success)
+            {
+                Snackbar.Add("Bank run recorded successfully.", Severity.Success);
+                _showDialog = false;
+                await LoadBankRunsAsync();
+            }
+            else
+            {
+                _errorMessage = result.ErrorMessage;
+            }
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+}

@@ -28,6 +28,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<AppConfig> AppConfigs { get; set; }
     public DbSet<Notification> Notifications { get; set; }
     public DbSet<WalletAdjustment> WalletAdjustments { get; set; }
+    public DbSet<BankRun> BankRuns { get; set; }
 
     public override int SaveChanges()
     {
@@ -444,6 +445,42 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
             entity.HasIndex(e => new { e.RecipientUserId, e.IsRead, e.CreatedAt });
             entity.HasIndex(e => new { e.RecipientUserId, e.CreatedAt });
+        });
+
+        // Configure BankRun
+        builder.Entity<BankRun>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Amount).HasPrecision(18, 2);
+            entity.Property(e => e.Currency).IsRequired().HasMaxLength(3);
+            entity.Property(e => e.ReceiptNumber).HasMaxLength(100);
+            entity.Property(e => e.ReceiptImageContentType).HasMaxLength(100);
+            entity.Property(e => e.Notes).HasMaxLength(2000);
+            entity.Property(e => e.RecordedByUserId).IsRequired().HasMaxLength(450);
+
+            entity.HasOne(e => e.CashSession)
+                .WithMany()
+                .HasForeignKey(e => e.CashSessionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Agent)
+                .WithMany()
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.FromWallet)
+                .WithMany()
+                .HasForeignKey(e => e.FromWalletId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.ToWallet)
+                .WithMany()
+                .HasForeignKey(e => e.ToWalletId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.RecordedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.RecordedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(e => new { e.CashSessionId, e.AgentId });
+            entity.HasIndex(e => new { e.CashSessionId, e.CreatedAt });
         });
 
         // Seed default app config
