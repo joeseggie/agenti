@@ -453,8 +453,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Amount).HasPrecision(18, 2);
             entity.Property(e => e.Currency).IsRequired().HasMaxLength(3);
-            entity.Property(e => e.Denominations).HasMaxLength(2000);
             entity.Property(e => e.ReceiptNumber).HasMaxLength(100);
+            entity.Property(e => e.ReceiptImageContentType).HasMaxLength(100);
             entity.Property(e => e.Notes).HasMaxLength(2000);
             entity.Property(e => e.RecordedByUserId).IsRequired().HasMaxLength(450);
 

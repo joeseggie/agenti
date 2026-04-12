@@ -7,7 +7,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace EastSeat.Agenti.Web.Data.Migrations
 {
     /// <inheritdoc />
-    public partial class AddBankRuns : Migration
+    public partial class CreateBankRuns : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -24,8 +24,9 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                     ToWalletId = table.Column<long>(type: "bigint", nullable: false),
                     Amount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
                     Currency = table.Column<string>(type: "character varying(3)", maxLength: 3, nullable: false),
-                    Denominations = table.Column<string>(type: "character varying(2000)", maxLength: 2000, nullable: true),
                     ReceiptNumber = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: true),
+                    ReceiptImage = table.Column<byte[]>(type: "bytea", nullable: true),
+                    ReceiptImageContentType = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: true),
                     Notes = table.Column<string>(type: "character varying(2000)", maxLength: 2000, nullable: true),
                     RecordedByUserId = table.Column<string>(type: "character varying(450)", maxLength: 450, nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
@@ -104,3 +105,4 @@ namespace EastSeat.Agenti.Web.Data.Migrations
         }
     }
 }
+

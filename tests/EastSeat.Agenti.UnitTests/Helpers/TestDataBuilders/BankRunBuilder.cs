@@ -14,8 +14,9 @@ public class BankRunBuilder
     private long _toWalletId = 2;
     private decimal _amount = 100_000m;
     private string _currency = "UGX";
-    private string? _denominations;
     private string? _receiptNumber;
+    private byte[]? _receiptImage;
+    private string? _receiptImageContentType;
     private string? _notes;
     private string _recordedByUserId = "user1";
     private DateTimeOffset _createdAt = DateTimeOffset.UtcNow;
@@ -27,9 +28,9 @@ public class BankRunBuilder
     public BankRunBuilder WithToWalletId(long toWalletId) { _toWalletId = toWalletId; return this; }
     public BankRunBuilder WithAmount(decimal amount) { _amount = amount; return this; }
     public BankRunBuilder WithReceiptNumber(string? receiptNumber) { _receiptNumber = receiptNumber; return this; }
+    public BankRunBuilder WithReceiptImage(byte[]? image, string? contentType = "image/jpeg") { _receiptImage = image; _receiptImageContentType = contentType; return this; }
     public BankRunBuilder WithNotes(string? notes) { _notes = notes; return this; }
     public BankRunBuilder WithRecordedByUserId(string userId) { _recordedByUserId = userId; return this; }
-    public BankRunBuilder WithDenominations(string? denominations) { _denominations = denominations; return this; }
 
     public BankRun Build() => new()
     {
@@ -40,8 +41,9 @@ public class BankRunBuilder
         ToWalletId = _toWalletId,
         Amount = _amount,
         Currency = _currency,
-        Denominations = _denominations,
         ReceiptNumber = _receiptNumber,
+        ReceiptImage = _receiptImage,
+        ReceiptImageContentType = _receiptImageContentType,
         Notes = _notes,
         RecordedByUserId = _recordedByUserId,
         CreatedAt = _createdAt

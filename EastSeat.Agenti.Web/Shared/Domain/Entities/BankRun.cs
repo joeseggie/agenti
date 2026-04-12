@@ -18,14 +18,19 @@ public class BankRun
     public string Currency { get; set; } = "UGX";
 
     /// <summary>
-    /// JSON-serialised denomination breakdown (e.g. {"50000":4,"20000":3}).
-    /// </summary>
-    public string? Denominations { get; set; }
-
-    /// <summary>
     /// Bank deposit receipt / reference number.
     /// </summary>
     public string? ReceiptNumber { get; set; }
+
+    /// <summary>
+    /// Binary content of the scanned / photographed bank deposit slip.
+    /// </summary>
+    public byte[]? ReceiptImage { get; set; }
+
+    /// <summary>
+    /// MIME type of the stored receipt image (e.g. "image/jpeg", "image/png").
+    /// </summary>
+    public string? ReceiptImageContentType { get; set; }
 
     public string? Notes { get; set; }
     public string RecordedByUserId { get; set; } = string.Empty;

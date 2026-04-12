@@ -123,7 +123,7 @@ public class BankRunServiceTests : IDisposable
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 200_000m,
             ReceiptNumber = "REC-001",
             Notes = "Test bank run"
@@ -151,22 +151,24 @@ public class BankRunServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RecordBankRunAsync_WithDenominations_StoresDenominationsJson()
+    public async Task RecordBankRunAsync_WithReceiptImage_StoresImageBytes()
     {
         SeedApprovedOpeningCount();
-        var denominations = "{\"50000\":2,\"20000\":5}";
+        var imageBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }; // JPEG header
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 200_000m,
-            Denominations = denominations
+            ReceiptImage = imageBytes,
+            ReceiptImageContentType = "image/jpeg"
         };
 
         var result = await _sut.RecordBankRunAsync(_testUser.Id, form);
 
         result.Success.Should().BeTrue();
         var saved = await _dbContext.BankRuns.FirstOrDefaultAsync();
-        saved!.Denominations.Should().Be(denominations);
+        saved!.ReceiptImage.Should().Equal(imageBytes);
+        saved.ReceiptImageContentType.Should().Be("image/jpeg");
     }
 
     [Fact]
@@ -178,7 +180,7 @@ public class BankRunServiceTests : IDisposable
 
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 100_000m
         };
 
@@ -201,7 +203,7 @@ public class BankRunServiceTests : IDisposable
 
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 100_000m
         };
 
@@ -219,7 +221,7 @@ public class BankRunServiceTests : IDisposable
 
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 100_000m
         };
 
@@ -235,7 +237,7 @@ public class BankRunServiceTests : IDisposable
         // Session exists but no approved opening count
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 100_000m
         };
 
@@ -261,7 +263,7 @@ public class BankRunServiceTests : IDisposable
 
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 100_000m
         };
 
@@ -287,7 +289,7 @@ public class BankRunServiceTests : IDisposable
 
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 100_000m
         };
 
@@ -303,7 +305,7 @@ public class BankRunServiceTests : IDisposable
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 0m
         };
 
@@ -319,7 +321,7 @@ public class BankRunServiceTests : IDisposable
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = -100m
         };
 
@@ -339,7 +341,7 @@ public class BankRunServiceTests : IDisposable
 
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 100_000m
         };
 
@@ -350,42 +352,36 @@ public class BankRunServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RecordBankRunAsync_ToWalletNotFound_ReturnsError()
+    public async Task RecordBankRunAsync_ToWalletTypeNotFound_ReturnsError()
     {
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            ToWalletId = 9999,
+            ToWalletTypeId = 9999,  // No wallet of this type exists for the agent
             Amount = 100_000m
         };
 
         var result = await _sut.RecordBankRunAsync(_testUser.Id, form);
 
         result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("Destination wallet not found");
+        result.ErrorMessage.Should().Contain("No active wallet found for the selected wallet type");
     }
 
     [Fact]
-    public async Task RecordBankRunAsync_ToWalletNotBankType_ReturnsError()
+    public async Task RecordBankRunAsync_ToWalletTypeCash_ReturnsError()
     {
         SeedApprovedOpeningCount();
-        // Use a seeded MobileMoney type (Id=2 MTN Mobile Money) for the wrong-type wallet
-        var mmType = _dbContext.WalletTypes.Find(2L)!;
-        var mmWallet = WalletBuilder.Default().WithId(3).WithAgentId(_testAgent.Id).WithWalletTypeId(mmType.Id).WithBalance(0m).Build();
-        mmWallet.WalletType = mmType;
-        _dbContext.Wallets.Add(mmWallet);
-        await _dbContext.SaveChangesAsync();
-
+        // Cash wallet type is not allowed as destination
         var form = new BankRunFormModel
         {
-            ToWalletId = mmWallet.Id,
+            ToWalletTypeId = _cashWalletType.Id,
             Amount = 100_000m
         };
 
         var result = await _sut.RecordBankRunAsync(_testUser.Id, form);
 
         result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("destination wallet must be a Bank wallet");
+        result.ErrorMessage.Should().Contain("destination wallet type must not be Cash");
     }
 
     [Fact]
@@ -394,7 +390,7 @@ public class BankRunServiceTests : IDisposable
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 600_000m  // More than the 500_000 balance
         };
 
@@ -410,7 +406,7 @@ public class BankRunServiceTests : IDisposable
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 100_000m
         };
 
@@ -432,7 +428,7 @@ public class BankRunServiceTests : IDisposable
         SeedApprovedOpeningCount();
         var form = new BankRunFormModel
         {
-            ToWalletId = _bankWallet.Id,
+            ToWalletTypeId = _bankWalletType.Id,
             Amount = 100_000m,
             ReceiptNumber = "  REC-001  ",
             Notes = "  Some notes  "
@@ -644,6 +640,57 @@ public class BankRunServiceTests : IDisposable
 
         result.Should().HaveCount(1); // Only active bank wallet
         result[0].Id.Should().Be(_bankWallet.Id);
+    }
+
+    #endregion
+
+    #region GetAgentNonCashWalletTypesAsync Tests
+
+    [Fact]
+    public async Task GetAgentNonCashWalletTypesAsync_ReturnsNonCashWalletTypes()
+    {
+        var result = await _sut.GetAgentNonCashWalletTypesAsync(_testUser.Id);
+
+        result.Should().HaveCount(1);
+        result[0].WalletTypeId.Should().Be(_bankWalletType.Id);
+        result[0].Name.Should().Be(_bankWalletType.Name);
+    }
+
+    [Fact]
+    public async Task GetAgentNonCashWalletTypesAsync_ExcludesCashWallet()
+    {
+        var result = await _sut.GetAgentNonCashWalletTypesAsync(_testUser.Id);
+
+        result.Should().NotContain(w => w.WalletTypeId == _cashWalletType.Id);
+    }
+
+    [Fact]
+    public async Task GetAgentNonCashWalletTypesAsync_UserNotAgent_ReturnsEmpty()
+    {
+        var nonAgent = UserBuilder.Default().WithEmail("nonagent4@test.com").Build();
+        _dbContext.Users.Add(nonAgent);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.GetAgentNonCashWalletTypesAsync(nonAgent.Id);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetAgentNonCashWalletTypesAsync_IncludesMobileMoneyWallet()
+    {
+        // Add a mobile money wallet for the agent
+        var mmType = _dbContext.WalletTypes.Find(2L)!; // MTN Mobile Money (seeded)
+        var mmWallet = WalletBuilder.Default().WithId(3).WithAgentId(_testAgent.Id).WithWalletTypeId(mmType.Id).WithBalance(0m).Build();
+        mmWallet.WalletType = mmType;
+        _dbContext.Wallets.Add(mmWallet);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.GetAgentNonCashWalletTypesAsync(_testUser.Id);
+
+        result.Should().HaveCount(2);
+        result.Should().Contain(w => w.WalletTypeId == _bankWalletType.Id);
+        result.Should().Contain(w => w.WalletTypeId == mmType.Id);
     }
 
     #endregion

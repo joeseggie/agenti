@@ -93,18 +93,18 @@ public class BankRunService(
 
             var toWallet = await dbContext.Wallets
                 .Include(w => w.WalletType)
-                .FirstOrDefaultAsync(w => w.Id == model.ToWalletId && w.AgentId == agent.Id && w.IsActive);
+                .FirstOrDefaultAsync(w => w.WalletTypeId == model.ToWalletTypeId && w.AgentId == agent.Id && w.IsActive);
 
             if (toWallet == null)
             {
                 await dbTransaction.RollbackAsync();
-                return BankRunSaveResult.Error("Destination wallet not found or does not belong to this agent.");
+                return BankRunSaveResult.Error("No active wallet found for the selected wallet type.");
             }
 
-            if (toWallet.WalletType?.Type != WalletTypeEnum.Bank)
+            if (toWallet.WalletType?.Type == WalletTypeEnum.Cash)
             {
                 await dbTransaction.RollbackAsync();
-                return BankRunSaveResult.Error("The destination wallet must be a Bank wallet.");
+                return BankRunSaveResult.Error("The destination wallet type must not be Cash.");
             }
 
             if (model.Amount > fromWallet.Balance)
@@ -127,11 +127,12 @@ public class BankRunService(
                 CashSessionId = session.Id,
                 AgentId = agent.Id,
                 FromWalletId = fromWallet.Id,
-                ToWalletId = model.ToWalletId,
+                ToWalletId = toWallet.Id,
                 Amount = model.Amount,
                 Currency = fromWallet.Currency,
-                Denominations = model.Denominations,
                 ReceiptNumber = model.ReceiptNumber?.Trim(),
+                ReceiptImage = model.ReceiptImage,
+                ReceiptImageContentType = model.ReceiptImageContentType,
                 Notes = model.Notes?.Trim(),
                 RecordedByUserId = userId,
                 CreatedAt = DateTimeOffset.UtcNow
@@ -161,7 +162,7 @@ public class BankRunService(
         {
             { "AgentId", agent.Id.ToString() },
             { "SessionId", session.Id.ToString() },
-            { "ToWalletId", model.ToWalletId.ToString() },
+            { "ToWalletTypeId", model.ToWalletTypeId.ToString() },
             { "Amount", model.Amount.ToString("F2") }
         });
 
@@ -261,9 +262,28 @@ public class BankRunService(
         AgentCode = b.Agent?.Code ?? "N/A",
         Amount = b.Amount,
         Currency = b.Currency,
-        Denominations = b.Denominations,
+        HasReceiptImage = b.ReceiptImage != null && b.ReceiptImage.Length > 0,
         ReceiptNumber = b.ReceiptNumber,
         Notes = b.Notes,
         CreatedAt = b.CreatedAt
     };
+
+    /// <inheritdoc />
+    public async Task<List<WalletTypeOptionDto>> GetAgentNonCashWalletTypesAsync(string userId)
+    {
+        var agent = await GetAgentForUserAsync(userId);
+        if (agent == null) return [];
+
+        return await dbContext.Wallets
+            .Include(w => w.WalletType)
+            .Where(w => w.AgentId == agent.Id && w.IsActive && w.WalletType!.Type != WalletTypeEnum.Cash)
+            .OrderBy(w => w.WalletType!.Name)
+            .Select(w => new WalletTypeOptionDto
+            {
+                WalletTypeId = w.WalletTypeId,
+                Name = w.WalletType!.Name
+            })
+            .Distinct()
+            .ToListAsync();
+    }
 }

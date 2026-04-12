@@ -2,7 +2,6 @@
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
 @using EastSeat.Agenti.Web.Features.BankRuns
-@using EastSeat.Agenti.Web.Features.CashCounts
 @using EastSeat.Agenti.Shared.Domain.Enums
 @attribute [Authorize]
 @rendermode InteractiveServer
@@ -54,6 +53,7 @@
                 <MudTh>To Wallet</MudTh>
                 <MudTh Style="text-align:right">Amount</MudTh>
                 <MudTh>Receipt #</MudTh>
+                <MudTh>Slip</MudTh>
                 <MudTh>Notes</MudTh>
             </HeaderContent>
             <RowTemplate>
@@ -63,6 +63,16 @@
                 <MudTd DataLabel="To Wallet">@context.ToWalletName</MudTd>
                 <MudTd DataLabel="Amount" Style="text-align:right">@context.Currency @context.Amount.ToString("N0")</MudTd>
                 <MudTd DataLabel="Receipt #">@(context.ReceiptNumber ?? "-")</MudTd>
+                <MudTd DataLabel="Slip">
+                    @if (context.HasReceiptImage)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.Image" Color="Color.Success" Title="Receipt image attached" />
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Secondary">-</MudText>
+                    }
+                </MudTd>
                 <MudTd DataLabel="Notes">@(context.Notes ?? "-")</MudTd>
             </RowTemplate>
         </MudTable>
@@ -99,19 +109,20 @@
                         </MudField>
                     </MudItem>
                     <MudItem xs="12">
-                        <MudSelect T="long" Label="Bank Wallet (Destination)" @bind-Value="_formModel.ToWalletId"
-                                   Required="true" RequiredError="Destination wallet is required."
-                                   HelperText="Select the bank wallet you are depositing into.">
-                            @foreach (var w in _bankWallets)
+                        <MudSelect T="long" Label="Wallet Type (Destination)" @bind-Value="_formModel.ToWalletTypeId"
+                                   Required="true" RequiredError="Destination wallet type is required."
+                                   HelperText="Select the wallet type you are depositing into.">
+                            @foreach (var wt in _walletTypeOptions)
                             {
-                                <MudSelectItem T="long" Value="@w.Id">@w.Name</MudSelectItem>
+                                <MudSelectItem T="long" Value="@wt.WalletTypeId">@wt.Name</MudSelectItem>
                             }
                         </MudSelect>
                     </MudItem>
                     <MudItem xs="12">
                         <MudNumericField T="decimal" Label="Amount (UGX)" @bind-Value="_formModel.Amount"
                                          Required="true" RequiredError="Amount is required."
-                                         Min="1" Format="N0" />
+                                         Min="1" Format="N0"
+                                         HelperText="Enter the amount shown on the bank deposit slip." />
                     </MudItem>
                     <MudItem xs="12">
                         <MudTextField Label="Receipt / Reference Number"
@@ -119,84 +130,36 @@
                                       HelperText="Bank deposit slip or receipt number." />
                     </MudItem>
                     <MudItem xs="12">
+                        <MudText Typo="Typo.body2" Class="mb-1">Bank Deposit Slip / Receipt Image</MudText>
+                        <InputFile id="receiptImageInput" OnChange="OnReceiptImageSelected" accept="image/*" style="display:none" />
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudButton HtmlTag="label"
+                                       for="receiptImageInput"
+                                       Variant="Variant.Outlined"
+                                       Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.CameraAlt"
+                                       Size="Size.Small">
+                                @(_formModel.ReceiptImage == null ? "Attach Photo" : "Change Photo")
+                            </MudButton>
+                            @if (_formModel.ReceiptImage != null)
+                            {
+                                <MudText Typo="Typo.body2" Color="Color.Success">
+                                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" Class="mr-1" />
+                                    @_receiptImageFileName
+                                </MudText>
+                            }
+                        </MudStack>
+                        @if (_formModel.ReceiptImage != null && _receiptImageDataUrl != null)
+                        {
+                            <MudPaper Class="mt-2 pa-2" Elevation="1" Style="max-width: 320px;">
+                                <img src="@_receiptImageDataUrl" alt="Receipt" style="max-width: 100%; border-radius: 4px;" />
+                            </MudPaper>
+                        }
+                    </MudItem>
+                    <MudItem xs="12">
                         <MudTextField Label="Notes" @bind-Value="_formModel.Notes"
                                       Lines="3" HelperText="Optional notes about this bank run." />
                     </MudItem>
-                    <MudItem xs="12">
-                        <MudButton StartIcon="@Icons.Material.Filled.ViewList" Variant="Variant.Text"
-                                   Color="Color.Default" Size="Size.Small"
-                                   OnClick="@(() => _showDenominations = !_showDenominations)">
-                            @(_showDenominations ? "Hide" : "Show") Denomination Breakdown (Optional)
-                        </MudButton>
-                    </MudItem>
-                    @if (_showDenominations)
-                    {
-                        <MudItem xs="12">
-                            <MudSimpleTable Dense="true" Hover="true">
-                                <thead>
-                                    <tr>
-                                        <th>Denomination</th>
-                                        <th style="text-align: right; width: 90px;">Qty</th>
-                                        <th style="text-align: right;">Subtotal (UGX)</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr>
-                                        <td colspan="3"><strong>Notes</strong></td>
-                                    </tr>
-                                    @foreach (var denom in UgxDenominations.Notes)
-                                    {
-                                        var denomKey = denom.ToString();
-                                        var qty = _denominations.Notes[denomKey];
-                                        <tr>
-                                            <td>UGX @denom.ToString("N0")</td>
-                                            <td style="text-align: right;">
-                                                <MudNumericField T="int"
-                                                    Value="@qty"
-                                                    ValueChanged="@((int v) => OnDenomChanged(denomKey, v, true))"
-                                                    Min="0" Variant="Variant.Outlined" Margin="Margin.Dense"
-                                                    Style="max-width: 80px;" HideSpinButtons="true" />
-                                            </td>
-                                            <td style="text-align: right;">@((qty * denom).ToString("N0"))</td>
-                                        </tr>
-                                    }
-                                    <tr style="font-weight: 600;">
-                                        <td colspan="2">Notes Subtotal</td>
-                                        <td style="text-align: right;">@_denominations.NotesTotal.ToString("N0")</td>
-                                    </tr>
-                                    <tr>
-                                        <td colspan="3"><strong>Coins</strong></td>
-                                    </tr>
-                                    @foreach (var denom in UgxDenominations.Coins)
-                                    {
-                                        var denomKey = denom.ToString();
-                                        var qty = _denominations.Coins[denomKey];
-                                        <tr>
-                                            <td>UGX @denom.ToString("N0")</td>
-                                            <td style="text-align: right;">
-                                                <MudNumericField T="int"
-                                                    Value="@qty"
-                                                    ValueChanged="@((int v) => OnDenomChanged(denomKey, v, false))"
-                                                    Min="0" Variant="Variant.Outlined" Margin="Margin.Dense"
-                                                    Style="max-width: 80px;" HideSpinButtons="true" />
-                                            </td>
-                                            <td style="text-align: right;">@((qty * denom).ToString("N0"))</td>
-                                        </tr>
-                                    }
-                                    <tr style="font-weight: 600;">
-                                        <td colspan="2">Coins Subtotal</td>
-                                        <td style="text-align: right;">@_denominations.CoinsTotal.ToString("N0")</td>
-                                    </tr>
-                                </tbody>
-                                <tfoot>
-                                    <tr style="font-weight: 700;">
-                                        <td colspan="2">Total</td>
-                                        <td style="text-align: right;">UGX @_denominations.Total.ToString("N0")</td>
-                                    </tr>
-                                </tfoot>
-                            </MudSimpleTable>
-                        </MudItem>
-                    }
                 </MudGrid>
             </MudForm>
             @if (!string.IsNullOrEmpty(_errorMessage))
@@ -226,16 +189,18 @@
     private MudForm? _form;
     private BankRunFormModel _formModel = new();
     private string? _userId;
-    private DenominationBreakdown _denominations = DenominationBreakdown.Empty;
-    private bool _showDenominations;
 
-    // Cash wallet displayed as read-only info; only bank wallets are selectable
+    // Cash wallet displayed as read-only; wallet types listed for destination selection
     private WalletEntry? _cashWallet;
-    private List<WalletEntry> _bankWallets = [];
+    private List<WalletTypeOptionDto> _walletTypeOptions = [];
+
+    // Receipt image preview state
+    private string? _receiptImageFileName;
+    private string? _receiptImageDataUrl;
 
     private readonly DialogOptions _dialogOptions = new()
     {
-        MaxWidth = MaxWidth.Medium,
+        MaxWidth = MaxWidth.Small,
         FullWidth = true,
         CloseOnEscapeKey = true
     };
@@ -268,8 +233,8 @@
     private async Task OpenRecordDialog()
     {
         _formModel = new BankRunFormModel();
-        _denominations = DenominationBreakdown.Empty;
-        _showDenominations = false;
+        _receiptImageFileName = null;
+        _receiptImageDataUrl = null;
         _errorMessage = null;
         await LoadWalletsAsync();
         _showDialog = true;
@@ -283,13 +248,35 @@
         {
             var cashWallets = await BankRunService.GetAgentWalletsAsync(_userId, WalletTypeEnum.Cash);
             _cashWallet = cashWallets.Select(w => new WalletEntry(w.Id, w.Name, w.Balance)).FirstOrDefault();
-            _bankWallets = (await BankRunService.GetAgentWalletsAsync(_userId, WalletTypeEnum.Bank))
-                .Select(w => new WalletEntry(w.Id, w.Name, w.Balance)).ToList();
+            _walletTypeOptions = await BankRunService.GetAgentNonCashWalletTypesAsync(_userId);
         }
         catch
         {
             _cashWallet = null;
-            _bankWallets = [];
+            _walletTypeOptions = [];
+        }
+    }
+
+    private async Task OnReceiptImageSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        const long maxSizeBytes = 5 * 1024 * 1024; // 5 MB
+        try
+        {
+            await using var stream = file.OpenReadStream(maxSizeBytes);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+
+            _formModel.ReceiptImage = ms.ToArray();
+            _formModel.ReceiptImageContentType = file.ContentType;
+            _receiptImageFileName = file.Name;
+            _receiptImageDataUrl = $"data:{file.ContentType};base64,{Convert.ToBase64String(_formModel.ReceiptImage)}";
+        }
+        catch
+        {
+            Snackbar.Add("Failed to read the image. Ensure the file is an image and under 5 MB.", Severity.Error);
         }
     }
 
@@ -297,20 +284,6 @@
     {
         _showDialog = false;
         _errorMessage = null;
-    }
-
-    private void OnDenomChanged(string denomKey, int value, bool isNote)
-    {
-        if (isNote)
-            _denominations.Notes[denomKey] = value;
-        else
-            _denominations.Coins[denomKey] = value;
-
-        // Sync the amount and the JSON breakdown with the entered denominations
-        if (_denominations.Total > 0)
-            _formModel.Amount = _denominations.Total;
-
-        _formModel.Denominations = _denominations.ToJson();
     }
 
     private async Task SubmitBankRunAsync()

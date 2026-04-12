@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace EastSeat.Agenti.Web.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20260411212508_AddBankRuns")]
-    partial class AddBankRuns
+    [Migration("20260412080447_AddBankRunsV2")]
+    partial class AddBankRunsV2
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -160,16 +160,19 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .HasMaxLength(3)
                         .HasColumnType("character varying(3)");
 
-                    b.Property<string>("Denominations")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
-
                     b.Property<long>("FromWalletId")
                         .HasColumnType("bigint");
 
                     b.Property<string>("Notes")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
+
+                    b.Property<byte[]>("ReceiptImage")
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("ReceiptImageContentType")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<string>("ReceiptNumber")
                         .HasMaxLength(100)

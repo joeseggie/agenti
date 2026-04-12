@@ -5,20 +5,22 @@ namespace EastSeat.Agenti.Web.Features.BankRuns;
 /// </summary>
 public class BankRunFormModel
 {
-    /// <summary>Bank wallet to deposit into (destination).</summary>
-    public long ToWalletId { get; set; }
-
-    /// <summary>Total amount deposited at the bank.</summary>
-    public decimal Amount { get; set; }
-
     /// <summary>
-    /// JSON-serialised denomination breakdown matching the bank receipt
-    /// (e.g. {"50000":4,"20000":3}).
+    /// Wallet type the agent is depositing into (destination). Must not be Cash.
     /// </summary>
-    public string? Denominations { get; set; }
+    public long ToWalletTypeId { get; set; }
+
+    /// <summary>Total amount deposited at the bank (must match the deposit slip).</summary>
+    public decimal Amount { get; set; }
 
     /// <summary>Bank deposit receipt / reference number.</summary>
     public string? ReceiptNumber { get; set; }
+
+    /// <summary>Binary content of the photographed bank deposit slip.</summary>
+    public byte[]? ReceiptImage { get; set; }
+
+    /// <summary>MIME type of the receipt image (e.g. "image/jpeg").</summary>
+    public string? ReceiptImageContentType { get; set; }
 
     public string? Notes { get; set; }
 }
@@ -36,7 +38,7 @@ public class BankRunDto
     public string AgentCode { get; set; } = string.Empty;
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "UGX";
-    public string? Denominations { get; set; }
+    public bool HasReceiptImage { get; set; }
     public string? ReceiptNumber { get; set; }
     public string? Notes { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -63,4 +65,13 @@ public class AgentWalletDto
     public long Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public decimal Balance { get; set; }
+}
+
+/// <summary>
+/// Wallet type option for the bank-run destination selector (excludes Cash).
+/// </summary>
+public class WalletTypeOptionDto
+{
+    public long WalletTypeId { get; set; }
+    public string Name { get; set; } = string.Empty;
 }
