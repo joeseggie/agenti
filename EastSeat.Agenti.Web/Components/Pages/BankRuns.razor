@@ -34,13 +34,17 @@
     @if (!_isLoading && _currentSession?.CanRecordBankRun != true)
     {
         <MudAlert Severity="Severity.Warning" Class="mt-4">
-            @if (_currentSession == null || _currentSession.SessionId == null)
+            @if (_currentSession != null && (!string.IsNullOrWhiteSpace(_currentSession.BlockReason) || !string.IsNullOrWhiteSpace(_currentSession.StatusText)))
             {
-                <span>No active cash session. An open session with an approved opening count is required to record a bank run.</span>
+                <span>@(!string.IsNullOrWhiteSpace(_currentSession.BlockReason) ? _currentSession.BlockReason : _currentSession.StatusText)</span>
             }
-            else if (_currentSession.HasClosingCount)
+            else if (_currentSession?.HasClosingCount == true)
             {
                 <span>A closing cash count has already been submitted. Bank runs cannot be recorded after the closing count is submitted.</span>
+            }
+            else if (_currentSession == null || _currentSession.SessionId == null)
+            {
+                <span>No active cash session. An open session with an approved opening count is required to record a bank run.</span>
             }
             else
             {
