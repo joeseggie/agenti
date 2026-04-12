@@ -236,7 +236,8 @@
     {
         var auth = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         _userId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        await Task.WhenAll(LoadBankRunsAsync(), LoadCurrentSessionAsync());
+        await LoadBankRunsAsync();
+        await LoadCurrentSessionAsync();
     }
 
     private async Task LoadCurrentSessionAsync()
