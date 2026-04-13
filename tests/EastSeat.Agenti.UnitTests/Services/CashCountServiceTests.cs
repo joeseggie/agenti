@@ -201,6 +201,115 @@ public class CashCountServiceTests : IDisposable
         result.BlockReason.Should().NotBeNullOrEmpty();
     }
 
+    [Fact]
+    public async Task GetCurrentSessionAsync_WithApprovedOpening_CanRecordBankRun()
+    {
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var approvedOpening = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .Build();
+        _dbContext.CashCounts.Add(approvedOpening);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentSessionAsync(_testUser.Id);
+
+        result.CanRecordBankRun.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetCurrentSessionAsync_WithNoOpenSession_CannotRecordBankRun()
+    {
+        var result = await _sut.GetCurrentSessionAsync(_testUser.Id);
+
+        result.CanRecordBankRun.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetCurrentSessionAsync_WithNoApprovedOpening_CannotRecordBankRun()
+    {
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentSessionAsync(_testUser.Id);
+
+        result.CanRecordBankRun.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetCurrentSessionAsync_WithSubmittedClosingCount_CannotRecordBankRun()
+    {
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var approvedOpening = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .Build();
+        var pendingClosing = CashCountBuilder.Default()
+            .WithId(99)
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .WithIsOpening(false)
+            .WithStatus(CashCountStatus.PendingApproval)
+            .Build();
+        _dbContext.CashCounts.AddRange(approvedOpening, pendingClosing);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentSessionAsync(_testUser.Id);
+
+        result.CanRecordBankRun.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetCurrentSessionAsync_WithApprovedClosingCount_CannotRecordBankRun()
+    {
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var approvedOpening = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .Build();
+        var approvedClosing = CashCountBuilder.Default()
+            .WithId(99)
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .WithIsOpening(false)
+            .WithStatus(CashCountStatus.Approved)
+            .Build();
+        _dbContext.CashCounts.AddRange(approvedOpening, approvedClosing);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentSessionAsync(_testUser.Id);
+
+        result.CanRecordBankRun.Should().BeFalse();
+    }
+
     #endregion
 
     #region SaveCashCountAsync Tests

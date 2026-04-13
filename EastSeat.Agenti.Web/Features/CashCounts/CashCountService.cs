@@ -133,6 +133,7 @@ public class CashCountService(
                       agentOpeningCount.Status == CashCountStatus.Rejected;
         var canClose = hasApprovedOpening && !hasSubmittedOrApprovedClosing;
         var canRecordAdjustment = hasApprovedOpening && !hasSubmittedOrApprovedClosing;
+        var canRecordBankRun = hasApprovedOpening && !hasSubmittedOrApprovedClosing;
 
         // Get total adjustments for this agent in this session
         decimal totalAdjustments = 0;
@@ -155,6 +156,7 @@ public class CashCountService(
             CanPerformOpeningCount = canOpen,
             CanPerformClosingCount = canClose,
             CanRecordAdjustment = canRecordAdjustment,
+            CanRecordBankRun = canRecordBankRun,
             TotalAdjustments = totalAdjustments
         };
     }
