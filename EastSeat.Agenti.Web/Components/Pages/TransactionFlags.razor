@@ -1,0 +1,343 @@
+@page "/transaction-flags"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using EastSeat.Agenti.Web.Features.Transactions
+@using EastSeat.Agenti.Shared.Domain.Enums
+@attribute [Authorize(Roles = "Admin,Supervisor")]
+@rendermode InteractiveServer
+@inject ITransactionService TransactionService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>Transaction Flags - Agenti</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudGrid>
+        <MudItem xs="12" sm="8">
+            <MudText Typo="Typo.h4" Class="mb-2">Transaction Flags</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Review and investigate transactions flagged as erroneous by agents.
+            </MudText>
+        </MudItem>
+        <MudItem xs="12" sm="4" Class="d-flex justify-end align-center" Style="gap: 8px;">
+            <MudSelect T="string" Value="_statusFilter" ValueChanged="OnStatusFilterChanged"
+                       Label="Filter by status"
+                       Variant="Variant.Outlined" Dense="true" Style="min-width: 180px;"
+                       AnchorOrigin="Origin.BottomLeft">
+                <MudSelectItem Value="@("")">All</MudSelectItem>
+                <MudSelectItem Value="@("PendingReview")">Pending Review</MudSelectItem>
+                <MudSelectItem Value="@("UnderInvestigation")">Under Investigation</MudSelectItem>
+                <MudSelectItem Value="@("Resolved")">Resolved</MudSelectItem>
+                <MudSelectItem Value="@("Dismissed")">Dismissed</MudSelectItem>
+            </MudSelect>
+            <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="LoadFlagsAsync"
+                       StartIcon="@Icons.Material.Filled.Refresh" Disabled="_isLoading">
+                Refresh
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+
+    @if (_isLoading)
+    {
+        <MudGrid Class="mt-4">
+            <MudItem xs="12" Class="d-flex justify-center">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    }
+    else if (_flags.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-4">
+            No transaction flags found.
+        </MudAlert>
+    }
+    else
+    {
+        <MudTable Items="@_flags" Hover="true" Striped="true" Dense="true" Elevation="2" Class="mt-4"
+                  Breakpoint="Breakpoint.Md">
+            <HeaderContent>
+                <MudTh>Agent</MudTh>
+                <MudTh>Transaction</MudTh>
+                <MudTh Style="text-align: right;">Amount (UGX)</MudTh>
+                <MudTh>Flagged At</MudTh>
+                <MudTh>Reason</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh Style="text-align: center;">Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Agent">
+                    <MudText Typo="Typo.body2">@context.FlaggedByAgentName</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@context.FlaggedByAgentCode</MudText>
+                </MudTd>
+                <MudTd DataLabel="Transaction">
+                    <MudText Typo="Typo.body2">@context.TransactionType.ToString()</MudText>
+                    @if (!string.IsNullOrWhiteSpace(context.TransactionReference))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Ref: @context.TransactionReference</MudText>
+                    }
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        @context.FromWalletName → @context.ToWalletName
+                    </MudText>
+                </MudTd>
+                <MudTd DataLabel="Amount" Style="text-align: right;">
+                    @context.TransactionAmount.ToString("N0")
+                </MudTd>
+                <MudTd DataLabel="Flagged At">
+                    <MudText Typo="Typo.body2">@context.FlaggedAt.ToLocalTime().ToString("MMM dd, yyyy")</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@context.FlaggedAt.ToLocalTime().ToString("HH:mm")</MudText>
+                </MudTd>
+                <MudTd DataLabel="Reason">
+                    <MudTooltip Text="@context.Reason" Placement="Placement.Top">
+                        <MudText Typo="Typo.body2" Style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            @context.Reason
+                        </MudText>
+                    </MudTooltip>
+                </MudTd>
+                <MudTd DataLabel="Status">
+                    <MudChip T="string" Size="Size.Small" Color="@GetFlagStatusColor(context.Status)">
+                        @context.StatusDisplay
+                    </MudChip>
+                    @if (context.ResolvedAt.HasValue && !string.IsNullOrWhiteSpace(context.ResolvedByName))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">
+                            by @context.ResolvedByName
+                        </MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Actions" Style="text-align: center;">
+                    @if (context.Status == TransactionFlagStatus.PendingReview)
+                    {
+                        <MudStack Row="true" Spacing="1" Justify="Justify.Center">
+                            <MudTooltip Text="Start Investigation">
+                                <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Info"
+                                               Size="Size.Small"
+                                               OnClick="@(() => StartInvestigationAsync(context))"
+                                               Disabled="_isProcessing" />
+                            </MudTooltip>
+                            <MudTooltip Text="Dismiss">
+                                <MudIconButton Icon="@Icons.Material.Filled.Cancel" Color="Color.Default"
+                                               Size="Size.Small"
+                                               OnClick="@(() => ShowResolutionDialog(context, dismiss: true))"
+                                               Disabled="_isProcessing" />
+                            </MudTooltip>
+                        </MudStack>
+                    }
+                    else if (context.Status == TransactionFlagStatus.UnderInvestigation)
+                    {
+                        <MudStack Row="true" Spacing="1" Justify="Justify.Center">
+                            <MudTooltip Text="Resolve">
+                                <MudIconButton Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success"
+                                               Size="Size.Small"
+                                               OnClick="@(() => ShowResolutionDialog(context, dismiss: false))"
+                                               Disabled="_isProcessing" />
+                            </MudTooltip>
+                            <MudTooltip Text="Dismiss">
+                                <MudIconButton Icon="@Icons.Material.Filled.Cancel" Color="Color.Default"
+                                               Size="Size.Small"
+                                               OnClick="@(() => ShowResolutionDialog(context, dismiss: true))"
+                                               Disabled="_isProcessing" />
+                            </MudTooltip>
+                        </MudStack>
+                    }
+                    else
+                    {
+                        @if (!string.IsNullOrWhiteSpace(context.InvestigationNotes))
+                        {
+                            <MudTooltip Text="@context.InvestigationNotes" Placement="Placement.Left">
+                                <MudIconButton Icon="@Icons.Material.Filled.Info" Color="Color.Default" Size="Size.Small" />
+                            </MudTooltip>
+                        }
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudContainer>
+
+@* Resolution / dismissal inline form *@
+@if (_resolutionTarget != null)
+{
+    <MudOverlay Visible="true" DarkBackground="true" ZIndex="9999">
+        <MudCard Style="min-width: 400px; max-width: 600px; padding: 16px;">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">
+                        @(_isDismissing ? "Dismiss Flag" : "Resolve Flag")
+                    </MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudText Typo="Typo.body2" Class="mb-3">
+                    @(_isDismissing
+                        ? "Provide a reason for dismissing this flag (no action needed)."
+                        : "Describe the resolution outcome for this flagged transaction.")
+                </MudText>
+                <MudTextField @bind-Value="_resolutionNotes"
+                              Label="Notes"
+                              Variant="Variant.Outlined"
+                              Lines="3"
+                              HelperText="Minimum 10 characters"
+                              MaxLength="2000"
+                              Immediate="true"
+                              Error="@(!string.IsNullOrEmpty(_resolutionError))"
+                              ErrorText="@_resolutionError" />
+            </MudCardContent>
+            <MudCardActions Class="d-flex justify-end gap-2">
+                <MudButton Variant="Variant.Text" OnClick="CancelResolution" Disabled="_isProcessing">Cancel</MudButton>
+                <MudButton Variant="Variant.Filled"
+                           Color="@(_isDismissing ? Color.Default : Color.Success)"
+                           OnClick="ConfirmResolution"
+                           Disabled="@(_isProcessing || string.IsNullOrWhiteSpace(_resolutionNotes))">
+                    @(_isProcessing ? "Saving…" : (_isDismissing ? "Dismiss" : "Resolve"))
+                </MudButton>
+            </MudCardActions>
+        </MudCard>
+    </MudOverlay>
+}
+
+@code {
+    private List<TransactionFlagDto> _flags = [];
+    private List<TransactionFlagDto> _allFlags = [];
+    private bool _isLoading = true;
+    private bool _isProcessing;
+    private string? _userId;
+    private long? _branchId;
+
+    private string _statusFilter = string.Empty;
+
+    private TransactionFlagDto? _resolutionTarget;
+    private bool _isDismissing;
+    private string _resolutionNotes = string.Empty;
+    private string? _resolutionError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        // Get branchId from claims
+        var branchIdClaim = authState.User.FindFirst("BranchId")?.Value;
+        if (long.TryParse(branchIdClaim, out var bid))
+        {
+            _branchId = bid;
+        }
+
+        await LoadFlagsAsync();
+    }
+
+    private async Task LoadFlagsAsync()
+    {
+        if (!_branchId.HasValue) return;
+
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            _allFlags = await TransactionService.GetAllFlagsForBranchAsync(_branchId.Value);
+            ApplyFilter();
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ApplyFilter()
+    {
+        _flags = string.IsNullOrEmpty(_statusFilter)
+            ? _allFlags
+            : _allFlags.Where(f => f.Status.ToString() == _statusFilter).ToList();
+    }
+
+    private void OnStatusFilterChanged(string value)
+    {
+        _statusFilter = value;
+        ApplyFilter();
+    }
+
+    private async Task StartInvestigationAsync(TransactionFlagDto flag)
+    {
+        if (_userId == null) return;
+        _isProcessing = true;
+        try
+        {
+            var result = await TransactionService.StartInvestigationAsync(_userId, flag.Id);
+            if (result.Success)
+            {
+                Snackbar.Add("Investigation started.", Severity.Success);
+                await LoadFlagsAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.ErrorMessage ?? "Failed to start investigation.", Severity.Error);
+            }
+        }
+        finally
+        {
+            _isProcessing = false;
+        }
+    }
+
+    private void ShowResolutionDialog(TransactionFlagDto flag, bool dismiss)
+    {
+        _resolutionTarget = flag;
+        _isDismissing = dismiss;
+        _resolutionNotes = string.Empty;
+        _resolutionError = null;
+        StateHasChanged();
+    }
+
+    private void CancelResolution()
+    {
+        _resolutionTarget = null;
+        _resolutionNotes = string.Empty;
+        _resolutionError = null;
+        StateHasChanged();
+    }
+
+    private async Task ConfirmResolution()
+    {
+        if (_resolutionTarget == null || _userId == null) return;
+
+        _resolutionError = null;
+        if (string.IsNullOrWhiteSpace(_resolutionNotes) || _resolutionNotes.Trim().Length < 10)
+        {
+            _resolutionError = "Notes must be at least 10 characters.";
+            return;
+        }
+
+        _isProcessing = true;
+        try
+        {
+            var result = _isDismissing
+                ? await TransactionService.DismissFlagAsync(_userId, _resolutionTarget.Id, _resolutionNotes)
+                : await TransactionService.ResolveFlagAsync(_userId, _resolutionTarget.Id, _resolutionNotes);
+
+            if (result.Success)
+            {
+                Snackbar.Add(_isDismissing ? "Flag dismissed." : "Flag resolved.", Severity.Success);
+                _resolutionTarget = null;
+                await LoadFlagsAsync();
+            }
+            else
+            {
+                _resolutionError = result.ErrorMessage ?? "Operation failed.";
+            }
+        }
+        finally
+        {
+            _isProcessing = false;
+        }
+    }
+
+    private static Color GetFlagStatusColor(TransactionFlagStatus status) => status switch
+    {
+        TransactionFlagStatus.PendingReview => Color.Warning,
+        TransactionFlagStatus.UnderInvestigation => Color.Info,
+        TransactionFlagStatus.Resolved => Color.Success,
+        TransactionFlagStatus.Dismissed => Color.Default,
+        _ => Color.Default
+    };
+}

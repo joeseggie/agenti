@@ -4,10 +4,12 @@
 @using EastSeat.Agenti.Web.Features.CashCounts
 @using EastSeat.Agenti.Shared.Domain.Enums
 @using EastSeat.Agenti.Web.Features.WalletAdjustments
+@using EastSeat.Agenti.Web.Features.Transactions
 @attribute [Authorize]
 @rendermode InteractiveServer
 @inject ICashCountService CashCountService
 @inject IWalletAdjustmentService WalletAdjustmentService
+@inject ITransactionService TransactionService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
@@ -158,6 +160,62 @@
                                 </td>
                                 <td>@(adj.RejectionReason ?? adj.Notes ?? "—")</td>
                                 <td>@adj.CreatedAt.ToLocalTime().ToString("HH:mm")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            </MudPaper>
+        }
+
+        @* Transactions Section *@
+        @if (_transactions.Count > 0)
+        {
+            <MudPaper Class="mt-4 pa-3" Elevation="1">
+                <MudText Typo="Typo.subtitle1" Class="mb-2">Today's Transactions</MudText>
+                <MudSimpleTable Dense="true" Hover="true" Striped="true">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>From</th>
+                            <th>To</th>
+                            <th style="text-align: right;">Amount (UGX)</th>
+                            <th>Reference</th>
+                            <th>Time</th>
+                            <th style="text-align: center;">Flag</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var tx in _transactions)
+                        {
+                            <tr>
+                                <td>
+                                    <MudText Typo="Typo.body2">@tx.TypeDisplay</MudText>
+                                    @if (tx.IsReversed)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Error">Reversed</MudChip>
+                                    }
+                                </td>
+                                <td>@tx.FromWalletName</td>
+                                <td>@tx.ToWalletName</td>
+                                <td style="text-align: right;">@tx.Amount.ToString("N0")</td>
+                                <td>@(tx.Reference ?? "—")</td>
+                                <td>@tx.CreatedAt.ToLocalTime().ToString("HH:mm")</td>
+                                <td style="text-align: center;">
+                                    @if (tx.IsFlagged)
+                                    {
+                                        <MudTooltip Text="@($"Flagged: {tx.FlagStatus?.ToString() ?? "PendingReview"}")">
+                                            <MudIcon Icon="@Icons.Material.Filled.Flag" Color="Color.Warning" Size="Size.Small" />
+                                        </MudTooltip>
+                                    }
+                                    else if (!tx.IsReversed)
+                                    {
+                                        <MudTooltip Text="Flag as erroneous">
+                                            <MudIconButton Icon="@Icons.Material.Outlined.Flag" Color="Color.Default"
+                                                           Size="Size.Small"
+                                                           OnClick="@(() => OpenFlagDialog(tx))" />
+                                        </MudTooltip>
+                                    }
+                                </td>
                             </tr>
                         }
                     </tbody>
@@ -361,6 +419,7 @@
     private CurrentSessionDto? _currentSession;
     private CashCountFormModel? _countForm;
     private List<WalletAdjustmentDto> _adjustments = [];
+    private List<TransactionListItemDto> _transactions = [];
     private bool _isLoading = true;
     private bool _isSaving = false;
     private bool _isCountingMode = false;
@@ -385,11 +444,38 @@
         {
             _currentSession = await CashCountService.GetCurrentSessionAsync(_userId);
             _adjustments = await WalletAdjustmentService.GetAdjustmentsForAgentAsync(_userId);
+            _transactions = await TransactionService.GetTransactionsForAgentAsync(_userId);
         }
         finally
         {
             _isLoading = false;
             StateHasChanged();
+        }
+    }
+
+    private async Task OpenFlagDialog(TransactionListItemDto transaction)
+    {
+        var parameters = new DialogParameters<FlagTransactionDialog>
+        {
+            { x => x.TransactionId, transaction.Id },
+            { x => x.UserId, _userId! }
+        };
+
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Small,
+            FullWidth = true,
+            CloseOnEscapeKey = true
+        };
+
+        var dialog = await DialogService.ShowAsync<FlagTransactionDialog>(
+            "Flag Transaction as Erroneous", parameters, options);
+        var result = await dialog.Result;
+
+        if (result is { Canceled: false })
+        {
+            Snackbar.Add("Transaction flagged for investigation.", Severity.Warning);
+            await LoadDataAsync();
         }
     }
 

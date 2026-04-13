@@ -39,6 +39,13 @@
                                 </MudNavLink>
                             </Authorized>
                         </AuthorizeView>
+                        <AuthorizeView Roles="Admin,Supervisor">
+                            <Authorized Context="flagCtx">
+                                <MudNavLink Href="transaction-flags" Icon="@Icons.Material.Filled.Flag">
+                                    Transaction Flags
+                                </MudNavLink>
+                            </Authorized>
+                        </AuthorizeView>
                     </MudNavGroup>
                 </Authorized>
             </AuthorizeView>

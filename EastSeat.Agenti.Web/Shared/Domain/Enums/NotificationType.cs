@@ -13,5 +13,6 @@ public enum NotificationType
     SessionClosed = 5,
     CountAutoApproved = 6,
     WalletAdjustmentRecorded = 7,
-    BankRunRecorded = 8
+    TransactionFlagged = 8,
+    BankRunRecorded = 9
 }

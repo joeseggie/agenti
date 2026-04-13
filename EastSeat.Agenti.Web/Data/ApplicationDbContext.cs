@@ -28,6 +28,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<AppConfig> AppConfigs { get; set; }
     public DbSet<Notification> Notifications { get; set; }
     public DbSet<WalletAdjustment> WalletAdjustments { get; set; }
+    public DbSet<TransactionFlag> TransactionFlags { get; set; }
     public DbSet<PendingTransaction> PendingTransactions { get; set; }
     public DbSet<BankRun> BankRuns { get; set; }
 
@@ -489,6 +490,38 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
             entity.HasIndex(e => new { e.RecipientUserId, e.IsRead, e.CreatedAt });
             entity.HasIndex(e => new { e.RecipientUserId, e.CreatedAt });
+        });
+
+        // Configure TransactionFlag
+        builder.Entity<TransactionFlag>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Reason).IsRequired().HasMaxLength(2000);
+            entity.Property(e => e.Status)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(50);
+            entity.Property(e => e.FlaggedByUserId).IsRequired().HasMaxLength(450);
+            entity.Property(e => e.ResolvedByUserId).HasMaxLength(450);
+            entity.Property(e => e.InvestigationNotes).HasMaxLength(2000);
+
+            entity.HasOne(e => e.Transaction)
+                .WithMany()
+                .HasForeignKey(e => e.TransactionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.FlaggedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.FlaggedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.ResolvedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.ResolvedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(e => new { e.TransactionId, e.FlaggedByUserId });
+            entity.HasIndex(e => new { e.Status, e.FlaggedAt });
         });
 
         // Configure BankRun
