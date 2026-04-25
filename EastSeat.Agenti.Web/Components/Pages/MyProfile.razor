@@ -61,7 +61,6 @@
             </MudCardHeader>
             <MudCardContent>
                 <EditForm Model="_changePasswordModel" OnValidSubmit="ChangePasswordAsync">
-                    <DataAnnotationsValidator />
                     <MudGrid>
                         <MudItem xs="12">
                             <MudTextField @bind-Value="_changePasswordModel.CurrentPassword"
