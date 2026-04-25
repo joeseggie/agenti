@@ -9,5 +9,6 @@ public enum UserAuditAction
     Deleted = 4,
     PasswordReset = 5,
     LoginSuccess = 6,
-    LoginFailed = 7
+    LoginFailed = 7,
+    PasswordChanged = 8
 }

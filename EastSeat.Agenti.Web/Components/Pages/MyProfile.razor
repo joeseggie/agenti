@@ -4,6 +4,7 @@
 @attribute [Authorize]
 @inject IUserService UserService
 @inject AuthenticationStateProvider Auth
+@inject ISnackbar Snackbar
 
 <PageTitle>My Profile</PageTitle>
 
@@ -20,7 +21,7 @@
     }
     else
     {
-        <MudCard>
+        <MudCard Class="mb-4">
             <MudCardContent>
                 <MudGrid>
                     <MudItem xs="12" md="6">
@@ -53,23 +54,80 @@
                 </MudGrid>
             </MudCardContent>
         </MudCard>
+
+        <MudCard>
+            <MudCardHeader>
+                <MudText Typo="Typo.h6">Change Password</MudText>
+            </MudCardHeader>
+            <MudCardContent>
+                <EditForm Model="_formModel" OnValidSubmit="ChangePasswordAsync">
+                    <DataAnnotationsValidator />
+                    <MudGrid>
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_formModel.CurrentPassword"
+                                          Label="Current Password"
+                                          InputType="InputType.Password"
+                                          Variant="Variant.Outlined"
+                                          For="@(() => _formModel.CurrentPassword)" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_formModel.NewPassword"
+                                          Label="New Password"
+                                          InputType="InputType.Password"
+                                          Variant="Variant.Outlined"
+                                          For="@(() => _formModel.NewPassword)" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudTextField @bind-Value="_formModel.ConfirmPassword"
+                                          Label="Confirm New Password"
+                                          InputType="InputType.Password"
+                                          Variant="Variant.Outlined"
+                                          For="@(() => _formModel.ConfirmPassword)" />
+                        </MudItem>
+                        @if (!string.IsNullOrEmpty(_changePasswordError))
+                        {
+                            <MudItem xs="12">
+                                <MudAlert Severity="Severity.Error" Dense="true">@_changePasswordError</MudAlert>
+                            </MudItem>
+                        }
+                    </MudGrid>
+                    <MudCardActions>
+                        <MudButton ButtonType="ButtonType.Submit"
+                                   Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   Disabled="_savingPassword">
+                            @if (_savingPassword)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            }
+                            Change Password
+                        </MudButton>
+                    </MudCardActions>
+                </EditForm>
+            </MudCardContent>
+        </MudCard>
     }
 </MudContainer>
 
 @code {
     private UserDetailDto? _user;
     private bool _loading = true;
+    private string? _userId;
+
+    private ChangePasswordFormModel _formModel = new();
+    private string? _changePasswordError;
+    private bool _savingPassword;
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
             var authState = await Auth.GetAuthenticationStateAsync();
-            var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            _userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
-            if (!string.IsNullOrEmpty(userId))
+            if (!string.IsNullOrEmpty(_userId))
             {
-                _user = await UserService.GetByIdAsync(userId);
+                _user = await UserService.GetByIdAsync(_userId);
             }
         }
         catch
@@ -81,5 +139,47 @@
         {
             _loading = false;
         }
+    }
+
+    private async Task ChangePasswordAsync()
+    {
+        _changePasswordError = null;
+        _savingPassword = true;
+        try
+        {
+            var model = new ChangePasswordModel
+            {
+                CurrentPassword = _formModel.CurrentPassword,
+                NewPassword = _formModel.NewPassword
+            };
+            var result = await UserService.ChangePasswordAsync(_userId!, model);
+            if (result.Success)
+            {
+                Snackbar.Add("Password changed successfully.", Severity.Success);
+                _formModel = new ChangePasswordFormModel();
+            }
+            else
+            {
+                _changePasswordError = result.Message ?? "Failed to change password.";
+            }
+        }
+        finally
+        {
+            _savingPassword = false;
+        }
+    }
+
+    public class ChangePasswordFormModel
+    {
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Current password is required")]
+        public string CurrentPassword { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "New password is required")]
+        [System.ComponentModel.DataAnnotations.StringLength(100, MinimumLength = 6, ErrorMessage = "Password must be at least 6 characters")]
+        public string NewPassword { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Please confirm your new password")]
+        [System.ComponentModel.DataAnnotations.Compare("NewPassword", ErrorMessage = "Passwords do not match")]
+        public string ConfirmPassword { get; set; } = string.Empty;
     }
 }
