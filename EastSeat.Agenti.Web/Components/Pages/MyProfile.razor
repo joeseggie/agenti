@@ -60,28 +60,29 @@
                 <MudText Typo="Typo.h6">Change Password</MudText>
             </MudCardHeader>
             <MudCardContent>
-                <EditForm Model="_changePasswordModel" OnValidSubmit="ChangePasswordAsync">
+                <EditForm Model="_formModel" OnValidSubmit="ChangePasswordAsync">
+                    <DataAnnotationsValidator />
                     <MudGrid>
                         <MudItem xs="12">
-                            <MudTextField @bind-Value="_changePasswordModel.CurrentPassword"
+                            <MudTextField @bind-Value="_formModel.CurrentPassword"
                                           Label="Current Password"
                                           InputType="InputType.Password"
                                           Variant="Variant.Outlined"
-                                          Required="true" />
+                                          For="@(() => _formModel.CurrentPassword)" />
                         </MudItem>
                         <MudItem xs="12">
-                            <MudTextField @bind-Value="_changePasswordModel.NewPassword"
+                            <MudTextField @bind-Value="_formModel.NewPassword"
                                           Label="New Password"
                                           InputType="InputType.Password"
                                           Variant="Variant.Outlined"
-                                          Required="true" />
+                                          For="@(() => _formModel.NewPassword)" />
                         </MudItem>
                         <MudItem xs="12">
-                            <MudTextField @bind-Value="_confirmPassword"
+                            <MudTextField @bind-Value="_formModel.ConfirmPassword"
                                           Label="Confirm New Password"
                                           InputType="InputType.Password"
                                           Variant="Variant.Outlined"
-                                          Required="true" />
+                                          For="@(() => _formModel.ConfirmPassword)" />
                         </MudItem>
                         @if (!string.IsNullOrEmpty(_changePasswordError))
                         {
@@ -113,8 +114,7 @@
     private bool _loading = true;
     private string? _userId;
 
-    private ChangePasswordModel _changePasswordModel = new();
-    private string _confirmPassword = string.Empty;
+    private ChangePasswordFormModel _formModel = new();
     private string? _changePasswordError;
     private bool _savingPassword;
 
@@ -128,7 +128,6 @@
             if (!string.IsNullOrEmpty(_userId))
             {
                 _user = await UserService.GetByIdAsync(_userId);
-                _changePasswordModel.UserId = _userId;
             }
         }
         catch
@@ -145,28 +144,19 @@
     private async Task ChangePasswordAsync()
     {
         _changePasswordError = null;
-
-        if (string.IsNullOrWhiteSpace(_changePasswordModel.NewPassword))
-        {
-            _changePasswordError = "New password is required.";
-            return;
-        }
-
-        if (_changePasswordModel.NewPassword != _confirmPassword)
-        {
-            _changePasswordError = "New password and confirmation do not match.";
-            return;
-        }
-
         _savingPassword = true;
         try
         {
-            var result = await UserService.ChangePasswordAsync(_changePasswordModel);
+            var model = new ChangePasswordModel
+            {
+                CurrentPassword = _formModel.CurrentPassword,
+                NewPassword = _formModel.NewPassword
+            };
+            var result = await UserService.ChangePasswordAsync(_userId!, model);
             if (result.Success)
             {
                 Snackbar.Add("Password changed successfully.", Severity.Success);
-                _changePasswordModel = new ChangePasswordModel { UserId = _userId ?? string.Empty };
-                _confirmPassword = string.Empty;
+                _formModel = new ChangePasswordFormModel();
             }
             else
             {
@@ -177,5 +167,19 @@
         {
             _savingPassword = false;
         }
+    }
+
+    public class ChangePasswordFormModel
+    {
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Current password is required")]
+        public string CurrentPassword { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "New password is required")]
+        [System.ComponentModel.DataAnnotations.StringLength(100, MinimumLength = 6, ErrorMessage = "Password must be at least 6 characters")]
+        public string NewPassword { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Please confirm your new password")]
+        [System.ComponentModel.DataAnnotations.Compare("NewPassword", ErrorMessage = "Passwords do not match")]
+        public string ConfirmPassword { get; set; } = string.Empty;
     }
 }

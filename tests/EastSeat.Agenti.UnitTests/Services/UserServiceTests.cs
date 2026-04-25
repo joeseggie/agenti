@@ -1027,7 +1027,7 @@ public class UserServiceTests : IDisposable
     public async Task ChangePasswordAsync_WithNullModel_ReturnsError()
     {
         // Act
-        var result = await _userService.ChangePasswordAsync(null!);
+        var result = await _userService.ChangePasswordAsync("user-123", null!);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -1043,13 +1043,12 @@ public class UserServiceTests : IDisposable
 
         var model = new ChangePasswordModel
         {
-            UserId = "non-existent",
             CurrentPassword = "OldPass1!",
             NewPassword = "NewPass1!"
         };
 
         // Act
-        var result = await _userService.ChangePasswordAsync(model);
+        var result = await _userService.ChangePasswordAsync("non-existent", model);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -1067,13 +1066,12 @@ public class UserServiceTests : IDisposable
 
         var model = new ChangePasswordModel
         {
-            UserId = "user-123",
             CurrentPassword = "WrongPass!",
             NewPassword = "NewPass1!"
         };
 
         // Act
-        var result = await _userService.ChangePasswordAsync(model);
+        var result = await _userService.ChangePasswordAsync("user-123", model);
 
         // Assert
         result.Success.Should().BeFalse();
@@ -1096,13 +1094,12 @@ public class UserServiceTests : IDisposable
 
         var model = new ChangePasswordModel
         {
-            UserId = "user-123",
             CurrentPassword = "OldPass1!",
             NewPassword = "NewPass1!"
         };
 
         // Act
-        var result = await _userService.ChangePasswordAsync(model);
+        var result = await _userService.ChangePasswordAsync("user-123", model);
 
         // Assert
         result.Success.Should().BeTrue();

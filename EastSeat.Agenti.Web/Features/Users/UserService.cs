@@ -514,11 +514,11 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
         return ResetPasswordResult.Ok(newPassword);
     }
 
-    public async Task<ServiceResult> ChangePasswordAsync(ChangePasswordModel model, CancellationToken cancellationToken = default)
+    public async Task<ServiceResult> ChangePasswordAsync(string userId, ChangePasswordModel model, CancellationToken cancellationToken = default)
     {
         if (model is null) return new(false, "Invalid request");
 
-        var user = await userManager.FindByIdAsync(model.UserId);
+        var user = await userManager.FindByIdAsync(userId);
         if (user is null) return new(false, "User not found");
 
         var changeResult = await userManager.ChangePasswordAsync(user, model.CurrentPassword, model.NewPassword);
