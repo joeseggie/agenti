@@ -513,4 +513,35 @@ public class UserService(ApplicationDbContext db, UserManager<ApplicationUser> u
 
         return ResetPasswordResult.Ok(newPassword);
     }
+
+    public async Task<ServiceResult> ChangePasswordAsync(ChangePasswordModel model, CancellationToken cancellationToken = default)
+    {
+        if (model is null) return new(false, "Invalid request");
+
+        var user = await userManager.FindByIdAsync(model.UserId);
+        if (user is null) return new(false, "User not found");
+
+        var changeResult = await userManager.ChangePasswordAsync(user, model.CurrentPassword, model.NewPassword);
+        if (!changeResult.Succeeded)
+        {
+            var errors = string.Join(", ", changeResult.Errors.Select(e => e.Description));
+            return new(false, errors);
+        }
+
+        user.UpdatedAt = DateTime.UtcNow;
+        await userManager.UpdateAsync(user);
+
+        db.UserAuditLogs.Add(new UserAuditLog
+        {
+            UserId = user.Id,
+            Action = UserAuditAction.PasswordChanged,
+            OldValue = null,
+            NewValue = "Password changed by user",
+            PerformedByUserId = user.Id,
+            PerformedAt = DateTimeOffset.UtcNow
+        });
+
+        await db.SaveChangesAsync(cancellationToken);
+        return new(true);
+    }
 }

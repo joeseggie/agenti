@@ -1020,4 +1020,100 @@ public class UserServiceTests : IDisposable
     }
 
     #endregion
+
+    #region ChangePasswordAsync Tests
+
+    [Fact]
+    public async Task ChangePasswordAsync_WithNullModel_ReturnsError()
+    {
+        // Act
+        var result = await _userService.ChangePasswordAsync(null!);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Message.Should().Be("Invalid request");
+    }
+
+    [Fact]
+    public async Task ChangePasswordAsync_WithNonExistentUser_ReturnsError()
+    {
+        // Arrange
+        _userManagerMock.Setup(x => x.FindByIdAsync("non-existent"))
+            .ReturnsAsync((ApplicationUser?)null);
+
+        var model = new ChangePasswordModel
+        {
+            UserId = "non-existent",
+            CurrentPassword = "OldPass1!",
+            NewPassword = "NewPass1!"
+        };
+
+        // Act
+        var result = await _userService.ChangePasswordAsync(model);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Message.Should().Be("User not found");
+    }
+
+    [Fact]
+    public async Task ChangePasswordAsync_WhenCurrentPasswordIncorrect_ReturnsError()
+    {
+        // Arrange
+        var user = UserBuilder.Default().WithId("user-123").Build();
+        _userManagerMock.Setup(x => x.FindByIdAsync("user-123")).ReturnsAsync(user);
+        _userManagerMock.Setup(x => x.ChangePasswordAsync(user, "WrongPass!", "NewPass1!"))
+            .ReturnsAsync(IdentityResult.Failed(new IdentityError { Description = "Incorrect password." }));
+
+        var model = new ChangePasswordModel
+        {
+            UserId = "user-123",
+            CurrentPassword = "WrongPass!",
+            NewPassword = "NewPass1!"
+        };
+
+        // Act
+        var result = await _userService.ChangePasswordAsync(model);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.Message.Should().Contain("Incorrect password.");
+    }
+
+    [Fact]
+    public async Task ChangePasswordAsync_WithValidCredentials_ChangesPasswordAndLogsAudit()
+    {
+        // Arrange
+        var user = UserBuilder.Default().WithId("user-123").Build();
+        _dbContext.Users.Add(user);
+        await _dbContext.SaveChangesAsync();
+
+        _userManagerMock.Setup(x => x.FindByIdAsync("user-123")).ReturnsAsync(user);
+        _userManagerMock.Setup(x => x.ChangePasswordAsync(user, "OldPass1!", "NewPass1!"))
+            .ReturnsAsync(IdentityResult.Success);
+        _userManagerMock.Setup(x => x.UpdateAsync(user))
+            .ReturnsAsync(IdentityResult.Success);
+
+        var model = new ChangePasswordModel
+        {
+            UserId = "user-123",
+            CurrentPassword = "OldPass1!",
+            NewPassword = "NewPass1!"
+        };
+
+        // Act
+        var result = await _userService.ChangePasswordAsync(model);
+
+        // Assert
+        result.Success.Should().BeTrue();
+
+        var auditLog = await _dbContext.UserAuditLogs.FirstOrDefaultAsync();
+        auditLog.Should().NotBeNull();
+        auditLog!.Action.Should().Be(UserAuditAction.PasswordChanged);
+        auditLog.UserId.Should().Be("user-123");
+        auditLog.PerformedByUserId.Should().Be("user-123");
+        auditLog.NewValue.Should().Be("Password changed by user");
+    }
+
+    #endregion
 }

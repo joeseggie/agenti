@@ -67,6 +67,13 @@ public class CreateUserResult
         new() { Success = false, Message = message };
 }
 
+public class ChangePasswordModel
+{
+    public string UserId { get; set; } = string.Empty;
+    public string CurrentPassword { get; set; } = string.Empty;
+    public string NewPassword { get; set; } = string.Empty;
+}
+
 public class ResetPasswordResult
 {
     public bool Success { get; set; }
