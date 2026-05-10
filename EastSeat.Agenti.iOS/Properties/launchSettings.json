@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "iOS Simulator": {
+      "commandName": "Project",
+      "nativeDebugging": false
+    }
+  }
+}

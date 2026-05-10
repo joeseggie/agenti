@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Shell
+    x:Class="EastSeat.Agenti.iOS.AppShell"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:pages="clr-namespace:EastSeat.Agenti.iOS.Pages"
+    Title="Agenti"
+    FlyoutBehavior="Flyout"
+    Shell.BackgroundColor="#1976D2"
+    Shell.ForegroundColor="White"
+    Shell.TitleColor="White">
+
+    <!-- Primary navigation (Tabs inside a FlyoutItem) -->
+    <FlyoutItem Title="Dashboard" Icon="dashboard.png">
+        <Tab Title="Dashboard" Icon="dashboard.png">
+            <ShellContent Route="dashboard" ContentTemplate="{DataTemplate pages:DashboardPage}" />
+        </Tab>
+        <Tab Title="Cash Count" Icon="cashcount.png">
+            <ShellContent Route="cashcount" ContentTemplate="{DataTemplate pages:CashCountPage}" />
+        </Tab>
+        <Tab Title="Sessions" Icon="sessions.png">
+            <ShellContent Route="sessions" ContentTemplate="{DataTemplate pages:CashSessionsPage}" />
+        </Tab>
+    </FlyoutItem>
+
+    <!-- Profile navigation -->
+    <FlyoutItem Title="Profile" Icon="profile.png">
+        <ShellContent Route="profile" ContentTemplate="{DataTemplate pages:ProfilePage}" />
+    </FlyoutItem>
+
+    <!-- Logout -->
+    <MenuItem Text="Logout" Command="{Binding LogoutCommand}" />
+
+</Shell>
