@@ -193,6 +193,26 @@
                                     @GetCountStatusText(agent.ClosingCount.Status)
                                 </MudChip>
                                 <MudText Typo="Typo.body1" Class="mt-1">UGX @agent.ClosingCount.TotalAmount.ToString("N0")</MudText>
+                                @if (agent.ClosingCount.WalletEntries.Count > 0)
+                                {
+                                    <MudSimpleTable Dense="true" Hover="true" Elevation="0" Class="mt-1">
+                                        <thead>
+                                            <tr>
+                                                <th>Wallet</th>
+                                                <th style="text-align: right;">Amount</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var w in agent.ClosingCount.WalletEntries)
+                                            {
+                                                <tr>
+                                                    <td>@w.WalletName</td>
+                                                    <td style="text-align: right;">@w.Amount.ToString("N0")</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </MudSimpleTable>
+                                }
                                 @if (agent.Variance.HasValue && agent.Variance.Value != 0)
                                 {
                                     <MudText Typo="Typo.body2" Color="@(agent.Variance.Value > 0 ? Color.Info : Color.Warning)" Class="mt-1">
