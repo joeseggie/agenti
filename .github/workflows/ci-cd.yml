@@ -36,10 +36,18 @@ jobs:
         run: dotnet workload install maui-android
 
       - name: Restore dependencies
-        run: dotnet restore
+        # Restore only Linux-compatible projects (iOS requires macOS and is built in a separate job)
+        run: |
+          dotnet restore EastSeat.Agenti.Web/EastSeat.Agenti.Web.csproj
+          dotnet restore EastSeat.Agenti.Android/EastSeat.Agenti.Android.csproj
+          dotnet restore EastSeat.Agenti.Mcp/EastSeat.Agenti.Mcp.csproj
 
       - name: Build solution
-        run: dotnet build --configuration Release --no-restore
+        # Build only Linux-compatible projects (iOS requires macOS and is built in a separate job)
+        run: |
+          dotnet build EastSeat.Agenti.Web/EastSeat.Agenti.Web.csproj --configuration Release --no-restore
+          dotnet build EastSeat.Agenti.Android/EastSeat.Agenti.Android.csproj --configuration Release --no-restore
+          dotnet build EastSeat.Agenti.Mcp/EastSeat.Agenti.Mcp.csproj --configuration Release --no-restore
 
       - name: Publish application
         run: dotnet publish EastSeat.Agenti.Web/EastSeat.Agenti.Web.csproj --configuration Release --no-build --output ./publish
@@ -50,6 +58,28 @@ jobs:
           name: webapp
           path: ./publish
           retention-days: 1
+
+  build-ios:
+    name: Build iOS
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Install MAUI iOS workload
+        run: dotnet workload install maui-ios
+
+      - name: Restore iOS dependencies
+        run: dotnet restore EastSeat.Agenti.iOS/EastSeat.Agenti.iOS.csproj
+
+      - name: Build iOS app (Simulator)
+        run: dotnet build EastSeat.Agenti.iOS/EastSeat.Agenti.iOS.csproj --configuration Release --no-restore -p:RuntimeIdentifier=iossimulator-arm64
 
   test-unit:
     name: Unit Tests
