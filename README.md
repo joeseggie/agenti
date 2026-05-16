@@ -1,157 +1,129 @@
 # Agenti - Banking Agency ERP
 
-A vertical-slice architecture Blazor Server application for managing banking agency operations in Uganda.
+Agenti is a banking agency ERP system built with **ASP.NET Core Blazor Server** (.NET 10) using **Vertical Slice Architecture**. It manages daily cash operations, vault workflows, discrepancies, and user administration for banking agencies in Uganda. The solution also includes a **.NET MAUI Android app** that consumes the backend REST API.
 
 ## Tech Stack
 
 - **Framework**: ASP.NET Core Blazor Server (.NET 10)
-- **Database**: PostgreSQL
-- **Authentication**: ASP.NET Identity
+- **Mobile**: .NET MAUI Android (`EastSeat.Agenti.Android`)
+- **Database**: PostgreSQL 16
+- **ORM**: Entity Framework Core 10 + Npgsql
+- **Authentication**: ASP.NET Identity (web) + JWT Bearer (API)
 - **UI**: MudBlazor
 - **Real-time**: SignalR
-- **Architecture**: Vertical Slice Architecture
+- **Observability**: Serilog + Azure Application Insights
 
-## Project Setup
+## Solution Structure
+
+```text
+Agenti.slnx
+├── EastSeat.Agenti.Web/           # Blazor Server web app + REST API backend
+├── EastSeat.Agenti.Android/       # .NET MAUI Android mobile client
+├── EastSeat.Agenti.Mcp/           # Read-only MCP server for AI assistant integration
+├── tests/
+│   ├── EastSeat.Agenti.UnitTests/
+│   ├── EastSeat.Agenti.IntegrationTests/
+│   └── EastSeat.Agenti.E2ETests/
+├── docs/
+├── scripts/azure/
+└── .github/workflows/
+```
+
+## Current Feature Slices (Web)
+
+Located under `EastSeat.Agenti.Web/Features/`:
+
+- `Agents`
+- `Api`
+- `BankRuns`
+- `CashCounts`
+- `CashSessions`
+- `Dashboard`
+- `Notifications`
+- `PendingTransactions`
+- `Setup`
+- `Theme`
+- `Transactions`
+- `Users`
+- `Vault`, `Vaults`
+- `WalletAdjustments`
+- `WalletTypes`
+
+## Local Development Setup
 
 ### Prerequisites
 
-- .NET 10.0 SDK
-- Docker & Docker Compose (for PostgreSQL)
-- Visual Studio Code (Recommended)
+- .NET 10 SDK
+- Docker + Docker Compose
+- MAUI Android workload (required only when building Android project):
+  ```bash
+  dotnet workload install maui-android
+  ```
 
-### Local Development Setup
+### 1) Configure local environment
 
-1. **Configure environment variables**:
-   ```bash
-   cp .env.example .env
-   # Edit .env and set POSTGRES_PASSWORD
-   ```
-
-2. **Start PostgreSQL Container**:
-   ```bash
-   docker-compose up -d
-   ```
-
-3. **Verify PostgreSQL Connection**:
-   ```bash
-   docker-compose exec postgres psql -U $POSTGRES_USER -d agenti_dev -c "SELECT 1"
-   ```
-
-4. **Apply Database Migrations**:
-   ```bash
-   cd EastSeat.Agenti.Web
-   dotnet ef database update
-   ```
-
-5. **Run the Application**:
-   ```bash
-   dotnet run
-   ```
-
-   The application will be available at: `https://localhost:7001`
-
-### Database Configuration
-
-Database credentials are stored in a `.env` file (not committed to version control).
-
-1. Copy the example file: `cp .env.example .env`
-2. Edit `.env` and set your password
-3. The connection string format is: `Server=localhost;Port=5432;Database=agenti_dev;User Id=<user>;Password=<password>;`
-
-## CI/CD Pipeline
-
-The project uses GitHub Actions for continuous integration and deployment to Azure.
-
-### Pipeline Overview
-
-| Stage | Trigger | Description |
-|-------|---------|-------------|
-| Build | All branches | Restores, builds, and publishes the application |
-| Unit Tests | All branches | Runs unit tests with code coverage |
-| Integration Tests | All branches | Runs integration tests against PostgreSQL |
-| E2E Tests | All branches | Runs end-to-end tests |
-| Deploy | `main` branch only | Deploys to Azure App Service |
-
-### Azure Infrastructure (~$23/month)
-
-| Resource | SKU | Est. Cost |
-|----------|-----|-----------|
-| App Service Plan | Basic B1 | ~$13/month |
-| Container Instance (PostgreSQL) | 1 vCPU, 1.5GB | ~$10/month |
-
-### Setting Up Azure Infrastructure
-
-1. **Run the infrastructure setup script**:
-   ```powershell
-   cd scripts/azure
-   .\setup-infrastructure.ps1 -PostgresPassword "YourSecurePassword123!"
-   ```
-
-2. **Configure GitHub secrets** - see [setup-secrets.md](scripts/azure/setup-secrets.md)
-
-### Required GitHub Secrets
-
-| Secret | Description |
-|--------|-------------|
-| `AZURE_CREDENTIALS` | Azure service principal JSON for deployment |
-
-## Project Structure
-
-```
-Features/                          # Vertical slices (feature modules)
-├── Authentication/               # Auth & Identity management
-├── WalletCatalog/               # Wallet type management
-├── DailyCashSession/            # Daily session opening/closing
-├── CashCounts/                  # Cash count recording
-├── Transactions/                # Movement between wallets
-├── DiscrepancyWorkflow/         # Discrepancy explanation & approval
-├── Notifications/               # SignalR notifications
-└── Reporting/                   # Reports & analytics
-
-Shared/                           # Cross-cutting concerns
-├── Domain/                       # Domain entities & enums
-├── Infrastructure/              # DbContext, migrations
-├── Exceptions/                  # Custom exceptions
-├── Middleware/                  # Middleware components
-├── Security/                    # Auth/authorization
-└── SignalR/                     # Real-time hubs
-
-Components/                       # Global Blazor components
-Pages/                            # Global pages
-Layouts/                          # Global layouts
-Data/                             # Database context & migrations
+```bash
+cp .env.example .env
+# Edit .env and set POSTGRES_PASSWORD
 ```
 
-## Features
+### 2) Start PostgreSQL
 
-### Phase 1 (MVP)
+```bash
+docker-compose up -d
+```
 
-- ✅ Daily Opening Cash Count
-- ✅ Daily Closing Cash Count  
-- ✅ Wallet Management (predefined + custom types)
-- ✅ Transaction Recording
-- ✅ Discrepancy Detection & Explanation
-- ✅ Supervisor Approval Workflow
-- ✅ ASP.NET Identity Authentication
-- ✅ Basic Reporting
-- ✅ Real-time Notifications (SignalR)
+### 3) Verify database connection
 
-## Key Business Rules
+```bash
+docker-compose exec postgres psql -U ${POSTGRES_USER:-agenti_user} -d ${POSTGRES_DB:-agenti_dev} -c "SELECT 1"
+```
 
-1. **Opening Count Validation**: Today's opening total = Previous day's closing total
-2. **Closing Count Validation**: Closing total = Opening total (float conservation)
-3. **Discrepancy Workflow**: Mismatches require teller explanation + supervisor approval
-4. **Transaction Integrity**: Movements between wallets don't change total float
+### 4) Run the web app
 
-## Development Notes
+```bash
+cd EastSeat.Agenti.Web
+dotnet run
+```
 
-- Each slice is independent with its own Models, Services, Components, and Validators
-- Shared domain entities live in `Shared/Domain/Entities/`
-- Database configuration is in `Data/ApplicationDbContext.cs`
-- Cross-slice communication via querier interfaces
+Application URLs:
 
-## Future Enhancements
+- Web UI: `https://localhost:7001`
+- Swagger (dev): `https://localhost:7001/api/docs`
 
-- Phase 2: Multi-branch support, advanced analytics
-- Phase 3: Mobile app, offline support (PWA)
-- Phase 4: API layer, third-party integrations
+> Note: Migrations are auto-applied on app startup (`db.Database.MigrateAsync()`).
+
+## Build and Test
+
+From repository root:
+
+```bash
+# Build entire solution
+dotnet build
+
+# Run all tests
+dotnet test
+
+# Run specific test projects
+dotnet test tests/EastSeat.Agenti.UnitTests
+dotnet test tests/EastSeat.Agenti.IntegrationTests
+dotnet test tests/EastSeat.Agenti.E2ETests
+```
+
+## CI/CD
+
+GitHub Actions workflow (`.github/workflows/ci-cd.yml`) runs:
+
+1. Build (including MAUI Android workload install)
+2. Unit tests
+3. Integration tests (PostgreSQL service container)
+4. E2E tests (PostgreSQL service container)
+5. Deploy to Azure App Service on `main` pushes
+
+## Documentation
+
+- Setup and contributor reference: [`CLAUDE.md`](CLAUDE.md)
+- AI coding architecture rules: [`AGENTS.md`](AGENTS.md)
+- Development setup guide: [`docs/DEVELOPMENT_GUIDE.md`](docs/DEVELOPMENT_GUIDE.md)
+- CI/CD details: [`docs/CI_CD_PIPELINE.md`](docs/CI_CD_PIPELINE.md)
+- Domain guide: [`docs/AGENT_DOMAIN.md`](docs/AGENT_DOMAIN.md)
