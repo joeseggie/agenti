@@ -91,6 +91,7 @@ public class CashCountService(
         // Find today's branch session
         var todaySession = await dbContext.CashSessions
             .Include(s => s.CashCounts.Where(c => c.AgentId == agent.Id))
+                .ThenInclude(c => c.ApprovedByUser)
             .Where(s => s.BranchId == branchId && s.SessionDate == today)
             .FirstOrDefaultAsync();
 
@@ -153,6 +154,10 @@ public class CashCountService(
             HasClosingCount = agentClosingCount != null && agentClosingCount.Status != CashCountStatus.Rejected,
             OpeningCountStatus = agentOpeningCount?.Status,
             ClosingCountStatus = agentClosingCount?.Status,
+            OpeningCountApprovedByName = GetApprovedByName(agentOpeningCount),
+            OpeningCountApprovedAt = agentOpeningCount?.ApprovedAt,
+            ClosingCountApprovedByName = GetApprovedByName(agentClosingCount),
+            ClosingCountApprovedAt = agentClosingCount?.ApprovedAt,
             CanPerformOpeningCount = canOpen,
             CanPerformClosingCount = canClose,
             CanRecordAdjustment = canRecordAdjustment,
@@ -932,6 +937,22 @@ public class CashCountService(
         });
 
         return CashCountSaveResult.Ok(cashCount.Id, cashCount.CashSessionId);
+    }
+
+    private static string? GetApprovedByName(CashCount? cashCount)
+    {
+        if (cashCount?.Status != CashCountStatus.Approved)
+        {
+            return null;
+        }
+
+        var firstName = cashCount.ApprovedByUser?.FirstName?.Trim();
+        var lastName = cashCount.ApprovedByUser?.LastName?.Trim();
+        var fullName = string.Join(" ", new[] { firstName, lastName }.Where(name => !string.IsNullOrWhiteSpace(name)));
+
+        return !string.IsNullOrWhiteSpace(fullName)
+            ? fullName
+            : cashCount.ApprovedByUser?.Email;
     }
 
     /// <summary>
