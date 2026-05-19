@@ -90,6 +90,12 @@ public class CashCountBuilder
         return this;
     }
 
+    public CashCountBuilder WithApprovedByUserId(string? approvedByUserId)
+    {
+        _approvedByUserId = approvedByUserId;
+        return this;
+    }
+
     public CashCountBuilder WithCashSession(CashSession cashSession)
     {
         _cashSession = cashSession;
