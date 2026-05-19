@@ -21,6 +21,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<CashSession> CashSessions { get; set; }
     public DbSet<CashCount> CashCounts { get; set; }
     public DbSet<CashCountDetail> CashCountDetails { get; set; }
+    public DbSet<CashCountAuditLog> CashCountAuditLogs { get; set; }
     public DbSet<Transaction> Transactions { get; set; }
     public DbSet<Discrepancy> Discrepancies { get; set; }
     public DbSet<AuditLog> AuditLogs { get; set; }
@@ -263,6 +264,47 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .WithMany()
                 .HasForeignKey(e => e.WalletId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // Configure CashCountAuditLog (immutable history)
+        builder.Entity<CashCountAuditLog>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Action)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(50);
+            entity.Property(e => e.PreviousStatus)
+                .HasConversion<string>()
+                .HasMaxLength(50);
+            entity.Property(e => e.NewStatus)
+                .IsRequired()
+                .HasConversion<string>()
+                .HasMaxLength(50);
+            entity.Property(e => e.TotalAmount).HasPrecision(18, 2);
+            entity.Property(e => e.Notes).HasMaxLength(2000);
+            entity.Property(e => e.PerformedByUserId).HasMaxLength(450);
+            entity.Property(e => e.PerformedAt).IsRequired();
+
+            entity.HasOne(e => e.CashCount)
+                .WithMany()
+                .HasForeignKey(e => e.CashCountId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.CashSession)
+                .WithMany()
+                .HasForeignKey(e => e.CashSessionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.Agent)
+                .WithMany()
+                .HasForeignKey(e => e.AgentId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.PerformedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.PerformedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(e => new { e.CashSessionId, e.PerformedAt });
+            entity.HasIndex(e => new { e.CashCountId, e.PerformedAt });
         });
 
         // Configure Transaction

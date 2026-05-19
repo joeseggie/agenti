@@ -49,22 +49,11 @@ public class CashCountService(
         var branchId = agent.BranchId.Value;
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
-        // Rule 14: Check if agent has any cash count in PendingApproval status
+        // Rule 14: Check if agent has any cash count in PendingApproval status.
+        // Pending counts can now be edited by the agent (saved as draft or re-submitted),
+        // but no NEW counts of a different type may be started.
         var hasPendingApproval = await dbContext.CashCounts
             .AnyAsync(c => c.AgentId == agent.Id && c.Status == CashCountStatus.PendingApproval);
-
-        if (hasPendingApproval)
-        {
-            return new CurrentSessionDto
-            {
-                StatusText = "Cash count pending approval",
-                StatusColor = "warning",
-                HasPendingApproval = true,
-                CanPerformOpeningCount = false,
-                CanPerformClosingCount = false,
-                BlockReason = "You have a cash count pending admin approval. Please wait for it to be processed."
-            };
-        }
 
         // Rule 4: Check for unclosed sessions from previous days
         var previousUnclosedSession = await dbContext.CashSessions
@@ -84,6 +73,7 @@ public class CashCountService(
                 StatusColor = "error",
                 CanPerformOpeningCount = false,
                 CanPerformClosingCount = false,
+                HasPendingApproval = hasPendingApproval,
                 BlockReason = $"The cash session from {previousUnclosedSession.SessionDate:MMM dd, yyyy} has not been closed. Please contact an admin."
             };
         }
@@ -130,9 +120,26 @@ public class CashCountService(
             (agentClosingCount.Status == CashCountStatus.Approved ||
              agentClosingCount.Status == CashCountStatus.PendingApproval);
 
-        var canOpen = agentOpeningCount == null ||
-                      agentOpeningCount.Status == CashCountStatus.Rejected;
-        var canClose = hasApprovedOpening && !hasSubmittedOrApprovedClosing;
+        // Opening can be (re)entered if:
+        //  - it doesn't exist yet
+        //  - it was rejected (existing rule)
+        //  - it is still pending approval (agent can revise & resubmit before admin acts)
+        // BUT: never if a closing count has already been submitted or approved.
+        var openingIsEditable =
+            agentOpeningCount == null ||
+            agentOpeningCount.Status == CashCountStatus.Rejected ||
+            agentOpeningCount.Status == CashCountStatus.PendingApproval;
+        var canOpen = openingIsEditable && !hasSubmittedOrApprovedClosing;
+
+        // Closing can be (re)entered if opening is approved, and either:
+        //  - no closing yet
+        //  - closing was rejected
+        //  - closing is still pending (agent can revise & resubmit before admin acts)
+        var closingIsEditable =
+            agentClosingCount == null ||
+            agentClosingCount.Status == CashCountStatus.Rejected ||
+            agentClosingCount.Status == CashCountStatus.PendingApproval;
+        var canClose = hasApprovedOpening && closingIsEditable;
         var canRecordAdjustment = hasApprovedOpening && !hasSubmittedOrApprovedClosing;
         var canRecordBankRun = hasApprovedOpening && !hasSubmittedOrApprovedClosing;
 
@@ -154,6 +161,8 @@ public class CashCountService(
             HasClosingCount = agentClosingCount != null && agentClosingCount.Status != CashCountStatus.Rejected,
             OpeningCountStatus = agentOpeningCount?.Status,
             ClosingCountStatus = agentClosingCount?.Status,
+            OpeningCountId = agentOpeningCount?.Id,
+            ClosingCountId = agentClosingCount?.Id,
             OpeningCountApprovedByName = GetApprovedByName(agentOpeningCount),
             OpeningCountApprovedAt = agentOpeningCount?.ApprovedAt,
             ClosingCountApprovedByName = GetApprovedByName(agentClosingCount),
@@ -162,6 +171,7 @@ public class CashCountService(
             CanPerformClosingCount = canClose,
             CanRecordAdjustment = canRecordAdjustment,
             CanRecordBankRun = canRecordBankRun,
+            HasPendingApproval = hasPendingApproval,
             TotalAdjustments = totalAdjustments
         };
     }
@@ -245,12 +255,16 @@ public class CashCountService(
             return CashCountSaveResult.Error("Cash count date cannot be in the future.");
         }
 
-        // Rule 14: Check if agent has any pending approval counts
-        var hasPendingApproval = await dbContext.CashCounts
-            .AnyAsync(c => c.AgentId == agentId && c.Status == CashCountStatus.PendingApproval);
-        if (hasPendingApproval)
+        // Rule 14 (revised): Agent may have a pending-approval count of the SAME type they're now
+        // editing (that's the "revise pending" flow). However a pending count of the OPPOSITE type
+        // still blocks because the workflow forces one type at a time.
+        var hasOtherPendingApproval = await dbContext.CashCounts
+            .AnyAsync(c => c.AgentId == agentId &&
+                           c.Status == CashCountStatus.PendingApproval &&
+                           c.IsOpening != form.IsOpening);
+        if (hasOtherPendingApproval)
         {
-            return CashCountSaveResult.Error("You have a cash count pending approval. Please wait for it to be processed before starting a new one.");
+            return CashCountSaveResult.Error("You have another cash count pending approval. Please wait for it to be processed before starting a new one.");
         }
 
         // Rule 4, 7: Check for unclosed sessions from previous days
@@ -295,8 +309,26 @@ public class CashCountService(
                 return CashCountSaveResult.Error("The cash session for this date is already closed.");
             }
 
+            // New rule: opening count cannot be edited if a closing count for the same agent has
+            // already been submitted (Pending) or Approved. Admin must reject/unapprove the
+            // closing first.
+            var blockingClosing = session?.CashCounts.FirstOrDefault(c =>
+                !c.IsOpening &&
+                (c.Status == CashCountStatus.PendingApproval || c.Status == CashCountStatus.Approved));
+            if (blockingClosing != null)
+            {
+                return CashCountSaveResult.Error(blockingClosing.Status == CashCountStatus.Approved
+                    ? "Cannot modify the opening count: the closing count has already been approved. Ask an admin to unapprove and reject it first."
+                    : "Cannot modify the opening count: a closing count has been submitted for approval. Ask an admin to reject it first.");
+            }
+
+            // Opening count can only be replaced if no non-rejected, non-pending opening exists.
+            // Pending counts may be revised in-place (handled later by find-or-create).
             var existingOpening = session?.CashCounts
-                .FirstOrDefault(c => c.IsOpening && c.Status != CashCountStatus.Rejected);
+                .FirstOrDefault(c => c.IsOpening &&
+                                     c.Status != CashCountStatus.Rejected &&
+                                     c.Status != CashCountStatus.PendingApproval &&
+                                     c.Status != CashCountStatus.Draft);
             if (existingOpening != null)
             {
                 return CashCountSaveResult.Error("An opening count already exists for this session. Close the existing count first.");
@@ -355,16 +387,25 @@ public class CashCountService(
             }
 
             var existingClosing = session.CashCounts
-                .FirstOrDefault(c => !c.IsOpening && c.Status != CashCountStatus.Rejected);
-            if (existingClosing != null && existingClosing.Status != CashCountStatus.Draft)
+                .FirstOrDefault(c => !c.IsOpening &&
+                                     c.Status != CashCountStatus.Rejected &&
+                                     c.Status != CashCountStatus.PendingApproval &&
+                                     c.Status != CashCountStatus.Draft);
+            if (existingClosing != null)
             {
-                return CashCountSaveResult.Error("A closing count has already been submitted for this session.");
+                return CashCountSaveResult.Error("A closing count has already been approved for this session.");
             }
         }
 
+        // Find the existing draft / rejected / pending count to edit, or create a new one.
         var cashCount = session.CashCounts
             .FirstOrDefault(c => c.IsOpening == form.IsOpening &&
-                                 (c.Status == CashCountStatus.Draft || c.Status == CashCountStatus.Rejected));
+                                 (c.Status == CashCountStatus.Draft ||
+                                  c.Status == CashCountStatus.Rejected ||
+                                  c.Status == CashCountStatus.PendingApproval));
+
+        var isNewCount = cashCount == null;
+        var previousStatus = cashCount?.Status;
 
         if (cashCount == null)
         {
@@ -386,6 +427,20 @@ public class CashCountService(
             cashCount.RejectedAt = null;
             cashCount.RejectedByUserId = null;
             cashCount.RejectionReason = null;
+        }
+        else if (cashCount.Status == CashCountStatus.PendingApproval)
+        {
+            // Agent is revising a pending count — clear the pending state.
+            cashCount.Status = CashCountStatus.Draft;
+            cashCount.SubmittedAt = null;
+            // Remove any pending-review discrepancy that was raised by the previous submission.
+            var staleDiscrepancy = await dbContext.Discrepancies
+                .FirstOrDefaultAsync(d => d.CashCountId == cashCount.Id &&
+                                          d.Status == DiscrepancyStatus.PendingReview);
+            if (staleDiscrepancy != null)
+            {
+                dbContext.Discrepancies.Remove(staleDiscrepancy);
+            }
         }
 
         cashCount.TotalAmount = form.TotalAmount;
@@ -409,6 +464,15 @@ public class CashCountService(
         }
 
         await dbContext.SaveChangesAsync();
+
+        // Audit log: record the create / save action.
+        await AddAuditLogAsync(
+            cashCount,
+            isNewCount ? CashCountAuditAction.Created : CashCountAuditAction.Saved,
+            previousStatus,
+            cashCount.Status,
+            userId,
+            isNewCount ? null : "Cash count saved as draft.");
 
         return CashCountSaveResult.Ok(cashCount.Id, session.Id);
     }
@@ -504,6 +568,15 @@ public class CashCountService(
         }
 
         await dbContext.SaveChangesAsync();
+
+        // Audit log: record the submission.
+        await AddAuditLogAsync(
+            cashCount,
+            CashCountAuditAction.Submitted,
+            CashCountStatus.Draft,
+            cashCount.Status,
+            userId,
+            cashCount.Explanation);
 
         var agentName = agent.User != null ? $"{agent.User.FirstName} {agent.User.LastName}".Trim() : agent.Code;
         var countType = cashCount.IsOpening ? "opening" : "closing";
@@ -617,6 +690,14 @@ public class CashCountService(
         }
 
         await dbContext.SaveChangesAsync();
+
+        await AddAuditLogAsync(
+            cashCount,
+            CashCountAuditAction.Rejected,
+            CashCountStatus.PendingApproval,
+            cashCount.Status,
+            adminUserId,
+            reason.Trim());
 
         if (cashCount.Agent?.UserId != null)
         {
@@ -918,6 +999,14 @@ public class CashCountService(
             throw;
         }
 
+        await AddAuditLogAsync(
+            cashCount,
+            CashCountAuditAction.Approved,
+            CashCountStatus.PendingApproval,
+            cashCount.Status,
+            adminUserId,
+            "Opening count approved.");
+
         if (cashCount.Agent?.UserId != null)
         {
             await notificationService.CreateSystemNotificationAsync(
@@ -1033,6 +1122,14 @@ public class CashCountService(
             throw;
         }
 
+        await AddAuditLogAsync(
+            cashCount,
+            isAutoApproval ? CashCountAuditAction.AutoApproved : CashCountAuditAction.Approved,
+            CashCountStatus.PendingApproval,
+            cashCount.Status,
+            isAutoApproval ? null : userId,
+            isAutoApproval ? "Closing count auto-approved (matches opening)." : "Closing count approved.");
+
         // Check if all agents' closing counts are now approved -> close session
         await TryCloseSessionAsync(cashCount.CashSessionId);
 
@@ -1124,6 +1221,255 @@ public class CashCountService(
                 { "AgentCount", agentsWithOpeningCounts.Count.ToString() }
             });
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<CashCountSaveResult> UnapproveCashCountAsync(string adminUserId, long cashCountId, string reason)
+    {
+        var admin = await dbContext.Users.FirstOrDefaultAsync(u => u.Id == adminUserId);
+        if (admin == null || admin.Role != UserRole.Admin)
+        {
+            return CashCountSaveResult.Error("Only administrators can unapprove a cash count.");
+        }
+
+        if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 10)
+        {
+            return CashCountSaveResult.Error("Unapproval reason must be at least 10 characters.");
+        }
+
+        var cashCount = await dbContext.CashCounts
+            .Include(c => c.CashSession)
+            .Include(c => c.Agent)
+                .ThenInclude(a => a!.User)
+            .Include(c => c.Details)
+                .ThenInclude(d => d.Wallet)
+            .FirstOrDefaultAsync(c => c.Id == cashCountId);
+
+        if (cashCount == null)
+        {
+            return CashCountSaveResult.Error("Cash count not found.");
+        }
+
+        if (cashCount.Status != CashCountStatus.Approved)
+        {
+            return CashCountSaveResult.Error("Only approved cash counts can be unapproved.");
+        }
+
+        var session = cashCount.CashSession!;
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        // Restriction: only today's cash counts may be unapproved.
+        if (cashCount.CountDate != today)
+        {
+            return CashCountSaveResult.Error("Only today's cash counts can be unapproved.");
+        }
+
+        if (session.Status == CashSessionStatus.Closed)
+        {
+            return CashCountSaveResult.Error("Cannot unapprove a cash count for a closed session.");
+        }
+
+        // Restriction: cannot unapprove an opening count if the agent's closing count is approved
+        // OR pending approval. The closing must be rejected first.
+        if (cashCount.IsOpening)
+        {
+            var closingCount = await dbContext.CashCounts
+                .Where(c => c.CashSessionId == cashCount.CashSessionId &&
+                            c.AgentId == cashCount.AgentId &&
+                            !c.IsOpening)
+                .OrderByDescending(c => c.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (closingCount != null && closingCount.Status == CashCountStatus.Approved)
+            {
+                return CashCountSaveResult.Error(
+                    "Cannot unapprove the opening count: the closing count is already approved. " +
+                    "Unapprove and reject the closing count first.");
+            }
+
+            if (closingCount != null && closingCount.Status == CashCountStatus.PendingApproval)
+            {
+                return CashCountSaveResult.Error(
+                    "Cannot unapprove the opening count: a closing count has been submitted for approval. " +
+                    "Reject the closing count first.");
+            }
+        }
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync();
+        try
+        {
+            var branchId = session.BranchId;
+
+            if (cashCount.IsOpening)
+            {
+                // Reverse the vault withdrawal that happened on approval by depositing the same
+                // amount back into the vault, and zero the agent's wallets.
+                var depositResult = await vaultService.DepositForSessionAsync(
+                    cashCount.CashSessionId,
+                    branchId,
+                    cashCount.TotalAmount,
+                    adminUserId,
+                    ensureTransaction: false
+                );
+
+                if (!depositResult.Success)
+                {
+                    await transaction.RollbackAsync();
+                    return CashCountSaveResult.Error($"Vault deposit failed: {depositResult.ErrorMessage}");
+                }
+
+                foreach (var detail in cashCount.Details)
+                {
+                    if (detail.Wallet != null)
+                    {
+                        detail.Wallet.Balance = 0;
+                        detail.Wallet.UpdatedAt = DateTimeOffset.UtcNow;
+                    }
+                }
+            }
+            else
+            {
+                // Reverse the vault deposit that happened on closing approval by withdrawing the
+                // same amount and re-instating the agent's wallet balances.
+                var withdrawResult = await vaultService.WithdrawForSessionAsync(
+                    cashCount.CashSessionId,
+                    branchId,
+                    cashCount.TotalAmount,
+                    adminUserId,
+                    ensureTransaction: false
+                );
+
+                if (!withdrawResult.Success)
+                {
+                    await transaction.RollbackAsync();
+                    return CashCountSaveResult.Error($"Vault withdrawal failed: {withdrawResult.ErrorMessage}");
+                }
+
+                foreach (var detail in cashCount.Details)
+                {
+                    if (detail.Wallet != null)
+                    {
+                        detail.Wallet.Balance = detail.Amount;
+                        detail.Wallet.UpdatedAt = DateTimeOffset.UtcNow;
+                    }
+                }
+
+                // If the session was auto-closed because of this approval, re-open it.
+                if (session.Status == CashSessionStatus.Closed)
+                {
+                    session.Status = CashSessionStatus.Open;
+                    session.ClosedAt = null;
+                }
+            }
+
+            // Move back to PendingApproval so the agent can edit & resubmit, or the admin can reject.
+            cashCount.Status = CashCountStatus.PendingApproval;
+            cashCount.ApprovedAt = null;
+            cashCount.ApprovedByUserId = null;
+
+            await dbContext.SaveChangesAsync();
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+
+        await AddAuditLogAsync(
+            cashCount,
+            CashCountAuditAction.Unapproved,
+            CashCountStatus.Approved,
+            cashCount.Status,
+            adminUserId,
+            reason.Trim());
+
+        if (cashCount.Agent?.UserId != null)
+        {
+            var countType = cashCount.IsOpening ? "opening" : "closing";
+            await notificationService.CreateSystemNotificationAsync(
+                cashCount.Agent.UserId,
+                "Cash Count Unapproved",
+                $"Your {countType} cash count has been unapproved by an administrator. Reason: {reason.Trim()}",
+                NotificationType.CountRejected,
+                "/cashcount");
+        }
+
+        telemetryClient?.TrackEvent("cash_count_unapproved", new Dictionary<string, string>
+        {
+            { "CashCountId", cashCountId.ToString() },
+            { "Type", cashCount.IsOpening ? "Opening" : "Closing" },
+            { "UnapprovedBy", adminUserId },
+            { "Reason", reason.Trim() }
+        });
+
+        return CashCountSaveResult.Ok(cashCount.Id, cashCount.CashSessionId);
+    }
+
+    /// <inheritdoc />
+    public async Task<List<CashCountHistoryEntryDto>> GetCashCountHistoryAsync(long cashSessionId)
+    {
+        var entries = await dbContext.CashCountAuditLogs
+            .Include(e => e.Agent)
+                .ThenInclude(a => a!.User)
+            .Include(e => e.PerformedByUser)
+            .Where(e => e.CashSessionId == cashSessionId)
+            .OrderByDescending(e => e.PerformedAt)
+            .ThenByDescending(e => e.Id)
+            .ToListAsync();
+
+        return entries.Select(e => new CashCountHistoryEntryDto
+        {
+            Id = e.Id,
+            CashCountId = e.CashCountId,
+            CashSessionId = e.CashSessionId,
+            AgentId = e.AgentId,
+            AgentName = e.Agent?.User != null
+                ? $"{e.Agent.User.FirstName} {e.Agent.User.LastName}".Trim()
+                : "Unknown",
+            AgentCode = e.Agent?.Code ?? "N/A",
+            IsOpening = e.IsOpening,
+            Action = e.Action,
+            PreviousStatus = e.PreviousStatus,
+            NewStatus = e.NewStatus,
+            TotalAmount = e.TotalAmount,
+            Notes = e.Notes,
+            PerformedByUserId = e.PerformedByUserId,
+            PerformedByName = e.PerformedByUser != null
+                ? $"{e.PerformedByUser.FirstName} {e.PerformedByUser.LastName}".Trim()
+                : (e.PerformedByUserId == null ? "System" : "Unknown"),
+            PerformedAt = e.PerformedAt
+        }).ToList();
+    }
+
+    /// <summary>
+    /// Appends an immutable audit log entry for the given cash count.
+    /// Audit entries are never updated or deleted.
+    /// </summary>
+    private async Task AddAuditLogAsync(
+        CashCount cashCount,
+        CashCountAuditAction action,
+        CashCountStatus? previousStatus,
+        CashCountStatus newStatus,
+        string? performedByUserId,
+        string? notes)
+    {
+        dbContext.CashCountAuditLogs.Add(new CashCountAuditLog
+        {
+            CashCountId = cashCount.Id,
+            CashSessionId = cashCount.CashSessionId,
+            AgentId = cashCount.AgentId,
+            IsOpening = cashCount.IsOpening,
+            Action = action,
+            PreviousStatus = previousStatus,
+            NewStatus = newStatus,
+            TotalAmount = cashCount.TotalAmount,
+            Notes = string.IsNullOrWhiteSpace(notes) ? null : notes.Trim(),
+            PerformedByUserId = performedByUserId,
+            PerformedAt = DateTimeOffset.UtcNow
+        });
+
+        await dbContext.SaveChangesAsync();
     }
 
     private async Task<Agent?> GetAgentForUserAsync(string userId)

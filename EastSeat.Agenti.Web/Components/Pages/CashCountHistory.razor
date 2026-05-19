@@ -1,0 +1,141 @@
+@page "/cashsessions/{Id:long}/history"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Web.Features.CashCounts
+@using EastSeat.Agenti.Web.Features.CashSessions
+@using EastSeat.Agenti.Shared.Domain.Enums
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject ICashCountService CashCountService
+@inject ICashSessionService CashSessionService
+@inject NavigationManager NavigationManager
+
+<PageTitle>Cash Count History - Agenti</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudButton Variant="Variant.Text" Color="Color.Default" Class="mb-2"
+        StartIcon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack">
+        Back to Session
+    </MudButton>
+
+    <MudText Typo="Typo.h4" Class="mb-2">Cash Count Change History</MudText>
+    @if (_session != null)
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
+            Session: @_session.SessionDate.ToString("dddd, MMMM dd, yyyy")
+        </MudText>
+    }
+
+    @if (_isLoading)
+    {
+        <MudGrid Class="mt-4">
+            <MudItem xs="12" Class="d-flex justify-center">
+                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    }
+    else if (_entries.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+            No cash count changes have been recorded for this session yet.
+        </MudAlert>
+    }
+    else
+    {
+        <MudTable Items="@_entries" Hover="true" Striped="true" Dense="true" Elevation="2"
+            Breakpoint="Breakpoint.Md">
+            <HeaderContent>
+                <MudTh>When</MudTh>
+                <MudTh>Agent</MudTh>
+                <MudTh>Type</MudTh>
+                <MudTh>Action</MudTh>
+                <MudTh>Status change</MudTh>
+                <MudTh Style="text-align: right;">Amount (UGX)</MudTh>
+                <MudTh>By</MudTh>
+                <MudTh>Notes</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="When">
+                    <MudText Typo="Typo.body2">@context.PerformedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</MudText>
+                </MudTd>
+                <MudTd DataLabel="Agent">
+                    <MudText Typo="Typo.body2">@context.AgentName</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@context.AgentCode</MudText>
+                </MudTd>
+                <MudTd DataLabel="Type">
+                    <MudChip T="string" Size="Size.Small"
+                        Color="@(context.IsOpening ? Color.Primary : Color.Secondary)">
+                        @(context.IsOpening ? "Opening" : "Closing")
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Action">
+                    <MudChip T="string" Size="Size.Small" Color="@GetActionColor(context.Action)">
+                        @context.Action.ToString()
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Status change">
+                    @if (context.PreviousStatus.HasValue)
+                    {
+                        <MudText Typo="Typo.caption">@context.PreviousStatus.Value → @context.NewStatus</MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption">@context.NewStatus</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Amount" Style="text-align: right;">
+                    @context.TotalAmount.ToString("N0")
+                </MudTd>
+                <MudTd DataLabel="By">
+                    <MudText Typo="Typo.body2">@context.PerformedByName</MudText>
+                </MudTd>
+                <MudTd DataLabel="Notes">
+                    @if (!string.IsNullOrWhiteSpace(context.Notes))
+                    {
+                        <MudText Typo="Typo.caption">@context.Notes</MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Style="opacity: 0.5;">—</MudText>
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    [Parameter]
+    public long Id { get; set; }
+
+    private List<CashCountHistoryEntryDto> _entries = [];
+    private CashSessionDetailDto? _session;
+    private bool _isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            _session = await CashSessionService.GetCashSessionDetailAsync(Id);
+            _entries = await CashCountService.GetCashCountHistoryAsync(Id);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void GoBack() => NavigationManager.NavigateTo($"/cashsessions/{Id}");
+
+    private static Color GetActionColor(CashCountAuditAction action) => action switch
+    {
+        CashCountAuditAction.Created => Color.Default,
+        CashCountAuditAction.Saved => Color.Info,
+        CashCountAuditAction.Submitted => Color.Warning,
+        CashCountAuditAction.Approved => Color.Success,
+        CashCountAuditAction.AutoApproved => Color.Success,
+        CashCountAuditAction.Rejected => Color.Error,
+        CashCountAuditAction.Unapproved => Color.Warning,
+        _ => Color.Default
+    };
+}
