@@ -72,6 +72,8 @@ public class CurrentSessionDto
     public bool HasClosingCount { get; set; }
     public CashCountStatus? OpeningCountStatus { get; set; }
     public CashCountStatus? ClosingCountStatus { get; set; }
+    public long? OpeningCountId { get; set; }
+    public long? ClosingCountId { get; set; }
     public bool HasPendingApproval { get; set; }
     public string? BlockReason { get; set; }
     public bool CanRecordAdjustment { get; set; }
@@ -108,4 +110,26 @@ public class CashCountApprovalModel
     public long CashCountId { get; set; }
     public bool Approve { get; set; }
     public string? RejectionReason { get; set; }
+}
+
+/// <summary>
+/// DTO representing a single entry in the change history of a cash count.
+/// </summary>
+public class CashCountHistoryEntryDto
+{
+    public long Id { get; set; }
+    public long CashCountId { get; set; }
+    public long CashSessionId { get; set; }
+    public long AgentId { get; set; }
+    public string AgentName { get; set; } = string.Empty;
+    public string AgentCode { get; set; } = string.Empty;
+    public bool IsOpening { get; set; }
+    public CashCountAuditAction Action { get; set; }
+    public CashCountStatus? PreviousStatus { get; set; }
+    public CashCountStatus NewStatus { get; set; }
+    public decimal TotalAmount { get; set; }
+    public string? Notes { get; set; }
+    public string? PerformedByUserId { get; set; }
+    public string PerformedByName { get; set; } = "System";
+    public DateTimeOffset PerformedAt { get; set; }
 }

@@ -129,9 +129,11 @@ public class CashCountServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetCurrentSessionAsync_WithPendingApproval_BlocksFurtherCounts()
+    public async Task GetCurrentSessionAsync_WithPendingOpeningApproval_AllowsRevisingButBlocksClosing()
     {
-        // Rule 14: Pending approval blocks new counts
+        // Updated behavior: a pending opening cash count CAN be revised by the agent
+        // (saved as draft or re-submitted), but the closing count remains blocked until
+        // the opening is approved.
         var session = CashSessionBuilder.Default()
             .WithBranchId(_testBranch.Id)
             .AsOpen()
@@ -151,7 +153,9 @@ public class CashCountServiceTests : IDisposable
         var result = await _sut.GetCurrentSessionAsync(_testUser.Id);
 
         result.HasPendingApproval.Should().BeTrue();
-        result.CanPerformOpeningCount.Should().BeFalse();
+        // Agent should be able to revise the pending opening count.
+        result.CanPerformOpeningCount.Should().BeTrue();
+        // Closing remains blocked until the opening is approved.
         result.CanPerformClosingCount.Should().BeFalse();
     }
 
@@ -1126,6 +1130,470 @@ public class CashCountServiceTests : IDisposable
         var surplusTransaction = await _dbContext.VaultTransactions
             .FirstOrDefaultAsync(vt => vt.Type == VaultTransactionType.SurplusDeposit);
         surplusTransaction.Should().BeNull();
+    }
+
+    #endregion
+
+    #region UnapproveCashCountAsync Tests
+
+    [Fact]
+    public async Task UnapproveCashCountAsync_NonAdmin_ReturnsError()
+    {
+        var supervisor = UserBuilder.Default()
+            .WithEmail("sup@test.com")
+            .WithRole(UserRole.Supervisor)
+            .Build();
+        _dbContext.Users.Add(supervisor);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.UnapproveCashCountAsync(supervisor.Id, 1, "Reason long enough");
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Only administrators");
+    }
+
+    [Fact]
+    public async Task UnapproveCashCountAsync_ShortReason_ReturnsError()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin-uap1@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.UnapproveCashCountAsync(adminUser.Id, 1, "short");
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("at least 10 characters");
+    }
+
+    [Fact]
+    public async Task UnapproveCashCountAsync_NonApprovedCount_ReturnsError()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin-uap2@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var cashCount = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .WithStatus(CashCountStatus.PendingApproval)
+            .Build();
+        _dbContext.CashCounts.Add(cashCount);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.UnapproveCashCountAsync(adminUser.Id, cashCount.Id, "Need to correct values");
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Only approved");
+    }
+
+    [Fact]
+    public async Task UnapproveCashCountAsync_NotTodayCount_ReturnsError()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin-uap3@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var yesterday = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .WithSessionDate(yesterday)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var cashCount = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .WithCountDate(yesterday)
+            .AsOpening()
+            .AsApproved()
+            .WithTotalAmount(500m)
+            .Build();
+        _dbContext.CashCounts.Add(cashCount);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.UnapproveCashCountAsync(adminUser.Id, cashCount.Id, "Try to unapprove old count");
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("today");
+    }
+
+    [Fact]
+    public async Task UnapproveCashCountAsync_OpeningWhileClosingApproved_ReturnsError()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin-uap4@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var opening = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .Build();
+        _dbContext.CashCounts.Add(opening);
+
+        var closing = CashCountBuilder.Default()
+            .WithId(2)
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsClosing()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .Build();
+        _dbContext.CashCounts.Add(closing);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.UnapproveCashCountAsync(adminUser.Id, opening.Id, "Want to fix the opening");
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("closing count is already approved");
+    }
+
+    [Fact]
+    public async Task UnapproveCashCountAsync_OpeningWhileClosingPending_ReturnsError()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin-uap5@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var opening = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .Build();
+        _dbContext.CashCounts.Add(opening);
+
+        var closing = CashCountBuilder.Default()
+            .WithId(2)
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsClosing()
+            .WithStatus(CashCountStatus.PendingApproval)
+            .WithTotalAmount(900m)
+            .Build();
+        _dbContext.CashCounts.Add(closing);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.UnapproveCashCountAsync(adminUser.Id, opening.Id, "Need to revise opening");
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Reject the closing count first");
+    }
+
+    [Fact]
+    public async Task UnapproveCashCountAsync_OpeningTodayNoClosing_Succeeds()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin-uap6@test.com")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var opening = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .Build();
+        _dbContext.CashCounts.Add(opening);
+
+        var detail = CashCountDetailBuilder.Default()
+            .WithCashCountId(opening.Id)
+            .WithWalletId(_testWallet.Id)
+            .WithAmount(1000m)
+            .Build();
+        _dbContext.CashCountDetails.Add(detail);
+        await _dbContext.SaveChangesAsync();
+
+        // Vault must accept the reversing deposit for opening unapproval.
+        _vaultServiceMock
+            .Setup(x => x.DepositForSessionAsync(
+                session.Id, _testBranch.Id, 1000m, adminUser.Id, false, default))
+            .ReturnsAsync(VaultOperationResult.Ok(1));
+
+        var result = await _sut.UnapproveCashCountAsync(adminUser.Id, opening.Id, "Wrong denomination split");
+
+        result.Success.Should().BeTrue();
+
+        var updated = await _dbContext.CashCounts.FindAsync(opening.Id);
+        updated!.Status.Should().Be(CashCountStatus.PendingApproval);
+        updated.ApprovedAt.Should().BeNull();
+        updated.ApprovedByUserId.Should().BeNull();
+
+        var auditLog = await _dbContext.CashCountAuditLogs
+            .FirstOrDefaultAsync(a => a.CashCountId == opening.Id && a.Action == CashCountAuditAction.Unapproved);
+        auditLog.Should().NotBeNull();
+        auditLog!.PerformedByUserId.Should().Be(adminUser.Id);
+        auditLog.PreviousStatus.Should().Be(CashCountStatus.Approved);
+        auditLog.NewStatus.Should().Be(CashCountStatus.PendingApproval);
+    }
+
+    #endregion
+
+    #region GetCashCountHistoryAsync Tests
+
+    [Fact]
+    public async Task GetCashCountHistoryAsync_ReturnsAuditEntriesInDescendingOrder()
+    {
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var cashCount = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .WithStatus(CashCountStatus.Draft)
+            .WithTotalAmount(500m)
+            .Build();
+        _dbContext.CashCounts.Add(cashCount);
+        await _dbContext.SaveChangesAsync();
+
+        _dbContext.CashCountAuditLogs.Add(new CashCountAuditLog
+        {
+            CashCountId = cashCount.Id,
+            CashSessionId = session.Id,
+            AgentId = _testAgent.Id,
+            IsOpening = true,
+            Action = CashCountAuditAction.Created,
+            PreviousStatus = null,
+            NewStatus = CashCountStatus.Draft,
+            TotalAmount = 500m,
+            PerformedByUserId = _testUser.Id,
+            PerformedAt = DateTimeOffset.UtcNow.AddMinutes(-2)
+        });
+        _dbContext.CashCountAuditLogs.Add(new CashCountAuditLog
+        {
+            CashCountId = cashCount.Id,
+            CashSessionId = session.Id,
+            AgentId = _testAgent.Id,
+            IsOpening = true,
+            Action = CashCountAuditAction.Submitted,
+            PreviousStatus = CashCountStatus.Draft,
+            NewStatus = CashCountStatus.PendingApproval,
+            TotalAmount = 500m,
+            PerformedByUserId = _testUser.Id,
+            PerformedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+        });
+        await _dbContext.SaveChangesAsync();
+
+        var history = await _sut.GetCashCountHistoryAsync(session.Id);
+
+        history.Should().HaveCount(2);
+        history[0].Action.Should().Be(CashCountAuditAction.Submitted);
+        history[1].Action.Should().Be(CashCountAuditAction.Created);
+        history[0].PerformedByName.Should().NotBe("System");
+    }
+
+    #endregion
+
+    #region SaveCashCountAsync (Edit Pending) Tests
+
+    [Fact]
+    public async Task SaveCashCountAsync_EditPendingOpening_ResetsToDraft()
+    {
+        // Acceptance criterion: if a cash count is pending approval, the agent can make
+        // changes and save them as a draft.
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var pending = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsSubmitted()
+            .WithTotalAmount(500m)
+            .Build();
+        _dbContext.CashCounts.Add(pending);
+        await _dbContext.SaveChangesAsync();
+
+        var form = new CashCountFormModel
+        {
+            IsOpening = true,
+            CountDate = DateOnly.FromDateTime(DateTime.UtcNow),
+            WalletEntries =
+            {
+                new WalletCountEntryDto
+                {
+                    WalletId = _testWallet.Id,
+                    WalletName = _testWallet.Name,
+                    WalletTypeName = "Cash",
+                    CountedAmount = 750m
+                }
+            }
+        };
+
+        var result = await _sut.SaveCashCountAsync(_testUser.Id, form);
+
+        result.Success.Should().BeTrue();
+        var updated = await _dbContext.CashCounts.FindAsync(pending.Id);
+        updated!.Status.Should().Be(CashCountStatus.Draft);
+        updated.SubmittedAt.Should().BeNull();
+        updated.TotalAmount.Should().Be(750m);
+
+        var savedAudit = await _dbContext.CashCountAuditLogs
+            .Where(a => a.CashCountId == pending.Id && a.Action == CashCountAuditAction.Saved)
+            .FirstOrDefaultAsync();
+        savedAudit.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task SaveCashCountAsync_EditOpeningWhilePendingClosing_ReturnsError()
+    {
+        // Acceptance criterion: if a closing count has been submitted, the opening cannot be edited.
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var opening = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .Build();
+        _dbContext.CashCounts.Add(opening);
+
+        var closing = CashCountBuilder.Default()
+            .WithId(2)
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsClosing()
+            .AsSubmitted()
+            .WithTotalAmount(950m)
+            .Build();
+        _dbContext.CashCounts.Add(closing);
+        await _dbContext.SaveChangesAsync();
+
+        var form = new CashCountFormModel
+        {
+            IsOpening = true,
+            CountDate = DateOnly.FromDateTime(DateTime.UtcNow),
+            WalletEntries =
+            {
+                new WalletCountEntryDto
+                {
+                    WalletId = _testWallet.Id,
+                    WalletName = _testWallet.Name,
+                    WalletTypeName = "Cash",
+                    CountedAmount = 800m
+                }
+            }
+        };
+
+        var result = await _sut.SaveCashCountAsync(_testUser.Id, form);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("pending approval");
+    }
+
+    [Fact]
+    public async Task SaveCashCountAsync_EditOpeningWhileApprovedClosing_ReturnsError()
+    {
+        // Acceptance criterion: once a closing count is approved, the opening cannot be changed.
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var opening = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .Build();
+        _dbContext.CashCounts.Add(opening);
+
+        var closing = CashCountBuilder.Default()
+            .WithId(2)
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsClosing()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .Build();
+        _dbContext.CashCounts.Add(closing);
+        await _dbContext.SaveChangesAsync();
+
+        var form = new CashCountFormModel
+        {
+            IsOpening = true,
+            CountDate = DateOnly.FromDateTime(DateTime.UtcNow),
+            WalletEntries =
+            {
+                new WalletCountEntryDto
+                {
+                    WalletId = _testWallet.Id,
+                    WalletName = _testWallet.Name,
+                    WalletTypeName = "Cash",
+                    CountedAmount = 800m
+                }
+            }
+        };
+
+        var result = await _sut.SaveCashCountAsync(_testUser.Id, form);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("closing count");
     }
 
     #endregion

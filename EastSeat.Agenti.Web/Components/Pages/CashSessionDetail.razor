@@ -13,6 +13,7 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager NavigationManager
 @inject ISnackbar Snackbar
+@inject IDialogService DialogService
 
 <PageTitle>Cash Session Details - Agenti</PageTitle>
 
@@ -57,10 +58,17 @@
                 </MudStack>
             </MudItem>
             <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
-                <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="LoadSessionAsync"
-                    StartIcon="@Icons.Material.Filled.Refresh" Disabled="_isLoading">
-                    Refresh
-                </MudButton>
+                <MudStack Row="true" Spacing="1">
+                    <MudButton Variant="Variant.Text" Color="Color.Primary"
+                        OnClick="@(() => NavigationManager.NavigateTo($"/cashsessions/{Id}/history"))"
+                        StartIcon="@Icons.Material.Filled.History">
+                        Change History
+                    </MudButton>
+                    <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="LoadSessionAsync"
+                        StartIcon="@Icons.Material.Filled.Refresh" Disabled="_isLoading">
+                        Refresh
+                    </MudButton>
+                </MudStack>
             </MudItem>
         </MudGrid>
 
@@ -133,6 +141,31 @@
                     <CardHeaderActions>
                         <AuthorizeView Roles="Admin">
                             <Authorized>
+                                @{
+                                    var isToday = _session.SessionDate == DateOnly.FromDateTime(DateTime.UtcNow);
+                                    var canUnapproveClosing = isToday &&
+                                        agent.ClosingCount?.Status == CashCountStatus.Approved &&
+                                        _session.Status != CashSessionStatus.Closed;
+                                    var canUnapproveOpening = isToday &&
+                                        agent.OpeningCount?.Status == CashCountStatus.Approved &&
+                                        agent.ClosingCount?.Status != CashCountStatus.Approved &&
+                                        agent.ClosingCount?.Status != CashCountStatus.PendingApproval &&
+                                        _session.Status != CashSessionStatus.Closed;
+                                }
+                                @if (canUnapproveOpening)
+                                {
+                                    <MudButton Variant="Variant.Text" Color="Color.Warning" Size="Size.Small"
+                                        OnClick="@(() => UnapproveCountAsync(agent.OpeningCount!.Id, agent.AgentName, true))">
+                                        Unapprove Opening
+                                    </MudButton>
+                                }
+                                @if (canUnapproveClosing)
+                                {
+                                    <MudButton Variant="Variant.Text" Color="Color.Warning" Size="Size.Small"
+                                        OnClick="@(() => UnapproveCountAsync(agent.ClosingCount!.Id, agent.AgentName, false))">
+                                        Unapprove Closing
+                                    </MudButton>
+                                }
                                 @if (_session.Status != CashSessionStatus.Closed &&
                                      agent.OpeningCount?.Status == CashCountStatus.Approved &&
                                      agent.ClosingCount?.Status != CashCountStatus.Approved)
@@ -336,6 +369,36 @@
         else
         {
             Snackbar.Add(result.ErrorMessage ?? "Failed to close agent session.", Severity.Error);
+        }
+    }
+
+    private async Task UnapproveCountAsync(long cashCountId, string agentName, bool isOpening)
+    {
+        if (string.IsNullOrEmpty(_userId)) return;
+
+        var parameters = new DialogParameters<RejectCashCountDialog>
+        {
+            { x => x.AgentName, agentName },
+            { x => x.CountType, $"approved {(isOpening ? "opening" : "closing")}" }
+        };
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<RejectCashCountDialog>("Unapprove Cash Count", parameters, options);
+        var result = await dialog.Result;
+
+        if (result == null || result.Canceled || result.Data is not string reason)
+        {
+            return;
+        }
+
+        var unapproveResult = await CashCountService.UnapproveCashCountAsync(_userId, cashCountId, reason);
+        if (unapproveResult.Success)
+        {
+            Snackbar.Add("Cash count unapproved. The agent can now make changes.", Severity.Warning);
+            await LoadSessionAsync();
+        }
+        else
+        {
+            Snackbar.Add(unapproveResult.ErrorMessage ?? "Failed to unapprove cash count.", Severity.Error);
         }
     }
 

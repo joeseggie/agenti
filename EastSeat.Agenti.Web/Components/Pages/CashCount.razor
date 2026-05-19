@@ -62,7 +62,8 @@
         @if (_currentSession?.HasPendingApproval == true)
         {
             <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-4">
-                You have a cash count pending admin approval. Please wait for it to be processed.
+                You have a cash count pending admin approval. You can still edit it and save as draft or
+                re-submit it for approval until the admin acts on it.
             </MudAlert>
         }
 
@@ -100,7 +101,7 @@
                     Disabled="@(!_currentSession?.CanPerformOpeningCount ?? true)"
                     OnClick="@(() => StartCount(true))"
                     StartIcon="@Icons.Material.Filled.WbSunny">
-                    @(_currentSession?.OpeningCountStatus == CashCountStatus.Rejected ? "Revise Opening Count" : "Start Opening Count")
+                    @GetOpeningButtonLabel()
                 </MudButton>
 
                 <MudDivider Vertical="true" FlexItem="true" />
@@ -109,7 +110,7 @@
                     Disabled="@(!_currentSession?.CanPerformClosingCount ?? true)"
                     OnClick="@(() => StartCount(false))"
                     StartIcon="@Icons.Material.Filled.NightsStay">
-                    @(_currentSession?.ClosingCountStatus == CashCountStatus.Rejected ? "Revise Closing Count" : "Start Closing Count")
+                    @GetClosingButtonLabel()
                 </MudButton>
 
                 @if (_currentSession?.CanRecordAdjustment == true)
@@ -513,7 +514,25 @@
 
         try
         {
-            _countForm = await CashCountService.InitializeCashCountFormAsync(_userId, isOpening);
+            // If an editable count already exists for this type (draft / pending / rejected),
+            // load its current contents instead of starting a fresh form.
+            var existingCountId = isOpening
+                ? _currentSession?.OpeningCountId
+                : _currentSession?.ClosingCountId;
+            var existingStatus = isOpening
+                ? _currentSession?.OpeningCountStatus
+                : _currentSession?.ClosingCountStatus;
+
+            var canLoadExisting = existingCountId.HasValue &&
+                (existingStatus == CashCountStatus.Draft ||
+                 existingStatus == CashCountStatus.PendingApproval ||
+                 existingStatus == CashCountStatus.Rejected);
+
+            _countForm = canLoadExisting
+                ? await CashCountService.GetCashCountFormAsync(_userId, existingCountId!.Value)
+                  ?? await CashCountService.InitializeCashCountFormAsync(_userId, isOpening)
+                : await CashCountService.InitializeCashCountFormAsync(_userId, isOpening);
+
             _isCountingMode = true;
         }
         finally
@@ -641,6 +660,28 @@
         CashCountStatus.Approved => "Approved",
         CashCountStatus.Rejected => "Rejected"
     };
+
+    private string GetOpeningButtonLabel()
+    {
+        return _currentSession?.OpeningCountStatus switch
+        {
+            CashCountStatus.Rejected => "Revise Opening Count",
+            CashCountStatus.PendingApproval => "Edit Pending Opening",
+            CashCountStatus.Draft => "Continue Opening Draft",
+            _ => "Start Opening Count"
+        };
+    }
+
+    private string GetClosingButtonLabel()
+    {
+        return _currentSession?.ClosingCountStatus switch
+        {
+            CashCountStatus.Rejected => "Revise Closing Count",
+            CashCountStatus.PendingApproval => "Edit Pending Closing",
+            CashCountStatus.Draft => "Continue Closing Draft",
+            _ => "Start Closing Count"
+        };
+    }
 
     private static Color GetAdjustmentStatusColor(WalletAdjustmentStatus status) => status switch
     {

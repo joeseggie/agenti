@@ -50,4 +50,18 @@ public interface ICashCountService
     /// Creates a closing count matching the opening count if the agent cannot close themselves.
     /// </summary>
     Task<CashCountSaveResult> AdminCloseAgentSessionAsync(string adminUserId, long cashSessionId, long agentId);
+
+    /// <summary>
+    /// Removes approval from a cash count (admin only) so the agent can make changes.
+    /// Restrictions enforced:
+    /// - Only today's cash counts can be unapproved.
+    /// - An opening count cannot be unapproved if a closing count exists in PendingApproval or Approved status.
+    /// - Only Approved cash counts can be unapproved.
+    /// </summary>
+    Task<CashCountSaveResult> UnapproveCashCountAsync(string adminUserId, long cashCountId, string reason);
+
+    /// <summary>
+    /// Gets the full change history (audit log) for all cash counts in a cash session.
+    /// </summary>
+    Task<List<CashCountHistoryEntryDto>> GetCashCountHistoryAsync(long cashSessionId);
 }
