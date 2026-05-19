@@ -79,6 +79,10 @@ public class CurrentSessionDto
     public bool CanRecordAdjustment { get; set; }
     public decimal TotalAdjustments { get; set; }
     public bool CanRecordBankRun { get; set; }
+    public string? OpeningCountApprovedByName { get; set; }
+    public DateTimeOffset? OpeningCountApprovedAt { get; set; }
+    public string? ClosingCountApprovedByName { get; set; }
+    public DateTimeOffset? ClosingCountApprovedAt { get; set; }
 }
 
 /// <summary>

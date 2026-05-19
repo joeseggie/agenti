@@ -74,20 +74,36 @@
                 <MudStack Spacing="2">
                     @if (_currentSession?.OpeningCountStatus != null)
                     {
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudStack Spacing="0">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                             <MudText Typo="Typo.body2">Opening Count:</MudText>
                             <MudChip T="string" Size="Size.Small" Color="@GetCountStatusColor(_currentSession.OpeningCountStatus.Value)">
                                 @GetCountStatusText(_currentSession.OpeningCountStatus.Value)
                             </MudChip>
+                            </MudStack>
+                            @if (TryGetApprovalDetails(_currentSession.OpeningCountStatus, _currentSession.OpeningCountApprovedByName, _currentSession.OpeningCountApprovedAt, out var openingApprovalDetails))
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                    @openingApprovalDetails
+                                </MudText>
+                            }
                         </MudStack>
                     }
                     @if (_currentSession?.ClosingCountStatus != null)
                     {
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudStack Spacing="0">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                             <MudText Typo="Typo.body2">Closing Count:</MudText>
                             <MudChip T="string" Size="Size.Small" Color="@GetCountStatusColor(_currentSession.ClosingCountStatus.Value)">
                                 @GetCountStatusText(_currentSession.ClosingCountStatus.Value)
                             </MudChip>
+                            </MudStack>
+                            @if (TryGetApprovalDetails(_currentSession.ClosingCountStatus, _currentSession.ClosingCountApprovedByName, _currentSession.ClosingCountApprovedAt, out var closingApprovalDetails))
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                    @closingApprovalDetails
+                                </MudText>
+                            }
                         </MudStack>
                     }
                 </MudStack>
@@ -681,6 +697,23 @@
             CashCountStatus.Draft => "Continue Closing Draft",
             _ => "Start Closing Count"
         };
+    }
+
+    private static bool TryGetApprovalDetails(
+        CashCountStatus? status,
+        string? approvedByName,
+        DateTimeOffset? approvedAt,
+        out string details)
+    {
+        details = string.Empty;
+
+        if (status != CashCountStatus.Approved || string.IsNullOrWhiteSpace(approvedByName) || !approvedAt.HasValue)
+        {
+            return false;
+        }
+
+        details = $"Approved by {approvedByName} on {approvedAt.Value.ToLocalTime():MMM dd, yyyy HH:mm}";
+        return true;
     }
 
     private static Color GetAdjustmentStatusColor(WalletAdjustmentStatus status) => status switch

@@ -186,6 +186,55 @@ public class CashCountServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetCurrentSessionAsync_WithApprovedCounts_ReturnsApprovalDetails()
+    {
+        var approvedAt = new DateTimeOffset(2026, 5, 18, 14, 30, 0, TimeSpan.Zero);
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin@test.com")
+            .WithFirstName("Ada")
+            .WithLastName("Admin")
+            .WithRole(UserRole.Admin)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+
+        var session = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var approvedOpening = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .AsApproved()
+            .WithApprovedAt(approvedAt)
+            .WithApprovedByUserId(adminUser.Id)
+            .Build();
+
+        var approvedClosing = CashCountBuilder.Default()
+            .WithId(99)
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsClosing()
+            .AsApproved()
+            .WithApprovedAt(approvedAt.AddHours(3))
+            .WithApprovedByUserId(adminUser.Id)
+            .Build();
+
+        _dbContext.CashCounts.AddRange(approvedOpening, approvedClosing);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.GetCurrentSessionAsync(_testUser.Id);
+
+        result.OpeningCountApprovedByName.Should().Be("Ada Admin");
+        result.OpeningCountApprovedAt.Should().Be(approvedAt);
+        result.ClosingCountApprovedByName.Should().Be("Ada Admin");
+        result.ClosingCountApprovedAt.Should().Be(approvedAt.AddHours(3));
+    }
+
+    [Fact]
     public async Task GetCurrentSessionAsync_WithPreviousUnclosedSession_Blocks()
     {
         // Rule 4: Previous unclosed session blocks new session
