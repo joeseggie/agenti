@@ -70,7 +70,23 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Select Xcode 26.4
-        run: sudo xcode-select -s /Applications/Xcode_26.4.app
+        # .NET 10 for iOS workload (26.4.10259) requires Xcode 26.4.x. The macos-26
+        # runner ships Xcode 26.4.1; pick the highest available 26.4.x bundle so we
+        # don't depend on a specific point-release symlink that could be incomplete.
+        run: |
+          set -e
+          XCODE_APP=$(ls -d /Applications/Xcode_26.4*.app 2>/dev/null | sort -Vr | head -n 1)
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode 26.4.x installation found in /Applications"
+            ls -d /Applications/Xcode*.app 2>/dev/null || true
+            exit 1
+          fi
+          echo "Selecting $XCODE_APP"
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          echo "DEVELOPER_DIR=$XCODE_APP/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-path
+          xcrun --sdk iphonesimulator --show-sdk-path
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
