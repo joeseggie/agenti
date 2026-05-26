@@ -65,7 +65,7 @@
                                        HorizontalOptions="End" />
 
                                 <Label Grid.Row="3" Grid.ColumnSpan="2"
-                                       Text="{Binding OpenedAt, StringFormat='Opened: {0:MMM dd, yyyy h:mm tt}'}"
+                                       Text="{Binding OpenedAt, StringFormat='Opened: {0:MMM dd, yyyy h:mm t}'}"
                                        FontSize="12"
                                        TextColor="{AppThemeBinding Light=#9E9E9E, Dark=#757575}"
                                        Margin="0,4,0,0" />
