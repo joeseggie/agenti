@@ -69,15 +69,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Select Xcode 26.4
-        # .NET 10 for iOS workload (26.4.10259) requires Xcode 26.4.x. The macos-26
-        # runner ships Xcode 26.4.1; pick the highest available 26.4.x bundle so we
-        # don't depend on a specific point-release symlink that could be incomplete.
+      - name: Select Xcode 26.5
+        # .NET 10 for iOS workload (26.5.10284) requires Xcode 26.5. The macos-26
+        # runner ships Xcode 26.5 (beta); pick the highest available 26.5.x bundle
+        # so we don't depend on a specific point-release symlink that could be incomplete.
         run: |
           set -e
-          XCODE_APP=$(ls -d /Applications/Xcode_26.4*.app 2>/dev/null | sort -Vr | head -n 1)
+          XCODE_APP=$(ls -d /Applications/Xcode_26.5*.app 2>/dev/null | sort -Vr | head -n 1)
           if [ -z "$XCODE_APP" ]; then
-            echo "::error::No Xcode 26.4.x installation found in /Applications"
+            echo "::error::No Xcode 26.5.x installation found in /Applications"
             ls -d /Applications/Xcode*.app 2>/dev/null || true
             exit 1
           fi
