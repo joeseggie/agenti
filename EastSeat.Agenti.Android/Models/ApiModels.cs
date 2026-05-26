@@ -116,7 +116,7 @@ public class SessionStatus
     public DateOnly? SessionDate { get; set; }
 
     [JsonPropertyName("status")]
-    public CashSessionStatus? Status { get; set; }
+    public int? Status { get; set; }
 
     [JsonPropertyName("openedAt")]
     public DateTimeOffset? OpenedAt { get; set; }
@@ -234,7 +234,7 @@ public class CashSessionListItem
     public DateOnly SessionDate { get; set; }
 
     [JsonPropertyName("status")]
-    public CashSessionStatus Status { get; set; }
+    public int Status { get; set; }
 
     [JsonPropertyName("openedAt")]
     public DateTimeOffset OpenedAt { get; set; }
@@ -262,12 +262,12 @@ public class CashSessionListItem
 
     public string StatusDisplay => Status switch
     {
-        CashSessionStatus.Open => "Open",
-        CashSessionStatus.Closed => "Closed",
-        CashSessionStatus.Pending => "Pending",
-        CashSessionStatus.DiscrepancyUnderReview => "Under Review",
-        CashSessionStatus.Completed => "Completed",
-        CashSessionStatus.Blocked => "Blocked",
+        1 => "Open",
+        0 => "Closed",
+        2 => "Pending",
+        3 => "Under Review",
+        4 => "Completed",
+        5 => "Blocked",
         _ => "Unknown"
     };
 }
@@ -394,14 +394,4 @@ public class VaultTransactionItem
 
     [JsonPropertyName("notes")]
     public string? Notes { get; set; }
-}
-
-public enum CashSessionStatus
-{
-    Closed = 0,
-    Open = 1,
-    Pending = 2,
-    DiscrepancyUnderReview = 3,
-    Completed = 4,
-    Blocked = 5
 }
