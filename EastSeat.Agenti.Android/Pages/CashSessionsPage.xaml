@@ -26,35 +26,46 @@
                                 StrokeShape="RoundRectangle 8"
                                 Padding="16"
                                 Margin="8,4">
-                            <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+                            <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto">
 
-                                <!-- Agent name and session date -->
+                                <!-- Session date and status -->
                                 <Label Grid.Row="0" Grid.Column="0"
-                                       Text="{Binding AgentName}"
+                                       Text="{Binding SessionDate, StringFormat='Session: {0:MMM dd, yyyy}'}"
                                        FontSize="16"
                                        FontAttributes="Bold"
                                        TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}" />
 
                                 <Label Grid.Row="0" Grid.Column="1"
-                                       Text="{Binding Status}"
+                                       Text="{Binding StatusDisplay}"
                                        FontSize="13"
                                        FontAttributes="Bold"
                                        TextColor="#1976D2"
                                        HorizontalOptions="End" />
 
                                 <Label Grid.Row="1" Grid.Column="0"
-                                       Text="{Binding AgentCode}"
+                                       Text="{Binding AgentCount, StringFormat='Agents: {0}'}"
                                        FontSize="13"
                                        TextColor="#1976D2" />
 
                                 <Label Grid.Row="1" Grid.Column="1"
-                                       Text="{Binding OpeningTotal, StringFormat='UGX {0:N0}'}"
+                                       Text="{Binding PendingApprovalCount, StringFormat='Pending: {0}'}"
                                        FontSize="14"
                                        TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}"
                                        HorizontalOptions="End" />
 
-                                <Label Grid.Row="2" Grid.ColumnSpan="2"
-                                       Text="{Binding OpenedAt, StringFormat='{0:MMM dd, yyyy}'}"
+                                <Label Grid.Row="2" Grid.Column="0"
+                                       Text="{Binding TotalOpeningAmount, StringFormat='Opening: UGX {0:N0}'}"
+                                       FontSize="13"
+                                       TextColor="{AppThemeBinding Light=#757575, Dark=#BDBDBD}" />
+
+                                <Label Grid.Row="2" Grid.Column="1"
+                                       Text="{Binding TotalClosingAmount, StringFormat='Closing: UGX {0:N0}'}"
+                                       FontSize="14"
+                                       TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}"
+                                       HorizontalOptions="End" />
+
+                                <Label Grid.Row="3" Grid.ColumnSpan="2"
+                                       Text="{Binding OpenedAt, StringFormat='Opened: {0:MMM dd, yyyy h:mm tt}'}"
                                        FontSize="12"
                                        TextColor="{AppThemeBinding Light=#9E9E9E, Dark=#757575}"
                                        Margin="0,4,0,0" />
