@@ -41,14 +41,14 @@
                     </VerticalStackLayout>
                 </Border>
 
-                <!-- Total balance card -->
+                <!-- Vault balance card -->
                 <Border StrokeThickness="1"
                         Stroke="{AppThemeBinding Light=#E0E0E0, Dark=#424242}"
                         BackgroundColor="{AppThemeBinding Light=White, Dark=#1E1E1E}"
                         StrokeShape="RoundRectangle 12"
                         Padding="20">
                     <VerticalStackLayout>
-                        <Label Text="Total Balance"
+                        <Label Text="Vault Balance"
                                FontSize="14"
                                TextColor="{AppThemeBinding Light=#757575, Dark=#BDBDBD}" />
                         <Label x:Name="TotalBalanceLabel"
@@ -60,24 +60,63 @@
                     </VerticalStackLayout>
                 </Border>
 
-                <!-- Wallets section -->
-                <Label Text="My Wallets"
+                <!-- Vault vs agents summary -->
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                    <Border Grid.Column="0"
+                            StrokeThickness="1"
+                            Stroke="{AppThemeBinding Light=#E0E0E0, Dark=#424242}"
+                            BackgroundColor="{AppThemeBinding Light=White, Dark=#1E1E1E}"
+                            StrokeShape="RoundRectangle 8"
+                            Padding="12">
+                        <VerticalStackLayout>
+                            <Label Text="Agent Wallets"
+                                   FontSize="13"
+                                   TextColor="{AppThemeBinding Light=#757575, Dark=#BDBDBD}" />
+                            <Label x:Name="TotalAgentBalanceLabel"
+                                   Text="UGX 0"
+                                   FontSize="18"
+                                   FontAttributes="Bold"
+                                   TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <Border Grid.Column="1"
+                            StrokeThickness="1"
+                            Stroke="{AppThemeBinding Light=#E0E0E0, Dark=#424242}"
+                            BackgroundColor="{AppThemeBinding Light=White, Dark=#1E1E1E}"
+                            StrokeShape="RoundRectangle 8"
+                            Padding="12">
+                        <VerticalStackLayout>
+                            <Label Text="Difference"
+                                   FontSize="13"
+                                   TextColor="{AppThemeBinding Light=#757575, Dark=#BDBDBD}" />
+                            <Label x:Name="DifferenceLabel"
+                                   Text="UGX 0"
+                                   FontSize="18"
+                                   FontAttributes="Bold"
+                                   TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}" />
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <!-- Agent summary section -->
+                <Label Text="Agent Wallet Balances"
                        FontSize="18"
                        FontAttributes="Bold"
                        TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}" />
 
-                <CollectionView x:Name="WalletsCollectionView"
-                                ItemsSource="{Binding Wallets}"
+                <CollectionView x:Name="AgentSummariesCollectionView"
+                                ItemsSource="{Binding AgentSummaries}"
                                 SelectionMode="None">
                     <CollectionView.EmptyView>
-                        <Label Text="No wallets found."
+                        <Label Text="No agent balances found."
                                TextColor="{AppThemeBinding Light=#9E9E9E, Dark=#757575}"
                                FontSize="14"
                                HorizontalOptions="Center"
                                Margin="0,16" />
                     </CollectionView.EmptyView>
                     <CollectionView.ItemTemplate>
-                        <DataTemplate x:DataType="models:WalletBalanceSummary">
+                        <DataTemplate x:DataType="models:AgentWalletSummary">
                             <Border StrokeThickness="1"
                                     Stroke="{AppThemeBinding Light=#E0E0E0, Dark=#424242}"
                                     BackgroundColor="{AppThemeBinding Light=White, Dark=#1E1E1E}"
@@ -86,16 +125,16 @@
                                     Margin="0,0,0,8">
                                 <Grid ColumnDefinitions="*,Auto">
                                     <VerticalStackLayout Grid.Column="0">
-                                        <Label Text="{Binding WalletName}"
+                                        <Label Text="{Binding AgentName}"
                                                FontSize="16"
                                                FontAttributes="Bold"
                                                TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}" />
-                                        <Label Text="{Binding WalletTypeName}"
+                                        <Label Text="{Binding AgentCode}"
                                                FontSize="13"
                                                TextColor="{AppThemeBinding Light=#757575, Dark=#BDBDBD}" />
                                     </VerticalStackLayout>
                                     <VerticalStackLayout Grid.Column="1" HorizontalOptions="End">
-                                        <Label Text="{Binding Balance, StringFormat='{0:N0}'}"
+                                        <Label Text="{Binding TotalBalance, StringFormat='{0:N0}'}"
                                                FontSize="18"
                                                FontAttributes="Bold"
                                                TextColor="#1976D2"
@@ -110,32 +149,6 @@
                         </DataTemplate>
                     </CollectionView.ItemTemplate>
                 </CollectionView>
-
-                <!-- Quick actions -->
-                <Label Text="Quick Actions"
-                       FontSize="18"
-                       FontAttributes="Bold"
-                       TextColor="{AppThemeBinding Light=#212121, Dark=#F5F5F5}"
-                       Margin="0,8,0,0" />
-
-                <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                    <Button Grid.Column="0"
-                            Text="Open Session"
-                            BackgroundColor="#43A047"
-                            TextColor="White"
-                            CornerRadius="8"
-                            HeightRequest="52"
-                            FontAttributes="Bold"
-                            Clicked="OnOpenSessionClicked" />
-                    <Button Grid.Column="1"
-                            Text="Close Session"
-                            BackgroundColor="#E53935"
-                            TextColor="White"
-                            CornerRadius="8"
-                            HeightRequest="52"
-                            FontAttributes="Bold"
-                            Clicked="OnCloseSessionClicked" />
-                </Grid>
 
             </VerticalStackLayout>
         </ScrollView>

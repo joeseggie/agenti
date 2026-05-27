@@ -42,9 +42,11 @@ public partial class DashboardPage : ContentPage
         var dashboard = _viewModel.Dashboard;
         if (dashboard is not null)
         {
-            TotalBalanceLabel.Text = $"{dashboard.Currency} {dashboard.TotalBalance:N0}";
+            TotalBalanceLabel.Text = $"{dashboard.Currency} {dashboard.VaultBalance:N0}";
+            TotalAgentBalanceLabel.Text = $"{dashboard.Currency} {dashboard.TotalAgentBalance:N0}";
+            DifferenceLabel.Text = $"{dashboard.Currency} {dashboard.VaultAgentDifference:N0}";
             SessionStatusLabel.Text = dashboard.SessionStatus.StatusDisplay;
-            WalletsCollectionView.ItemsSource = dashboard.Wallets;
+            AgentSummariesCollectionView.ItemsSource = dashboard.AgentSummaries;
         }
     }
 
@@ -54,9 +56,4 @@ public partial class DashboardPage : ContentPage
         RefreshView.IsRefreshing = false;
     }
 
-    private async void OnOpenSessionClicked(object sender, EventArgs e) =>
-        await Shell.Current.GoToAsync("//cashcount?isOpening=true");
-
-    private async void OnCloseSessionClicked(object sender, EventArgs e) =>
-        await Shell.Current.GoToAsync("//cashcount?isOpening=false");
 }

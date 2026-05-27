@@ -61,17 +61,32 @@ public class DashboardViewModel
     [JsonPropertyName("wallets")]
     public List<WalletBalanceSummary> Wallets { get; set; } = [];
 
+    [JsonPropertyName("agentSummaries")]
+    public List<AgentWalletSummary> AgentSummaries { get; set; } = [];
+
     [JsonPropertyName("sessionStatus")]
     public SessionStatus SessionStatus { get; set; } = new();
 
     [JsonPropertyName("totalBalance")]
     public decimal TotalBalance { get; set; }
 
+    [JsonPropertyName("totalAgentBalance")]
+    public decimal TotalAgentBalance { get; set; }
+
+    [JsonPropertyName("vaultBalance")]
+    public decimal VaultBalance { get; set; }
+
+    [JsonPropertyName("vaultAgentDifference")]
+    public decimal VaultAgentDifference { get; set; }
+
     [JsonPropertyName("currency")]
     public string Currency { get; set; } = "UGX";
 
     [JsonPropertyName("hasWallets")]
     public bool HasWallets { get; set; }
+
+    [JsonPropertyName("hasAgents")]
+    public bool HasAgents { get; set; }
 }
 
 public class WalletBalanceSummary
@@ -97,6 +112,15 @@ public class SessionStatus
     [JsonPropertyName("sessionId")]
     public long? SessionId { get; set; }
 
+    [JsonPropertyName("sessionDate")]
+    public DateOnly? SessionDate { get; set; }
+
+    [JsonPropertyName("status")]
+    public int? Status { get; set; }
+
+    [JsonPropertyName("openedAt")]
+    public DateTimeOffset? OpenedAt { get; set; }
+
     [JsonPropertyName("hasActiveSession")]
     public bool HasActiveSession { get; set; }
 
@@ -105,6 +129,24 @@ public class SessionStatus
 
     [JsonPropertyName("statusColor")]
     public string StatusColor { get; set; } = "info";
+}
+
+public class AgentWalletSummary
+{
+    [JsonPropertyName("agentId")]
+    public long AgentId { get; set; }
+
+    [JsonPropertyName("agentCode")]
+    public string AgentCode { get; set; } = string.Empty;
+
+    [JsonPropertyName("agentName")]
+    public string AgentName { get; set; } = string.Empty;
+
+    [JsonPropertyName("totalBalance")]
+    public decimal TotalBalance { get; set; }
+
+    [JsonPropertyName("currency")]
+    public string Currency { get; set; } = "UGX";
 }
 
 // ─── Agents ──────────────────────────────────────────────────────────────────
@@ -191,14 +233,8 @@ public class CashSessionListItem
     [JsonPropertyName("sessionDate")]
     public DateOnly SessionDate { get; set; }
 
-    [JsonPropertyName("agentName")]
-    public string AgentName { get; set; } = string.Empty;
-
-    [JsonPropertyName("agentCode")]
-    public string AgentCode { get; set; } = string.Empty;
-
     [JsonPropertyName("status")]
-    public string Status { get; set; } = string.Empty;
+    public int Status { get; set; }
 
     [JsonPropertyName("openedAt")]
     public DateTimeOffset OpenedAt { get; set; }
@@ -206,11 +242,34 @@ public class CashSessionListItem
     [JsonPropertyName("closedAt")]
     public DateTimeOffset? ClosedAt { get; set; }
 
-    [JsonPropertyName("openingTotal")]
-    public decimal OpeningTotal { get; set; }
+    [JsonPropertyName("agentCount")]
+    public int AgentCount { get; set; }
 
-    [JsonPropertyName("closingTotal")]
-    public decimal? ClosingTotal { get; set; }
+    [JsonPropertyName("approvedClosingCount")]
+    public int ApprovedClosingCount { get; set; }
+
+    [JsonPropertyName("totalOpeningAmount")]
+    public decimal TotalOpeningAmount { get; set; }
+
+    [JsonPropertyName("totalClosingAmount")]
+    public decimal? TotalClosingAmount { get; set; }
+
+    [JsonPropertyName("allClosingCountsApproved")]
+    public bool AllClosingCountsApproved { get; set; }
+
+    [JsonPropertyName("pendingApprovalCount")]
+    public int PendingApprovalCount { get; set; }
+
+    public string StatusDisplay => Status switch
+    {
+        1 => "Open",
+        0 => "Closed",
+        2 => "Pending",
+        3 => "Under Review",
+        4 => "Completed",
+        5 => "Blocked",
+        _ => "Unknown"
+    };
 }
 
 // ─── Cash Counts ─────────────────────────────────────────────────────────────
