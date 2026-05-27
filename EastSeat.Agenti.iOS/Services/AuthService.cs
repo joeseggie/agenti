@@ -4,8 +4,9 @@ using EastSeat.Agenti.iOS.Models;
 namespace EastSeat.Agenti.iOS.Services;
 
 /// <summary>
-/// Manages authentication state and securely stores the JWT token using iOS Keychain
-/// (via MAUI SecureStorage, which wraps the iOS Keychain on iOS devices).
+/// Manages authentication state and securely stores the JWT token using Android Keystore
+/// (via MAUI SecureStorage, which wraps Android Keystore on Android 6+ and
+/// encrypted SharedPreferences on Android 5.x).
 /// </summary>
 public class AuthService : IAuthService
 {
@@ -30,7 +31,7 @@ public class AuthService : IAuthService
 
         CurrentUser = result.Data;
 
-        // Store token securely using iOS Keychain via SecureStorage
+        // Store token securely using Android Keystore / SecureStorage
         await SecureStorage.Default.SetAsync(TokenKey, result.Data.AccessToken);
         await SecureStorage.Default.SetAsync(UserKey,
             JsonSerializer.Serialize(result.Data));

@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "iOS Simulator": {
+    "Windows Machine": {
       "commandName": "Project",
       "nativeDebugging": false
     }

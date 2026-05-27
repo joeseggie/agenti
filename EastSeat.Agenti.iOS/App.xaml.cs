@@ -1,4 +1,4 @@
-using EastSeat.Agenti.iOS.Pages;
+﻿using EastSeat.Agenti.iOS.Pages;
 using EastSeat.Agenti.iOS.Services;
 
 namespace EastSeat.Agenti.iOS;

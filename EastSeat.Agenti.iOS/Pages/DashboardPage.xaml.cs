@@ -10,9 +10,7 @@ public partial class DashboardPage : ContentPage
     {
         InitializeComponent();
         _viewModel = viewModel;
-        // BindingContext is set to the ViewModel; CollectionView items are bound imperatively
-        // in LoadDataAsync once the API response arrives.
-        BindingContext = viewModel;
+        BindingContext = viewModel.Dashboard;
     }
 
     protected override async void OnAppearing()

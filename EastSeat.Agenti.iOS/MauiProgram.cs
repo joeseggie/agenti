@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using EastSeat.Agenti.iOS.Converters;
 using EastSeat.Agenti.iOS.Pages;
 using EastSeat.Agenti.iOS.Services;
@@ -52,7 +52,7 @@ public static class MauiProgram
         {
             var handler = new HttpClientHandler();
 #if DEBUG
-            // Accept the ASP.NET Core dev certificate in the iOS simulator.
+            // Accept the ASP.NET Core dev certificate on the iOS Simulator.
             handler.ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true;
 #endif
             return handler;
