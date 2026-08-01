@@ -210,6 +210,12 @@
                                         </tbody>
                                     </MudSimpleTable>
                                 }
+                                @if (!string.IsNullOrEmpty(agent.OpeningCount.Explanation))
+                                {
+                                    <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mt-1">
+                                        @agent.OpeningCount.Explanation
+                                    </MudAlert>
+                                }
                             }
                             else
                             {
