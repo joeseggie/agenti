@@ -28,9 +28,28 @@ public class CashCountFormModel
     public string? Explanation { get; set; }
     public List<WalletCountEntryDto> WalletEntries { get; set; } = [];
 
+    /// <summary>
+    /// For opening counts: the total of the agent's most recent approved closing count.
+    /// Null when the agent has no prior closing count (first ever opening count).
+    /// </summary>
+    public decimal? PreviousClosingTotal { get; set; }
+
+    /// <summary>
+    /// For opening counts: the date of the most recent approved closing count.
+    /// </summary>
+    public DateOnly? PreviousClosingDate { get; set; }
+
     public decimal TotalAmount => WalletEntries.Sum(w => w.CountedAmount);
     public decimal TotalExpected => WalletEntries.Sum(w => w.ExpectedBalance);
     public decimal TotalVariance => TotalAmount - TotalExpected;
+
+    /// <summary>
+    /// Difference between the opening count and the previous day's closing count.
+    /// Zero when there is no previous closing count to compare against.
+    /// </summary>
+    public decimal OpeningVariance => PreviousClosingTotal.HasValue
+        ? TotalAmount - PreviousClosingTotal.Value
+        : 0m;
 }
 
 /// <summary>

@@ -964,6 +964,206 @@ public class CashCountServiceTests : IDisposable
 
     #endregion
 
+    #region Opening Count Discrepancy Scenarios
+
+    [Fact]
+    public async Task SubmitCashCountAsync_OpeningDifferingFromPreviousClosing_RequiresExplanation()
+    {
+        var (_, openingCount) = await SeedPreviousClosingAndTodayOpeningAsync(
+            previousClosingTotal: 1000m,
+            openingTotal: 800m,
+            openingExplanation: null);
+
+        var result = await _sut.SubmitCashCountAsync(_testUser.Id, openingCount.Id);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("explanation");
+
+        var reloaded = await _dbContext.CashCounts.FindAsync(openingCount.Id);
+        reloaded!.Status.Should().Be(CashCountStatus.Draft);
+        reloaded.SubmittedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SubmitCashCountAsync_OpeningDifferingFromPreviousClosing_CreatesDiscrepancy()
+    {
+        var (_, openingCount) = await SeedPreviousClosingAndTodayOpeningAsync(
+            previousClosingTotal: 1000m,
+            openingTotal: 800m,
+            openingExplanation: "Shortage carried over from overnight safe transfer");
+
+        var result = await _sut.SubmitCashCountAsync(_testUser.Id, openingCount.Id);
+
+        result.Success.Should().BeTrue();
+
+        var discrepancy = await _dbContext.Discrepancies
+            .FirstOrDefaultAsync(d => d.CashCountId == openingCount.Id);
+        discrepancy.Should().NotBeNull();
+        discrepancy!.ExpectedAmount.Should().Be(1000m);
+        discrepancy.ActualAmount.Should().Be(800m);
+        discrepancy.Variance.Should().Be(-200m);
+        discrepancy.Status.Should().Be(DiscrepancyStatus.PendingReview);
+        discrepancy.Explanation.Should().Be("Shortage carried over from overnight safe transfer");
+    }
+
+    [Fact]
+    public async Task SubmitCashCountAsync_OpeningMatchingPreviousClosing_CreatesNoDiscrepancy()
+    {
+        var (_, openingCount) = await SeedPreviousClosingAndTodayOpeningAsync(
+            previousClosingTotal: 1000m,
+            openingTotal: 1000m,
+            openingExplanation: null);
+
+        var result = await _sut.SubmitCashCountAsync(_testUser.Id, openingCount.Id);
+
+        result.Success.Should().BeTrue();
+
+        var updated = await _dbContext.CashCounts.FindAsync(openingCount.Id);
+        updated!.Status.Should().Be(CashCountStatus.PendingApproval);
+
+        var discrepancies = await _dbContext.Discrepancies
+            .Where(d => d.CashCountId == openingCount.Id)
+            .ToListAsync();
+        discrepancies.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ApproveCashCountAsync_OpeningWithDiscrepancy_ApprovesDiscrepancy()
+    {
+        var adminUser = UserBuilder.Default()
+            .WithEmail("admin-opening@test.com")
+            .WithRole(UserRole.Admin)
+            .WithBranchId(_testBranch.Id)
+            .Build();
+        _dbContext.Users.Add(adminUser);
+        await _dbContext.SaveChangesAsync();
+
+        var (_, openingCount) = await SeedPreviousClosingAndTodayOpeningAsync(
+            previousClosingTotal: 1000m,
+            openingTotal: 800m,
+            openingExplanation: "Shortage carried over from overnight safe transfer");
+
+        _vaultServiceMock
+            .Setup(x => x.WithdrawForSessionAsync(
+                It.IsAny<long>(), It.IsAny<long>(), It.IsAny<decimal>(),
+                It.IsAny<string>(), false, default))
+            .ReturnsAsync(VaultOperationResult.Ok(1));
+
+        var submitResult = await _sut.SubmitCashCountAsync(_testUser.Id, openingCount.Id);
+        submitResult.Success.Should().BeTrue();
+
+        var result = await _sut.ApproveCashCountAsync(adminUser.Id, openingCount.Id);
+
+        result.Success.Should().BeTrue();
+
+        var discrepancy = await _dbContext.Discrepancies
+            .FirstOrDefaultAsync(d => d.CashCountId == openingCount.Id);
+        discrepancy!.Status.Should().Be(DiscrepancyStatus.Approved);
+        discrepancy.ApprovedByUserId.Should().Be(adminUser.Id);
+    }
+
+    [Fact]
+    public async Task InitializeCashCountFormAsync_Opening_PopulatesPreviousClosingTotal()
+    {
+        var yesterday = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1);
+        var previousSession = CashSessionBuilder.Default()
+            .WithBranchId(_testBranch.Id)
+            .WithSessionDate(yesterday)
+            .AsClosed()
+            .Build();
+        _dbContext.CashSessions.Add(previousSession);
+        await _dbContext.SaveChangesAsync();
+
+        var previousClosing = CashCountBuilder.Default()
+            .WithCashSessionId(previousSession.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsClosing()
+            .AsApproved()
+            .WithCountDate(yesterday)
+            .WithTotalAmount(1500m)
+            .Build();
+        _dbContext.CashCounts.Add(previousClosing);
+        await _dbContext.SaveChangesAsync();
+
+        var form = await _sut.InitializeCashCountFormAsync(_testUser.Id, isOpening: true);
+
+        form.PreviousClosingTotal.Should().Be(1500m);
+        form.PreviousClosingDate.Should().Be(yesterday);
+    }
+
+    [Fact]
+    public async Task InitializeCashCountFormAsync_Closing_DoesNotPopulatePreviousClosingTotal()
+    {
+        var form = await _sut.InitializeCashCountFormAsync(_testUser.Id, isOpening: false);
+
+        form.PreviousClosingTotal.Should().BeNull();
+        form.OpeningVariance.Should().Be(0m);
+    }
+
+    /// <summary>
+    /// Seeds an approved closing count for the previous day plus a draft opening count for today.
+    /// </summary>
+    private async Task<(CashSession Session, CashCount OpeningCount)> SeedPreviousClosingAndTodayOpeningAsync(
+        decimal previousClosingTotal, decimal openingTotal, string? openingExplanation)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var yesterday = today.AddDays(-1);
+
+        var previousSession = CashSessionBuilder.Default()
+            .WithId(10)
+            .WithBranchId(_testBranch.Id)
+            .WithSessionDate(yesterday)
+            .AsClosed()
+            .Build();
+        _dbContext.CashSessions.Add(previousSession);
+        await _dbContext.SaveChangesAsync();
+
+        var previousClosing = CashCountBuilder.Default()
+            .WithId(10)
+            .WithCashSessionId(previousSession.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsClosing()
+            .AsApproved()
+            .WithCountDate(yesterday)
+            .WithTotalAmount(previousClosingTotal)
+            .Build();
+        _dbContext.CashCounts.Add(previousClosing);
+        await _dbContext.SaveChangesAsync();
+
+        var session = CashSessionBuilder.Default()
+            .WithId(11)
+            .WithBranchId(_testBranch.Id)
+            .WithSessionDate(today)
+            .AsOpen()
+            .Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var openingCount = CashCountBuilder.Default()
+            .WithId(11)
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .AsOpening()
+            .WithStatus(CashCountStatus.Draft)
+            .WithCountDate(today)
+            .WithTotalAmount(openingTotal)
+            .WithExplanation(openingExplanation)
+            .Build();
+        _dbContext.CashCounts.Add(openingCount);
+
+        var detail = CashCountDetailBuilder.Default()
+            .WithCashCountId(openingCount.Id)
+            .WithWalletId(_testWallet.Id)
+            .WithAmount(openingTotal)
+            .Build();
+        _dbContext.CashCountDetails.Add(detail);
+        await _dbContext.SaveChangesAsync();
+
+        return (session, openingCount);
+    }
+
+    #endregion
+
     #region Surplus Scenarios
 
     [Fact]
