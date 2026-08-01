@@ -278,5 +278,39 @@ public class CashSessionServiceTests : IDisposable
         result.TotalOpeningAmount.Should().Be(3000m);
     }
 
+    [Fact]
+    public async Task GetCashSessionDetailAsync_WithOpeningExplanation_ReturnsOpeningExplanation()
+    {
+        var user = UserBuilder.Default().WithFirstName("Alice").WithLastName("A").Build();
+        _dbContext.Users.Add(user);
+
+        var agent = AgentBuilder.Default().WithId(1).WithUser(user).WithCode("A001").Build();
+        _dbContext.Agents.Add(agent);
+
+        var session = CashSessionBuilder.Default().WithBranchId(1).AsOpen().Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+
+        var openingExplanation = "Opening variance due to overnight safe recount";
+        var openingCount = CashCountBuilder.Default()
+            .WithId(1)
+            .WithCashSessionId(session.Id)
+            .WithAgent(agent)
+            .AsOpening()
+            .AsApproved()
+            .WithTotalAmount(1000m)
+            .WithExplanation(openingExplanation)
+            .Build();
+        _dbContext.CashCounts.Add(openingCount);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _cashSessionService.GetCashSessionDetailAsync(session.Id);
+
+        result.Should().NotBeNull();
+        result!.AgentSummaries.Should().ContainSingle();
+        result.AgentSummaries[0].OpeningCount.Should().NotBeNull();
+        result.AgentSummaries[0].OpeningCount!.Explanation.Should().Be(openingExplanation);
+    }
+
     #endregion
 }
