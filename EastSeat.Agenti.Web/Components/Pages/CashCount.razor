@@ -404,6 +404,24 @@
                     </MudStack>
                 </MudPaper>
             }
+            else if (_countForm.PreviousClosingTotal.HasValue)
+            {
+                <MudPaper Class="pa-3 mt-2" Elevation="1">
+                    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                        <MudText Typo="Typo.subtitle1">
+                            Previous Closing (@(_countForm.PreviousClosingDate?.ToString("MMM dd, yyyy")))
+                        </MudText>
+                        <MudText Typo="Typo.h6">@_countForm.PreviousClosingTotal.Value.ToString("N0") UGX</MudText>
+                    </MudStack>
+                    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mt-2">
+                        <MudText Typo="Typo.subtitle1">Difference</MudText>
+                        <MudText Typo="Typo.h6"
+                            Color="@(_countForm.OpeningVariance == 0 ? Color.Success : (_countForm.OpeningVariance > 0 ? Color.Info : Color.Warning))">
+                            @(_countForm.OpeningVariance > 0 ? "+" : "")@_countForm.OpeningVariance.ToString("N0") UGX
+                        </MudText>
+                    </MudStack>
+                </MudPaper>
+            }
 
             <!-- Explanation field for closing counts with discrepancy -->
             @if (!_countForm.IsOpening && _countForm.TotalVariance != 0)
@@ -412,6 +430,16 @@
                     Label="@(_countForm.TotalVariance > 0 ? "Explanation for surplus" : "Explanation for shortage")"
                     Variant="Variant.Outlined" Lines="3" Class="mt-3"
                     HelperText="Required: explain the difference between opening and closing amounts"
+                    Required="true" RequiredError="Explanation is required when there is a discrepancy" />
+            }
+
+            <!-- Explanation field for opening counts differing from the previous closing count -->
+            @if (_countForm.IsOpening && _countForm.PreviousClosingTotal.HasValue && _countForm.OpeningVariance != 0)
+            {
+                <MudTextField @bind-Value="_countForm.Explanation"
+                    Label="@(_countForm.OpeningVariance > 0 ? "Explanation for surplus" : "Explanation for shortage")"
+                    Variant="Variant.Outlined" Lines="3" Class="mt-3"
+                    HelperText="Required: explain why the opening count differs from the previous closing count"
                     Required="true" RequiredError="Explanation is required when there is a discrepancy" />
             }
 

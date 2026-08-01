@@ -80,7 +80,7 @@
                             @(context.Variance.Value > 0 ? "+" : "")@context.Variance.Value.ToString("N0")
                         </MudText>
                     }
-                    else if (!context.IsOpening && context.OpeningTotal.HasValue)
+                    else if (context.OpeningTotal.HasValue)
                     {
                         <MudText Typo="Typo.body2" Color="Color.Success">0</MudText>
                     }
