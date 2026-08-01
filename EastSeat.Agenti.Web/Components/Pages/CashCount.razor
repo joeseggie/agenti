@@ -409,7 +409,7 @@
                 <MudPaper Class="pa-3 mt-2" Elevation="1">
                     <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
                         <MudText Typo="Typo.subtitle1">
-                            Previous Closing (@(_countForm.PreviousClosingDate?.ToString("MMM dd, yyyy")))
+                            Previous Closing@(_countForm.PreviousClosingDate.HasValue ? $" ({_countForm.PreviousClosingDate.Value:MMM dd, yyyy})" : string.Empty)
                         </MudText>
                         <MudText Typo="Typo.h6">@_countForm.PreviousClosingTotal.Value.ToString("N0") UGX</MudText>
                     </MudStack>
