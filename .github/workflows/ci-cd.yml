@@ -35,11 +35,20 @@ jobs:
       - name: Install MAUI Android workload
         run: dotnet workload install maui-android
 
-      - name: Restore dependencies
-        run: dotnet restore
+      - name: Restore dependencies (non-iOS projects)
+        run: |
+          dotnet restore EastSeat.Agenti.Web/EastSeat.Agenti.Web.csproj
+          dotnet restore EastSeat.Agenti.Android/EastSeat.Agenti.Android.csproj
+          dotnet restore EastSeat.Agenti.Mcp/EastSeat.Agenti.Mcp.csproj
 
-      - name: Build solution
-        run: dotnet build --configuration Release --no-restore
+      - name: Build non-iOS projects
+        # The iOS project (net10.0-ios) requires the maui-ios workload, which is
+        # only installable on macOS. It is built in a separate job (build-ios)
+        # on a macOS runner.
+        run: |
+          dotnet build EastSeat.Agenti.Web/EastSeat.Agenti.Web.csproj --configuration Release --no-restore
+          dotnet build EastSeat.Agenti.Android/EastSeat.Agenti.Android.csproj --configuration Release --no-restore
+          dotnet build EastSeat.Agenti.Mcp/EastSeat.Agenti.Mcp.csproj --configuration Release --no-restore
 
       - name: Publish application
         run: dotnet publish EastSeat.Agenti.Web/EastSeat.Agenti.Web.csproj --configuration Release --no-build --output ./publish
@@ -50,6 +59,53 @@ jobs:
           name: webapp
           path: ./publish
           retention-days: 1
+
+  build-ios:
+    name: Build iOS
+    # macos-26 ships the .NET 10 SDKs (10.0.103 and 10.0.203) plus Xcode 26.4.1 and
+    # Xcode 26.5. We pin .NET SDK 10.0.103 so `dotnet workload install maui-ios`
+    # always resolves to the iOS 26.4 workload manifest bundled with that SDK band,
+    # which is compatible with Xcode 26.4 (stably available on macos-26). This
+    # avoids the recurring breakage where Microsoft's "latest" iOS workload moves
+    # forward to require an Xcode version not yet present on GitHub-hosted runners.
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26.4
+        run: |
+          set -e
+          XCODE_APP=$(ls -d /Applications/Xcode_26.4*.app 2>/dev/null | sort -Vr | head -n 1)
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode 26.4.x installation found in /Applications"
+            ls -d /Applications/Xcode*.app 2>/dev/null || true
+            exit 1
+          fi
+          echo "Selecting $XCODE_APP"
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          echo "DEVELOPER_DIR=$XCODE_APP/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-path
+          xcrun --sdk iphonesimulator --show-sdk-path
+
+      - name: Setup .NET 10.0.103 (pinned)
+        # Pinning the SDK locks the bundled MAUI/iOS workload manifest version,
+        # making the build reproducible and independent of Microsoft workload
+        # updates that may require newer Xcode versions.
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.103"
+
+      - name: Install MAUI iOS workload
+        run: dotnet workload install maui-ios
+
+      - name: Restore iOS dependencies
+        run: dotnet restore EastSeat.Agenti.iOS/EastSeat.Agenti.iOS.csproj
+
+      - name: Build iOS app (Simulator)
+        run: dotnet build EastSeat.Agenti.iOS/EastSeat.Agenti.iOS.csproj --configuration Release --no-restore -p:RuntimeIdentifier=iossimulator-arm64
 
   test-unit:
     name: Unit Tests
