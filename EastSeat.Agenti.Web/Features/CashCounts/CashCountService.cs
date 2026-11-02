@@ -1,5 +1,6 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Notifications;
 using EastSeat.Agenti.Web.Features.Vaults;
@@ -18,6 +19,7 @@ public class CashCountService(
     IVaultService vaultService,
     INotificationService notificationService,
     IWalletAdjustmentService walletAdjustmentService,
+    IBankSessionWorkflow bankWorkflow,
     TelemetryClient? telemetryClient = null) : ICashCountService
 {
     /// <inheritdoc />
@@ -47,6 +49,8 @@ public class CashCountService(
         }
 
         var branchId = agent.BranchId.Value;
+        if (await bankWorkflow.IsModernBranchAsync(branchId))
+            return await bankWorkflow.GetCurrentSessionAsync(userId);
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
         // Rule 14: Check if agent has any cash count in PendingApproval status.
@@ -184,6 +188,8 @@ public class CashCountService(
         {
             return new CashCountFormModel { IsOpening = isOpening };
         }
+        if (agent.BranchId.HasValue && await bankWorkflow.IsModernBranchAsync(agent.BranchId.Value))
+            return await bankWorkflow.InitializeFormAsync(userId, isOpening);
 
         var wallets = await dbContext.Wallets
             .Include(w => w.WalletType)
@@ -246,6 +252,8 @@ public class CashCountService(
 
         var agentId = agent.Id;
         var branchId = agent.BranchId.Value;
+        if (await bankWorkflow.HandlesFormAsync(branchId, form))
+            return await RunBankWorkflowAsync(() => bankWorkflow.SaveAsync(userId, form));
         var countDate = form.CountDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
@@ -497,6 +505,8 @@ public class CashCountService(
         {
             return CashCountSaveResult.Error("Cash count not found.");
         }
+        if (cashCount.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            return await RunBankWorkflowAsync(() => bankWorkflow.SubmitAsync(userId, cashCountId));
 
         if (cashCount.Status != CashCountStatus.Draft)
         {
@@ -620,6 +630,12 @@ public class CashCountService(
         {
             return CashCountSaveResult.Error("Cash count not found.");
         }
+        if (cashCount.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+        {
+            return cashCount.IsOpening
+                ? await RunBankWorkflowAsync(() => bankWorkflow.ApproveOpeningAsync(adminUserId, cashCountId))
+                : CashCountSaveResult.Error("Closing approval requires the bank reconciliation workspace; matching balances alone are not sufficient.");
+        }
 
         if (cashCount.Status != CashCountStatus.PendingApproval)
         {
@@ -659,6 +675,7 @@ public class CashCountService(
         }
 
         var cashCount = await dbContext.CashCounts
+            .Include(c => c.CashSession)
             .Include(c => c.Agent)
                 .ThenInclude(a => a!.User)
             .FirstOrDefaultAsync(c => c.Id == cashCountId);
@@ -666,6 +683,12 @@ public class CashCountService(
         if (cashCount == null)
         {
             return CashCountSaveResult.Error("Cash count not found.");
+        }
+        if (cashCount.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+        {
+            return cashCount.IsOpening
+                ? await RunBankWorkflowAsync(() => bankWorkflow.RejectOpeningAsync(adminUserId, cashCountId, reason))
+                : CashCountSaveResult.Error("Return the closing through the bank reconciliation correction workflow. Its operational settlement cannot be reversed.");
         }
 
         if (cashCount.Status != CashCountStatus.PendingApproval)
@@ -792,6 +815,7 @@ public class CashCountService(
 
             return new PendingApprovalDto
             {
+                WorkflowVersion = count.CashSession!.WorkflowVersion,
                 CashCountId = count.Id,
                 CashSessionId = count.CashSessionId,
                 SessionDate = count.CashSession!.SessionDate,
@@ -829,6 +853,8 @@ public class CashCountService(
         {
             return CashCountSaveResult.Error("Cash session not found.");
         }
+        if (session.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            return CashCountSaveResult.Error("The agent must submit actual closing observations; bank reconciliation must approve the closing.");
 
         var openingCount = session.CashCounts
             .FirstOrDefault(c => c.IsOpening && c.Status == CashCountStatus.Approved);
@@ -917,6 +943,8 @@ public class CashCountService(
         {
             return null;
         }
+        if (cashCount.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            return await bankWorkflow.GetFormAsync(userId, cashCountId);
 
         // For closing counts, adjust expected balances by wallet adjustments
         var adjustmentTotals = new Dictionary<long, decimal>();
@@ -1249,6 +1277,8 @@ public class CashCountService(
         {
             return CashCountSaveResult.Error("Cash count not found.");
         }
+        if (cashCount.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            return CashCountSaveResult.Error("Banking workflow counts use controlled corrections. Recorded allocations cannot be unapproved and replayed.");
 
         if (cashCount.Status != CashCountStatus.Approved)
         {
@@ -1470,6 +1500,22 @@ public class CashCountService(
         });
 
         await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task<CashCountSaveResult> RunBankWorkflowAsync(Func<Task<CashCountSaveResult>> action)
+    {
+        try
+        {
+            return await action();
+        }
+        catch (Exception exception) when (BankingConcurrency.IsConflict(exception))
+        {
+            throw new BankingConflictException("The session changed while this request was being processed. Refresh and retry using the same request.");
+        }
+        catch (BankingRuleException exception)
+        {
+            return CashCountSaveResult.Error(exception.Message);
+        }
     }
 
     private async Task<Agent?> GetAgentForUserAsync(string userId)

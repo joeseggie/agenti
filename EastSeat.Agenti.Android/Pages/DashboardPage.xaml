@@ -41,6 +41,8 @@
                     </VerticalStackLayout>
                 </Border>
 
+                <Label x:Name="BalanceBasisLabel" FontSize="13" />
+
                 <!-- Vault balance card -->
                 <Border StrokeThickness="1"
                         Stroke="{AppThemeBinding Light=#E0E0E0, Dark=#424242}"

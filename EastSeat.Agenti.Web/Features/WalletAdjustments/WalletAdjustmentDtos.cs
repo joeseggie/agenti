@@ -7,6 +7,9 @@ namespace EastSeat.Agenti.Web.Features.WalletAdjustments;
 /// </summary>
 public class WalletAdjustmentFormModel
 {
+    public Guid? CommandId { get; set; }
+    public DateTimeOffset? OccurredAt { get; set; }
+    public string? BankReference { get; set; }
     public long WalletId { get; set; }
     public WalletAdjustmentReason Reason { get; set; }
     public decimal Amount { get; set; }

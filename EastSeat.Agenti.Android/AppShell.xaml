@@ -16,11 +16,21 @@
             <ShellContent Route="dashboard" ContentTemplate="{DataTemplate pages:DashboardPage}" />
         </Tab>
         <Tab Title="Cash Count" Icon="cashcount.png">
-            <ShellContent Route="cashcount" ContentTemplate="{DataTemplate pages:CashCountPage}" />
+            <ShellContent Route="cashcount" ContentTemplate="{DataTemplate pages:BankOperationsPage}" />
         </Tab>
         <Tab Title="Sessions" Icon="sessions.png">
             <ShellContent Route="sessions" ContentTemplate="{DataTemplate pages:CashSessionsPage}" />
         </Tab>
+    </FlyoutItem>
+
+    <FlyoutItem Title="Customer banking" IsVisible="{Binding HasAgent}">
+        <ShellContent Route="customerbanking" ContentTemplate="{DataTemplate pages:CustomerBankingPage}" />
+    </FlyoutItem>
+    <FlyoutItem Title="Bank statements" IsVisible="{Binding IsAdmin}">
+        <ShellContent Route="bankstatements" ContentTemplate="{DataTemplate pages:BankStatementsPage}" />
+    </FlyoutItem>
+    <FlyoutItem Title="Bank reconciliation" IsVisible="{Binding IsAdmin}">
+        <ShellContent Route="bankreviews" ContentTemplate="{DataTemplate pages:BankReviewPage}" />
     </FlyoutItem>
 
     <!-- Profile navigation -->

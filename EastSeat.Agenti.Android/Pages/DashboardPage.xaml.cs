@@ -46,6 +46,7 @@ public partial class DashboardPage : ContentPage
             TotalAgentBalanceLabel.Text = $"{dashboard.Currency} {dashboard.TotalAgentBalance:N0}";
             DifferenceLabel.Text = $"{dashboard.Currency} {dashboard.VaultAgentDifference:N0}";
             SessionStatusLabel.Text = dashboard.SessionStatus.StatusDisplay;
+            BalanceBasisLabel.Text = dashboard.SessionStatus.BalanceBasis;
             AgentSummariesCollectionView.ItemsSource = dashboard.AgentSummaries;
         }
     }

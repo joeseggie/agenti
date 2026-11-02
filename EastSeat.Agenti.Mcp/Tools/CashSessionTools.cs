@@ -89,7 +89,14 @@ public class CashSessionTools
 
             lines.Add($"• Session #{s.Id} | {s.SessionDate:yyyy-MM-dd} | Agents: {string.Join(", ", agents)}");
             lines.Add($"  Status: {s.Status} | Branch: {s.BranchId}");
-            lines.Add($"  Opening: {openingTotal:N2} | Closing: {closingTotal:N2}");
+            lines.Add($"  Workflow: {s.WorkflowVersion}; closed status describes operations, not bank reconciliation.");
+            if (s.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            {
+                var reported = s.CashCounts.Where(c => !c.IsOpening && c.SubmittedAt.HasValue).Sum(c => c.TotalAmount);
+                var pending = s.CashCounts.Count(c => !c.IsOpening && c.Status == CashCountStatus.PendingApproval);
+                lines.Add($"  Reported closing: {reported:N2} | Awaiting financial approval: {pending}");
+            }
+            lines.Add($"  Approved opening: {openingTotal:N2} | Approved closing: {closingTotal:N2}");
             lines.Add($"  Opened: {s.OpenedAt:yyyy-MM-dd HH:mm} | Closed: {(s.ClosedAt.HasValue ? s.ClosedAt.Value.ToString("yyyy-MM-dd HH:mm") : "Still open")}");
             if (s.Discrepancies.Any())
                 lines.Add($"  ⚠️ {s.Discrepancies.Count} discrepancy(ies) flagged");

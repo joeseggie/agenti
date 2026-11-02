@@ -56,6 +56,13 @@
     }
     else
     {
+        @if (_dashboard.SessionStatus.UsesBankReconciliation)
+        {
+            <MudAlert Severity="Severity.Info" Class="mb-4">
+                @_dashboard.SessionStatus.BalanceBasis
+                <MudLink Href="/cashcount">View current count and expected positions</MudLink>
+            </MudAlert>
+        }
         <!-- Session Status -->
         <MudGrid>
             <MudItem xs="12">
@@ -76,7 +83,9 @@
                         else
                         {
                             <MudText Typo="Typo.body2" Color="Color.Default" Class="mt-2">
-                                No active session for today. Start a cash count to open a session.
+                                @(_dashboard.SessionStatus.OperationalClosedAt.HasValue
+                                    ? "Trading has ended for this business day. The next day's opening remains a separate approval."
+                                    : "No active session for today. Start a cash count to open a session.")
                             </MudText>
                         }
                     </MudCardContent>

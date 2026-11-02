@@ -1,6 +1,7 @@
 using EastSeat.Agenti.Web.Data;
 using Microsoft.EntityFrameworkCore;
 using Respawn;
+using Npgsql;
 
 namespace EastSeat.Agenti.IntegrationTests.Infrastructure;
 
@@ -23,7 +24,7 @@ public abstract class IntegrationTestBase : IClassFixture<DatabaseFixture>, IAsy
         DbContext = Fixture.CreateContext();
 
         // Initialize Respawner for database cleanup
-        await using var connection = DbContext.Database.GetDbConnection();
+        await using var connection = new NpgsqlConnection(Fixture.ConnectionString);
         await connection.OpenAsync();
 
         _respawner = await Respawner.CreateAsync(connection, new RespawnerOptions
@@ -33,7 +34,9 @@ public abstract class IntegrationTestBase : IClassFixture<DatabaseFixture>, IAsy
             TablesToIgnore = new Respawn.Graph.Table[]
             {
                 new("__EFMigrationsHistory"),
-                new("AspNetRoles") // Preserve seed data
+                new("AspNetRoles"),
+                new("WalletTypes"),
+                new("AppConfigs")
             }
         });
     }
@@ -41,7 +44,7 @@ public abstract class IntegrationTestBase : IClassFixture<DatabaseFixture>, IAsy
     public async Task DisposeAsync()
     {
         // Clean database after each test
-        await using var connection = DbContext.Database.GetDbConnection();
+        await using var connection = new NpgsqlConnection(Fixture.ConnectionString);
         await connection.OpenAsync();
         await _respawner.ResetAsync(connection);
 

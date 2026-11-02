@@ -20,7 +20,7 @@ public static class VaultEndpoints
                 ? Results.NotFound(ApiResponse<VaultDto>.Fail("Vault not found."))
                 : Results.Ok(ApiResponse<VaultDto>.Ok(vault));
         })
-        .RequireAuthorization("VaultView")
+        .RequireAuthorization("VaultViewApi")
         .WithName("GetVault")
         .WithSummary("Get vault information for a branch");
 
@@ -35,7 +35,7 @@ public static class VaultEndpoints
                 branchId, take, includeExpired, cancellationToken);
             return Results.Ok(ApiResponse<List<VaultTransactionListItemDto>>.Ok(transactions));
         })
-        .RequireAuthorization("VaultView")
+        .RequireAuthorization("VaultViewApi")
         .WithName("GetVaultTransactions")
         .WithSummary("Get recent vault transactions for a branch");
 
@@ -56,7 +56,7 @@ public static class VaultEndpoints
                 ? Results.Ok(ApiResponse<VaultOperationResult>.Ok(result))
                 : Results.BadRequest(ApiResponse<VaultOperationResult>.Fail(result.ErrorMessage ?? "Failed to request adjustment."));
         })
-        .RequireAuthorization("VaultAdjust")
+        .RequireAuthorization("VaultAdjustApi")
         .WithName("RequestVaultAdjustment")
         .WithSummary("Request a manual vault adjustment");
 
@@ -75,7 +75,7 @@ public static class VaultEndpoints
                 ? Results.Ok(ApiResponse<VaultOperationResult>.Ok(result))
                 : Results.BadRequest(ApiResponse<VaultOperationResult>.Fail(result.ErrorMessage ?? "Failed to approve adjustment."));
         })
-        .RequireAuthorization("VaultApprove")
+        .RequireAuthorization("VaultApproveApi")
         .WithName("ApproveVaultAdjustment")
         .WithSummary("Approve a pending vault adjustment");
 
@@ -94,7 +94,7 @@ public static class VaultEndpoints
                 ? Results.Ok(ApiResponse<VaultOperationResult>.Ok(result))
                 : Results.BadRequest(ApiResponse<VaultOperationResult>.Fail(result.ErrorMessage ?? "Failed to reject adjustment."));
         })
-        .RequireAuthorization("VaultApprove")
+        .RequireAuthorization("VaultApproveApi")
         .WithName("RejectVaultAdjustment")
         .WithSummary("Reject a pending vault adjustment");
 

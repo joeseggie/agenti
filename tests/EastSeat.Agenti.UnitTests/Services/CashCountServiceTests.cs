@@ -87,7 +87,11 @@ public class CashCountServiceTests : IDisposable
 
         _dbContext.SaveChanges();
 
-        _sut = new CashCountService(_dbContext, _vaultServiceMock.Object, _notificationServiceMock.Object, _walletAdjustmentServiceMock.Object);
+        var bankWorkflow = new Mock<IBankSessionWorkflow>();
+        bankWorkflow.Setup(w => w.IsModernBranchAsync(It.IsAny<long>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        bankWorkflow.Setup(w => w.HandlesFormAsync(It.IsAny<long>(), It.IsAny<CashCountFormModel>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        _sut = new CashCountService(_dbContext, _vaultServiceMock.Object, _notificationServiceMock.Object,
+            _walletAdjustmentServiceMock.Object, bankWorkflow.Object);
     }
 
     public void Dispose()

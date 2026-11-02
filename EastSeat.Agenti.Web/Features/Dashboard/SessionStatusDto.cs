@@ -7,13 +7,21 @@ namespace EastSeat.Agenti.Web.Features.Dashboard;
 /// </summary>
 public record SessionStatusDto
 {
+    public bool UsesBankReconciliation { get; init; }
+    public DateTimeOffset? OperationalClosedAt { get; init; }
+    public int PendingClosingApprovalCount { get; init; }
+    public string BalanceBasis => UsesBankReconciliation
+        ? "Stored internal allocations; customer tallies are shown in the register and cash-count form."
+        : "Stored wallet balances";
     public long? SessionId { get; init; }
     public DateOnly? SessionDate { get; init; }
     public CashSessionStatus? Status { get; init; }
     public DateTimeOffset? OpenedAt { get; init; }
     public bool HasActiveSession { get; init; }
 
-    public string StatusDisplay => Status switch
+    public string StatusDisplay => UsesBankReconciliation && OperationalClosedAt.HasValue
+        ? PendingClosingApprovalCount > 0 ? "Trading ended; bank review pending" : "Trading ended; approval recorded"
+        : Status switch
     {
         CashSessionStatus.Open => "Open",
         CashSessionStatus.Closed => "Closed",

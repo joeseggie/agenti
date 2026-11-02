@@ -5,6 +5,8 @@ namespace EastSeat.Agenti.Web.Features.BankRuns;
 /// </summary>
 public class BankRunFormModel
 {
+    public Guid? CommandId { get; set; }
+    public DateTimeOffset? OccurredAt { get; set; }
     /// <summary>
     /// Wallet type the agent is depositing into (destination). Must not be Cash.
     /// </summary>

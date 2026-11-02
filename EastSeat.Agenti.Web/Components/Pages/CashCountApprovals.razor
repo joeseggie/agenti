@@ -80,6 +80,10 @@
                             @(context.Variance.Value > 0 ? "+" : "")@context.Variance.Value.ToString("N0")
                         </MudText>
                     }
+                    else if (!context.IsOpening && context.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+                    {
+                        <MudText Typo="Typo.body2">Bank review required</MudText>
+                    }
                     else if (!context.IsOpening && context.OpeningTotal.HasValue)
                     {
                         <MudText Typo="Typo.body2" Color="Color.Success">0</MudText>
@@ -93,6 +97,17 @@
                     <MudText Typo="Typo.caption">@context.SubmittedAt.ToLocalTime().ToString("HH:mm")</MudText>
                 </MudTd>
                 <MudTd DataLabel="Actions" Style="text-align: center;">
+                    @if (!context.IsOpening && context.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+                    {
+                        <AuthorizeView Policy="BankReconciliation">
+                            <Authorized Context="bankApprover">
+                                <MudButton Href="@($"/bank-reconciliation?sessionId={context.CashSessionId}")">Reconcile closing</MudButton>
+                            </Authorized>
+                            <NotAuthorized Context="bankObserver"><MudText Typo="Typo.caption">Administrator bank review required</MudText></NotAuthorized>
+                        </AuthorizeView>
+                    }
+                    else
+                    {
                     <MudStack Row="true" Spacing="1" Justify="Justify.Center">
                         <MudTooltip Text="Approve">
                             <MudIconButton Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small"
@@ -103,6 +118,7 @@
                                 OnClick="@(() => ShowRejectDialogAsync(context))" Disabled="_isProcessing" />
                         </MudTooltip>
                     </MudStack>
+                    }
                 </MudTd>
             </RowTemplate>
         </MudTable>

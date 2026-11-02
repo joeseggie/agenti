@@ -8,7 +8,7 @@ namespace EastSeat.Agenti.Web.Data;
 /// <summary>
 /// Main database context for the Agenti ERP system.
 /// </summary>
-public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
+public partial class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
     : IdentityDbContext<ApplicationUser>(options)
 {
     // Domain entities
@@ -40,6 +40,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        EnsureBankingRecordsImmutable();
+
         var newBranches = ChangeTracker.Entries<Branch>()
             .Where(e => e.State == EntityState.Added)
             .Select(e => e.Entity)
@@ -601,6 +603,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(e => new { e.CashSessionId, e.AgentId });
             entity.HasIndex(e => new { e.CashSessionId, e.CreatedAt });
         });
+
+        ConfigureBankingModel(builder);
 
         // Seed default app config
         SeedAppConfig(builder);

@@ -16,6 +16,10 @@ public class CashSession
     public DateTimeOffset? ClosedAt { get; set; }
     public DateTimeOffset? BlockedAt { get; set; }
     public DateTimeOffset? UnblockedAt { get; set; }
+    public SessionWorkflowVersion WorkflowVersion { get; set; } = SessionWorkflowVersion.Legacy;
+    public DateTimeOffset? OperationalClosedAt { get; set; }
+    public int RegisterVersion { get; set; }
+    public int Version { get; set; }
 
     // Navigation properties
     public Branch? Branch { get; set; }

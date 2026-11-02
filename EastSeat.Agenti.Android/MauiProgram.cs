@@ -42,21 +42,35 @@ public static class MauiProgram
         // ── HTTP client ──────────────────────────────────────────────────────
         var baseUrl = builder.Configuration.GetValue<string>("ApiSettings:BaseUrl")
             ?? "https://agenti.azurewebsites.net/";
+#if DEBUG
+        var testUrl = assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .SingleOrDefault(attribute => attribute.Key == "Agenti.BankingTestApiUrl")?.Value;
+        if (!string.IsNullOrEmpty(testUrl))
+        {
+            var uri = new Uri(testUrl);
+            if (uri.Scheme != Uri.UriSchemeHttps || uri.Host is not ("localhost" or "127.0.0.1" or "10.0.2.2"))
+                throw new InvalidOperationException("The debug banking test backend must use HTTPS on a loopback or emulator host.");
+            baseUrl = testUrl;
+        }
+#endif
 
         builder.Services.AddHttpClient<IApiService, ApiService>(client =>
         {
             client.BaseAddress = new Uri(baseUrl);
             client.Timeout = TimeSpan.FromSeconds(30);
         })
-        .ConfigurePrimaryHttpMessageHandler(() =>
+        .AddHttpMessageHandler<AuthenticatedApiHandler>()
+        .ConfigurePrimaryHttpMessageHandler(CreateHttpHandler);
+        builder.Services.AddHttpClient<IBankingApiClient, BankingApiClient>(client =>
         {
-            var handler = new HttpClientHandler();
-#if DEBUG
-            // Accept the ASP.NET Core dev certificate on the Android emulator.
-            handler.ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true;
-#endif
-            return handler;
-        });
+            client.BaseAddress = new Uri(baseUrl);
+            client.Timeout = TimeSpan.FromSeconds(30);
+        })
+        .AddHttpMessageHandler<AuthenticatedApiHandler>()
+        .ConfigurePrimaryHttpMessageHandler(CreateHttpHandler);
+        builder.Services.AddSingleton<IAccessTokenProvider, SecureAccessTokenProvider>();
+        builder.Services.AddTransient<AuthenticatedApiHandler>();
+        builder.Services.AddSingleton<IBankingDraftStore, BankingDraftStore>();
 
         // ── Services ─────────────────────────────────────────────────────────
         builder.Services.AddSingleton<IAuthService, AuthService>();
@@ -76,14 +90,29 @@ public static class MauiProgram
         builder.Services.AddTransient<CashCountPage>();
         builder.Services.AddTransient<CashSessionsPage>();
         builder.Services.AddTransient<ProfilePage>();
+        builder.Services.AddTransient<BankOperationsPage>();
+        builder.Services.AddTransient<CustomerBankingPage>();
+        builder.Services.AddTransient<BankStatementsPage>();
+        builder.Services.AddTransient<BankReviewPage>();
 
         // ── Shell ────────────────────────────────────────────────────────────
-        builder.Services.AddSingleton<AppShell>();
+        builder.Services.AddTransient<AppShell>();
 
 #if DEBUG
         builder.Logging.AddDebug();
 #endif
 
         return builder.Build();
+    }
+
+    private static HttpMessageHandler CreateHttpHandler()
+    {
+        var handler = new HttpClientHandler();
+#if DEBUG
+        handler.ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) =>
+            errors == System.Net.Security.SslPolicyErrors.None ||
+            message.RequestUri?.Host is "localhost" or "127.0.0.1" or "10.0.2.2";
+#endif
+        return handler;
     }
 }

@@ -42,7 +42,7 @@ public static class CashSessionEndpoints
                 ? Results.Ok(ApiResponse<string>.Ok("Session closed successfully."))
                 : Results.BadRequest(ApiResponse<string>.Fail(error ?? "Failed to close session."));
         })
-        .RequireAuthorization("CashCountApprove")
+        .RequireAuthorization("CashCountApproveApi")
         .WithName("CloseCashSession")
         .WithSummary("Close a cash session (requires all closing counts approved)");
 
@@ -62,7 +62,7 @@ public static class CashSessionEndpoints
                 ? Results.Ok(ApiResponse<CashCountSaveResult>.Ok(result))
                 : Results.BadRequest(ApiResponse<CashCountSaveResult>.Fail(result.ErrorMessage ?? "Failed to close agent session."));
         })
-        .RequireAuthorization("VaultApprove")
+        .RequireAuthorization("VaultApproveApi")
         .WithName("CloseAgentSession")
         .WithSummary("Admin closes session for a specific agent (rule 22)");
 

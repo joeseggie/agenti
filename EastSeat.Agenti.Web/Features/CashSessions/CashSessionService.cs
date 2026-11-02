@@ -56,6 +56,10 @@ public class CashSessionService(
 
             return new CashSessionListItemDto
             {
+                WorkflowVersion = s.WorkflowVersion,
+                OperationalClosedAt = s.OperationalClosedAt,
+                TotalReportedClosingAmount = s.CashCounts.Any(c => !c.IsOpening && c.SubmittedAt.HasValue)
+                    ? s.CashCounts.Where(c => !c.IsOpening && c.SubmittedAt.HasValue).Sum(c => c.TotalAmount) : null,
                 Id = s.Id,
                 SessionDate = s.SessionDate,
                 Status = s.Status,
@@ -118,6 +122,7 @@ public class CashSessionService(
 
             return new AgentSessionSummaryDto
             {
+                WorkflowVersion = session.WorkflowVersion,
                 AgentId = g.Key,
                 AgentName = agent?.User != null
                     ? $"{agent.User.FirstName} {agent.User.LastName}".Trim()
@@ -139,6 +144,10 @@ public class CashSessionService(
 
         return new CashSessionDetailDto
         {
+            WorkflowVersion = session.WorkflowVersion,
+            OperationalClosedAt = session.OperationalClosedAt,
+            TotalReportedClosingAmount = session.CashCounts.Any(c => !c.IsOpening && c.SubmittedAt.HasValue)
+                ? session.CashCounts.Where(c => !c.IsOpening && c.SubmittedAt.HasValue).Sum(c => c.TotalAmount) : null,
             Id = session.Id,
             SessionDate = session.SessionDate,
             Status = session.Status,
@@ -168,6 +177,8 @@ public class CashSessionService(
         {
             return (false, "Session is already closed.");
         }
+        if (session.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            return (false, "Banking sessions end through agent closing submissions and require separate bank reconciliation approval.");
 
         // Rules 5, 8, 9: All agents with opening counts must have approved closing counts
         var agentsWithOpenings = session.CashCounts
@@ -234,6 +245,8 @@ public class CashSessionService(
 
             return new CashSessionListItemDto
             {
+                WorkflowVersion = s.WorkflowVersion,
+                OperationalClosedAt = s.OperationalClosedAt,
                 Id = s.Id,
                 SessionDate = s.SessionDate,
                 Status = s.Status,
@@ -258,6 +271,7 @@ public class CashSessionService(
             RejectionReason = cashCount.RejectionReason,
             WalletEntries = cashCount.Details.Select(d => new WalletCountSummaryDto
             {
+                ObservedAt = d.ObservedAt,
                 WalletId = d.WalletId,
                 WalletName = d.Wallet?.Name ?? "Unknown",
                 WalletTypeName = d.Wallet?.WalletType?.Name ?? "Unknown",

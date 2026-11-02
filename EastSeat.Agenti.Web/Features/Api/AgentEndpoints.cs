@@ -39,7 +39,7 @@ public static class AgentEndpoints
                 ? Results.Created($"/api/agents/{result.Id}", ApiResponse<SaveResult>.Ok(result))
                 : Results.BadRequest(ApiResponse<SaveResult>.Fail(result.ErrorMessage ?? "Failed to create agent."));
         })
-        .RequireAuthorization("UserManagement")
+        .RequireAuthorization("UserManagementApi")
         .WithName("CreateAgent")
         .WithSummary("Create a new agent");
 
@@ -54,7 +54,7 @@ public static class AgentEndpoints
                 ? Results.Ok(ApiResponse<SaveResult>.Ok(result))
                 : Results.BadRequest(ApiResponse<SaveResult>.Fail(result.ErrorMessage ?? "Failed to update agent."));
         })
-        .RequireAuthorization("UserManagement")
+        .RequireAuthorization("UserManagementApi")
         .WithName("UpdateAgent")
         .WithSummary("Update an existing agent");
 
@@ -67,7 +67,7 @@ public static class AgentEndpoints
                 ? Results.Ok(ApiResponse<SaveResult>.Ok(result))
                 : Results.BadRequest(ApiResponse<SaveResult>.Fail(result.ErrorMessage ?? "Failed to toggle agent status."));
         })
-        .RequireAuthorization("UserManagement")
+        .RequireAuthorization("UserManagementApi")
         .WithName("ToggleAgentStatus")
         .WithSummary("Toggle agent active/inactive status");
 
@@ -91,7 +91,7 @@ public static class AgentEndpoints
                 ? Results.Created($"/api/agents/{agentId}/wallets/{result.Id}", ApiResponse<SaveResult>.Ok(result))
                 : Results.BadRequest(ApiResponse<SaveResult>.Fail(result.ErrorMessage ?? "Failed to add wallet."));
         })
-        .RequireAuthorization("UserManagement")
+        .RequireAuthorization("UserManagementApi")
         .WithName("AddAgentWallet")
         .WithSummary("Add a wallet to an agent");
 

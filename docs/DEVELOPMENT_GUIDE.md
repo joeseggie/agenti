@@ -231,6 +231,59 @@ Add to `appsettings.json`:
 
 ## Troubleshooting
 
+### Bank reconciliation verification and rollout gate
+
+The banking workflow separates closing submission (one provisional internal settlement)
+from later administrator financial approval. Legacy sessions retain their original
+rules. New enrollment is blocked unless the account has a verified bank-specific
+statement profile. **No production CSV, Excel, or PDF profile is supplied yet**:
+redacted bank samples and their golden fixtures are still required. Test profiles
+are synthetic and exist only in the test assemblies.
+
+Use the .NET 10 SDK. PostgreSQL integration and browser tests start their own
+PostgreSQL 16 Testcontainers with generated credentials and random ports. They
+never use `ConnectionStrings__DefaultConnection` for a development or production
+database. Docker must be running; no shared PostgreSQL service or test password
+secret is required in CI.
+
+```powershell
+dotnet test tests\EastSeat.Agenti.UnitTests\EastSeat.Agenti.UnitTests.csproj
+dotnet test tests\EastSeat.Agenti.IntegrationTests\EastSeat.Agenti.IntegrationTests.csproj --filter "FullyQualifiedName~Reconciliation"
+dotnet build tests\EastSeat.Agenti.E2ETests\EastSeat.Agenti.E2ETests.csproj
+& .\tests\EastSeat.Agenti.E2ETests\bin\Debug\net10.0\playwright.ps1 install chromium
+dotnet test tests\EastSeat.Agenti.E2ETests\EastSeat.Agenti.E2ETests.csproj --no-build --filter "Category!=AndroidDevice"
+```
+
+The browser journey captures a receipt, submits a locked closing, opens a later
+session, uploads a synthetic source, matches it, and approves the old closing
+without changing current balances.
+
+The native journey additionally exercises encrypted draft recovery after process
+termination and the Android file picker. Create a **separate disposable AVD**
+whose name starts with `agenti-reconciliation-`; never use a physical device or
+an existing personal AVD. Start it, then use its exact emulator serial:
+
+```powershell
+dotnet build EastSeat.Agenti.Android\EastSeat.Agenti.Android.csproj -f net10.0-android -p:ApplicationId=com.eastseat.agenti.reconciliationtest -p:BankingTestApiUrl=https://127.0.0.1:58731/ -p:EmbedAssembliesIntoApk=true
+$env:AGENTI_ANDROID_TEST_APK = (Resolve-Path EastSeat.Agenti.Android\bin\Debug\net10.0-android\com.eastseat.agenti.reconciliationtest-Signed.apk).Path
+$env:AGENTI_ADB_PATH = '<Android SDK>\platform-tools\adb.exe'
+$env:AGENTI_ANDROID_SERIAL = '<isolated emulator serial>'
+# Optional for a dedicated ADB server: $env:AGENTI_ADB_SERVER_PORT = '5039'
+dotnet test tests\EastSeat.Agenti.E2ETests\EastSeat.Agenti.E2ETests.csproj --filter "Category=AndroidDevice"
+```
+
+The test starts an isolated HTTPS backend on loopback port 58731 and a scoped
+ADB reverse tunnel, installs only
+the test application ID, and removes that application afterward. The backend
+override is compiled into Debug builds only and rejects non-loopback hosts.
+Native tests are explicitly skipped without the test APK setting. Rebuild the
+normal application without these test properties before distribution.
+
+Before production enrollment: verify real bank layouts and balance semantics,
+approve evidence retention/access/backup arrangements, rehearse migrations on a
+dedicated copy, and distribute the compatible Android client. Pausing enrollment
+must not downgrade existing modern sessions or replay their settlements.
+
 ### PostgreSQL Connection Issues
 - Check if container is running: `docker ps`
 - View logs: `docker-compose logs postgres`

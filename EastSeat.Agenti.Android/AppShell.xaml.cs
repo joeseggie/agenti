@@ -8,6 +8,8 @@ public partial class AppShell : Shell
     private readonly IAuthService _authService;
 
     public ICommand LogoutCommand { get; }
+    public bool IsAdmin => _authService.CurrentUser?.Role == "Admin";
+    public bool HasAgent => _authService.CurrentUser?.AgentId.HasValue == true;
 
     public AppShell(IAuthService authService)
     {
@@ -21,5 +23,12 @@ public partial class AppShell : Shell
     {
         await _authService.LogoutAsync();
         Application.Current!.MainPage = IPlatformApplication.Current!.Services.GetRequiredService<Pages.LoginPage>();
+    }
+
+    protected override void OnAppearing()
+    {
+        base.OnAppearing();
+        OnPropertyChanged(nameof(IsAdmin));
+        OnPropertyChanged(nameof(HasAgent));
     }
 }

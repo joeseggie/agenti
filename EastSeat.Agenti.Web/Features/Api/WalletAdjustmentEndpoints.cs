@@ -10,6 +10,7 @@ public static class WalletAdjustmentEndpoints
 {
     public static RouteGroupBuilder MapWalletAdjustmentsApi(this RouteGroupBuilder group)
     {
+        group.AddEndpointFilter<BankingApiExceptionFilter>();
         group.MapPost("/", async (
             WalletAdjustmentFormModel form,
             ClaimsPrincipal principal,
@@ -55,7 +56,7 @@ public static class WalletAdjustmentEndpoints
             var adjustments = await walletAdjustmentService.GetAdjustmentsForSessionAsync(sessionId);
             return Results.Ok(ApiResponse<List<WalletAdjustmentDto>>.Ok(adjustments));
         })
-        .RequireAuthorization("CashCountApprove")
+        .RequireAuthorization("CashCountApproveApi")
         .WithName("GetSessionAdjustments")
         .WithSummary("Get all wallet adjustments for a session (admin/supervisor only)");
 
@@ -73,7 +74,7 @@ public static class WalletAdjustmentEndpoints
                 ? Results.Ok(ApiResponse<WalletAdjustmentSaveResult>.Ok(result))
                 : Results.BadRequest(ApiResponse<WalletAdjustmentSaveResult>.Fail(result.ErrorMessage ?? "Failed to approve adjustment."));
         })
-        .RequireAuthorization("CashCountApprove")
+        .RequireAuthorization("CashCountApproveApi")
         .WithName("ApproveWalletAdjustment")
         .WithSummary("Approve a pending wallet adjustment (admin/supervisor only)");
 
@@ -92,7 +93,7 @@ public static class WalletAdjustmentEndpoints
                 ? Results.Ok(ApiResponse<WalletAdjustmentSaveResult>.Ok(result))
                 : Results.BadRequest(ApiResponse<WalletAdjustmentSaveResult>.Fail(result.ErrorMessage ?? "Failed to reject adjustment."));
         })
-        .RequireAuthorization("CashCountApprove")
+        .RequireAuthorization("CashCountApproveApi")
         .WithName("RejectWalletAdjustment")
         .WithSummary("Reject a pending wallet adjustment (admin/supervisor only)");
 

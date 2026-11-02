@@ -73,6 +73,20 @@
         </MudGrid>
 
         <!-- Session Summary -->
+        @if (_session.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+        {
+            <MudAlert Severity="Severity.Info" Class="mt-4">
+                Operational closure and financial approval are separate. Reported closing: UGX @_session.TotalReportedClosingAmount?.ToString("N0").
+                Submitted observations remain unchanged while bank evidence is reviewed.
+            </MudAlert>
+            <AuthorizeView Policy="BankReconciliation">
+                <MudButton Href="@($"/bank-reconciliation?sessionId={Id}")">Review bank reconciliation</MudButton>
+            </AuthorizeView>
+        }
+        else
+        {
+            <MudText Typo="Typo.caption" Class="mt-4">Legacy session - historical approval rules apply.</MudText>
+        }
         <MudCard Elevation="2" Class="mt-4">
             <MudCardContent>
                 <MudGrid>
@@ -143,10 +157,10 @@
                             <Authorized>
                                 @{
                                     var isToday = _session.SessionDate == DateOnly.FromDateTime(DateTime.UtcNow);
-                                    var canUnapproveClosing = isToday &&
+                                    var canUnapproveClosing = _session.WorkflowVersion == SessionWorkflowVersion.Legacy && isToday &&
                                         agent.ClosingCount?.Status == CashCountStatus.Approved &&
                                         _session.Status != CashSessionStatus.Closed;
-                                    var canUnapproveOpening = isToday &&
+                                    var canUnapproveOpening = _session.WorkflowVersion == SessionWorkflowVersion.Legacy && isToday &&
                                         agent.OpeningCount?.Status == CashCountStatus.Approved &&
                                         agent.ClosingCount?.Status != CashCountStatus.Approved &&
                                         agent.ClosingCount?.Status != CashCountStatus.PendingApproval &&
@@ -166,7 +180,7 @@
                                         Unapprove Closing
                                     </MudButton>
                                 }
-                                @if (_session.Status != CashSessionStatus.Closed &&
+                                @if (_session.WorkflowVersion == SessionWorkflowVersion.Legacy && _session.Status != CashSessionStatus.Closed &&
                                      agent.OpeningCount?.Status == CashCountStatus.Approved &&
                                      agent.ClosingCount?.Status != CashCountStatus.Approved)
                                 {

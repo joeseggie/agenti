@@ -178,7 +178,7 @@ public class TrendTools
                 : 0;
 
             sb.AppendLine($"👤 {a.Code} ({a.Name})");
-            sb.AppendLine($"   Sessions: {a.SessionCount} total | {a.ClosedSessions} closed | {a.OpenSessions} open");
+            sb.AppendLine($"   Sessions: {a.SessionCount} total | {a.ClosedSessions} operationally closed (not proof of bank reconciliation) | {a.OpenSessions} open");
             sb.AppendLine($"   Discrepancies: {a.DiscrepancyCount} total ({a.SessionsWithDiscrepancy} sessions, {discrepancyRate:F1}% rate)");
             sb.AppendLine();
         }
