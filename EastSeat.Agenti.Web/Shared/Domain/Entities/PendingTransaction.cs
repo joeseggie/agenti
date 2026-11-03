@@ -23,6 +23,7 @@ public class PendingTransaction
 
     /// <summary>The source wallet that was debited.</summary>
     public long WalletId { get; set; }
+    public long? CustomerTransactionId { get; set; }
 
     public PendingTransactionType Type { get; set; }
     public PendingTransactionStatus Status { get; set; } = PendingTransactionStatus.Open;
@@ -54,5 +55,6 @@ public class PendingTransaction
     public CashSession? CashSession { get; set; }
     public Agent? Agent { get; set; }
     public Wallet? Wallet { get; set; }
+    public CustomerTransaction? CustomerTransaction { get; set; }
     public ApplicationUser? RecordedByUser { get; set; }
 }

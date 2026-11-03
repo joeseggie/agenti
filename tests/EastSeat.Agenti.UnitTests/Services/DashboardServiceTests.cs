@@ -1,5 +1,6 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.UnitTests.Helpers.TestDataBuilders;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Dashboard;
@@ -280,6 +281,31 @@ public class DashboardServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetDashboardAsync_DuringUgandaEarlyMorning_DoesNotFallbackToPriorModernSession()
+    {
+        var utcToday = DateOnly.FromDateTime(DateTime.UtcNow);
+        var modernSession = CashSessionBuilder.Default()
+            .WithId(1)
+            .WithBranchId(1)
+            .WithSessionDate(utcToday)
+            .WithOpenedAt(DateTimeOffset.UtcNow.AddHours(-2))
+            .Build();
+        modernSession.WorkflowVersion = SessionWorkflowVersion.BankReconciliation;
+        _dbContext.CashSessions.Add(modernSession);
+        await _dbContext.SaveChangesAsync();
+
+        var lateEveningUtc = new DateTimeOffset(
+            utcToday.Year, utcToday.Month, utcToday.Day, 22, 0, 0, TimeSpan.Zero);
+        var dashboardService = new DashboardService(
+            _serviceProvider.GetRequiredService<IDbContextFactory<ApplicationDbContext>>(),
+            new BusinessClock(new FixedTimeProvider(lateEveningUtc)));
+
+        var result = await dashboardService.GetDashboardAsync("user-123");
+
+        result.SessionStatus.SessionId.Should().BeNull();
+    }
+
+    [Fact]
     public async Task GetDashboardAsync_WithMultipleSessionsToday_ReturnsMostRecentSession()
     {
         // Arrange
@@ -451,4 +477,9 @@ public class DashboardServiceTests : IDisposable
     }
 
     #endregion
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
 }

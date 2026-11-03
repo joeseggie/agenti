@@ -1,0 +1,220 @@
+@page "/customer-transactions"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Shared.Services
+@using EastSeat.Agenti.Web.Features.CustomerTransactions
+@using EastSeat.Agenti.Web.Features.BankReconciliation
+@using EastSeat.Agenti.Web.Features.BankStatements
+@using EastSeat.Agenti.Web.Features.CashCounts
+@inherits BankingPageBase
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject ICustomerTransactionService Transactions
+@inject ICashCountService CashCounts
+@inject IBankReconciliationService Reconciliation
+@inject IBankEvidenceService Evidence
+@inject Microsoft.Extensions.Options.IOptions<BankEvidenceOptions> EvidenceOptions
+@inject NavigationManager Navigation
+
+<PageTitle>Customer Transactions - Agenti</PageTitle>
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+        <MudText Typo="Typo.h4">Customer transactions</MudText>
+        <MudButton OnClick="LoadAsync" Disabled="Busy" Variant="Variant.Outlined">Refresh</MudButton>
+    </MudStack>
+    <MudText Class="mb-3">Record the receipt and actual cash/bank movements. Entries contribute to the session tally; they do not directly update wallet balances.</MudText>
+    @if (Error != null)
+    {
+        <MudAlert Severity="Severity.Error" Class="my-3">@Error</MudAlert>
+    }
+    @if (Busy)
+    {
+        <MudProgressLinear Indeterminate="true" Class="my-3" />
+    }
+    @if (_current != null)
+    {
+        <MudAlert Severity="Severity.Info" Class="my-3">@_current.StatusText</MudAlert>
+    }
+    @foreach (var request in _corrections)
+    {
+        <MudPaper Class="pa-3 my-2" Outlined="true">
+            <MudText Typo="Typo.subtitle1">Correction request #@request.Id</MudText>
+            <MudText>@request.Reason</MudText>
+            <MudButton OnClick="@(() => SelectCorrectionAsync(request))" Disabled="Busy">Open historical register</MudButton>
+            <MudButton OnClick="@(() => ResubmitAsync(request))" Disabled="Busy" Color="Color.Primary">Resubmit corrections</MudButton>
+        </MudPaper>
+    }
+    @if (_options != null && (_selectedCorrection == null || _selectedCorrection.AllowMissingTransactions))
+    {
+        <MudPaper Class="pa-4 my-4" Outlined="true">
+            <MudText Typo="Typo.h6">@(_selectedCorrection == null ? "Capture a receipt" : "Add a missing historical receipt")</MudText>
+            <MudGrid Class="mt-1">
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="long" Label="Bank wallet" @bind-Value="_form.BankAccountId" Disabled="Busy">
+                        @foreach (var bank in _options.BankAccounts)
+                        {
+                            <MudSelectItem T="long" Value="@bank.Id">@bank.BankName - @bank.WalletName (@bank.Currency)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="long" Label="Cash wallet" @bind-Value="_form.CashWalletId" Disabled="Busy">
+                        @foreach (var wallet in _options.CashWallets)
+                        {
+                            <MudSelectItem T="long" Value="@wallet.Id">@wallet.Name (@wallet.Currency)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="CustomerTransactionKind" Label="Transaction" @bind-Value="_form.Kind" Disabled="Busy">
+                        @foreach (var kind in Enum.GetValues<CustomerTransactionKind>())
+                        {
+                            <MudSelectItem T="CustomerTransactionKind" Value="@kind">@kind</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="CustomerCaptureOutcome" Label="Bank operation outcome" @bind-Value="_form.Outcome" Disabled="Busy">
+                        @foreach (var outcome in Enum.GetValues<CustomerCaptureOutcome>())
+                        {
+                            <MudSelectItem T="CustomerCaptureOutcome" Value="@outcome">@outcome</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6"><MudNumericField T="decimal" Label="Amount" @bind-Value="_form.Amount" Min="0.01m" Disabled="Busy" /></MudItem>
+                <MudItem xs="12" sm="6"><MudTextField T="string" Label="Customer account / phone" @bind-Value="_form.CustomerIdentifier" Disabled="Busy" /></MudItem>
+                <MudItem xs="12" sm="6"><MudTextField T="string" Label="Bank transaction number" @bind-Value="_form.BankReference" Disabled="@(Busy || _form.ReferenceUnavailable)" /></MudItem>
+                <MudItem xs="12" sm="6"><MudTextField T="string" Label="Receipt date/time (Uganda)" @bind-Value="_occurredAt" Placeholder="yyyy-MM-dd HH:mm:ss" Disabled="Busy" /></MudItem>
+                <MudItem xs="12">
+                    <MudCheckBox T="bool" @bind-Value="_form.ReferenceUnavailable" Label="The bank did not supply a usable reference" Disabled="Busy" />
+                    <MudCheckBox T="bool" @bind-Value="_form.CashExchanged" Label="Customer cash actually changed hands" Disabled="Busy" />
+                    <MudCheckBox T="bool" @bind-Value="_form.BankMoved" Label="The float account was actually debited/credited" Disabled="Busy" />
+                </MudItem>
+                <MudItem xs="12"><MudTextField T="string" Label="Explanation / notes" @bind-Value="_form.Notes" Lines="3" Disabled="Busy" /></MudItem>
+                <MudItem xs="12">
+                    <MudText Typo="Typo.body2">Receipt evidence (JPEG, PNG or PDF)</MudText>
+                    <InputFile OnChange="UploadReceiptAsync" accept=".jpg,.jpeg,.png,.pdf" disabled="@Busy" />
+                    @if (_form.EvidenceFileId.HasValue)
+                    {
+                        <MudLink Href="@($"/banking-evidence/{_form.EvidenceFileId}")" Target="_blank">Attached receipt</MudLink>
+                    }
+                </MudItem>
+                <MudItem xs="12">
+                    <MudButton OnClick="CaptureAsync" Disabled="Busy" Variant="Variant.Filled" Color="Color.Primary">Save transaction</MudButton>
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+    }
+    else if (Loaded && Error == null && _selectedCorrection == null && _current?.WorkflowVersion == SessionWorkflowVersion.Legacy)
+    {
+        <MudAlert Severity="Severity.Info">Customer capture becomes available after an administrator enrolls the verified bank workflow. Legacy cash sessions remain available.</MudAlert>
+    }
+    <MudText Typo="Typo.h6" Class="mt-4">Selected session register</MudText>
+    @if (Loaded && Error == null && _entries.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Class="my-2">No customer receipts are recorded for the selected session.</MudAlert>
+    }
+    <MudTable T="CustomerTransactionDto" Items="_entries" Dense="true" Hover="true">
+        <HeaderContent><MudTh>Receipt time</MudTh><MudTh>Bank</MudTh><MudTh>Type</MudTh><MudTh>Customer</MudTh><MudTh>Amount</MudTh><MudTh></MudTh></HeaderContent>
+        <RowTemplate>
+            <MudTd>@UgandaTime(context.OccurredAt)</MudTd><MudTd>@context.BankName</MudTd>
+            <MudTd>@context.Kind @(context.IsVoided ? "(voided)" : "")</MudTd><MudTd>@context.CustomerIdentifier</MudTd>
+            <MudTd>@context.Currency @context.Amount.ToString("N2")</MudTd>
+            <MudTd><MudButton Href="@($"/customer-transactions/{context.Id}")">Details / follow-up</MudButton></MudTd>
+        </RowTemplate>
+        <PagerContent><MudTablePager /></PagerContent>
+    </MudTable>
+    <MudText Typo="Typo.h6" Class="mt-5">Cases across sessions</MudText>
+    @if (Loaded && Error == null && _cases.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Class="my-2">No outstanding cases are recorded.</MudAlert>
+    }
+    @foreach (var item in _cases)
+    {
+        <MudPaper Class="pa-3 my-2" Outlined="true">
+            <MudText>@item.BankName - @item.CustomerIdentifier - @item.Kind</MudText>
+            <MudText Typo="Typo.body2">Cash held: @item.CashHeld.ToString("N2"); customer cash due: @item.CustomerCashDue.ToString("N2"); bank settlement difference: @item.BankExposure.ToString("N2")</MudText>
+            <MudButton Href="@($"/customer-transactions/{item.Id}")">Open case</MudButton>
+        </MudPaper>
+    }
+</MudContainer>
+
+@code {
+    [SupplyParameterFromQuery] public long? SessionId { get; set; }
+    [SupplyParameterFromQuery] public long? CorrectionId { get; set; }
+    private CurrentSessionDto? _current;
+    private CustomerCaptureOptionsDto? _options;
+    private List<CustomerTransactionDto> _entries = [];
+    private List<CustomerTransactionDto> _cases = [];
+    private List<BankCorrectionRequestDto> _corrections = [];
+    private BankCorrectionRequestDto? _selectedCorrection;
+    private CustomerTransactionForm _form = new() { CommandId = Guid.NewGuid() };
+    private string _occurredAt = string.Empty;
+    private Guid _uploadKey = Guid.NewGuid();
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private Task LoadAsync() => RunAsync(async () =>
+    {
+        _current = await CashCounts.GetCurrentSessionAsync(UserId);
+        _corrections = await Reconciliation.GetMyCorrectionsAsync(UserId);
+        _selectedCorrection = CorrectionId.HasValue ? _corrections.SingleOrDefault(r => r.Id == CorrectionId) : _selectedCorrection;
+        var sessionId = _selectedCorrection?.CashSessionId ?? SessionId ?? _current.SessionId;
+        _entries = sessionId.HasValue ? await Transactions.GetForSessionAsync(UserId, sessionId.Value) : [];
+        _cases = await Transactions.GetOpenCasesAsync(UserId);
+        _options = _selectedCorrection != null
+            ? await Transactions.GetCorrectionOptionsAsync(UserId, _selectedCorrection.Id)
+            : _current.CanRecordCustomerTransactions && _current.SessionId.HasValue
+                ? await Transactions.GetCaptureOptionsAsync(UserId, _current.SessionId.Value) : null;
+        if (_options != null && _form.CashSessionId != _options.CashSessionId)
+            ResetForm();
+    });
+
+    private void ResetForm()
+    {
+        _form = new CustomerTransactionForm
+        {
+            CommandId = Guid.NewGuid(), CashSessionId = _options!.CashSessionId,
+            BankAccountId = _options.BankAccounts.FirstOrDefault()?.Id ?? 0,
+            CashWalletId = _options.CashWallets.FirstOrDefault()?.Id ?? 0,
+            CorrectionRequestId = _selectedCorrection?.Id
+        };
+        _occurredAt = string.Empty;
+        _uploadKey = Guid.NewGuid();
+    }
+
+    private async Task CaptureAsync()
+    {
+        if (await RunAsync(async () =>
+        {
+            _form.OccurredAt = ParseUgandaTime(_occurredAt);
+            if (_form.ReferenceUnavailable) _form.BankReference = null;
+            await Transactions.CaptureAsync(UserId, _form);
+            ResetForm();
+        }))
+            await LoadAsync();
+    }
+
+    private Task UploadReceiptAsync(InputFileChangeEventArgs args) => RunAsync(async () =>
+    {
+        if (_form.BankAccountId == 0)
+            throw new BankingRuleException("Select the bank account before attaching evidence.");
+        _uploadKey = Guid.NewGuid();
+        await using var stream = args.File.OpenReadStream(EvidenceOptions.Value.MaxFileBytes);
+        var uploaded = await Evidence.UploadAsync(UserId, _form.BankAccountId, _uploadKey, args.File.Name, false, stream);
+        _form.EvidenceFileId = uploaded.Id;
+    });
+
+    private async Task SelectCorrectionAsync(BankCorrectionRequestDto request)
+    {
+        _selectedCorrection = request;
+        _form = new CustomerTransactionForm { CommandId = Guid.NewGuid() };
+        await LoadAsync();
+    }
+
+    private async Task ResubmitAsync(BankCorrectionRequestDto request)
+    {
+        if (await RunAsync(() => Transactions.ResubmitCorrectionsAsync(UserId, request.Id, request.Version)))
+            await LoadAsync();
+    }
+}

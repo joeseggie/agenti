@@ -102,7 +102,7 @@ public static class CashCountEndpoints
             var pending = await cashCountService.GetPendingApprovalsAsync(branchId);
             return Results.Ok(ApiResponse<List<PendingApprovalDto>>.Ok(pending));
         })
-        .RequireAuthorization("CashCountApprove")
+        .RequireAuthorization("CashCountApproveApi")
         .WithName("GetPendingApprovals")
         .WithSummary("Get all pending cash count approvals for a branch");
 
@@ -120,7 +120,7 @@ public static class CashCountEndpoints
                 ? Results.Ok(ApiResponse<CashCountSaveResult>.Ok(result))
                 : Results.BadRequest(ApiResponse<CashCountSaveResult>.Fail(result.ErrorMessage ?? "Failed to approve."));
         })
-        .RequireAuthorization("CashCountApprove")
+        .RequireAuthorization("CashCountApproveApi")
         .WithName("ApproveCashCount")
         .WithSummary("Approve a pending cash count (admin/supervisor only)");
 
@@ -139,7 +139,7 @@ public static class CashCountEndpoints
                 ? Results.Ok(ApiResponse<CashCountSaveResult>.Ok(result))
                 : Results.BadRequest(ApiResponse<CashCountSaveResult>.Fail(result.ErrorMessage ?? "Failed to reject."));
         })
-        .RequireAuthorization("CashCountApprove")
+        .RequireAuthorization("CashCountApproveApi")
         .WithName("RejectCashCount")
         .WithSummary("Reject a pending cash count (admin/supervisor only)");
 

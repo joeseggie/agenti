@@ -25,6 +25,10 @@ using EastSeat.Agenti.Web.Features.PendingTransactions;
 using EastSeat.Agenti.Web.Features.BankRuns;
 using EastSeat.Agenti.Web.Features.Api;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
+using EastSeat.Agenti.Web.Features.CustomerTransactions;
+using EastSeat.Agenti.Web.Features.BankStatements;
+using EastSeat.Agenti.Web.Features.BankReconciliation;
 using MudBlazor.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
@@ -159,6 +163,21 @@ builder.Services.AddScoped<IWalletAdjustmentService, WalletAdjustmentService>();
 builder.Services.AddScoped<ITransactionService, TransactionService>();
 builder.Services.AddScoped<IPendingTransactionService, PendingTransactionService>();
 builder.Services.AddScoped<IBankRunService, BankRunService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddScoped<IBusinessClock, BusinessClock>();
+builder.Services.AddScoped<IBankingAccessService, BankingAccessService>();
+builder.Services.AddScoped<ISessionBalanceService, SessionBalanceService>();
+builder.Services.AddScoped<ISessionSettlementService, SessionSettlementService>();
+builder.Services.AddScoped<IBankSessionWorkflow, BankSessionWorkflow>();
+builder.Services.AddScoped<IBankEvidenceService, BankEvidenceService>();
+builder.Services.AddScoped<ICustomerTransactionService, CustomerTransactionService>();
+builder.Services.Configure<BankEvidenceOptions>(builder.Configuration.GetSection("Banking:Evidence"));
+builder.Services.Configure<BankStatementOptions>(builder.Configuration.GetSection("Banking:Statements"));
+builder.Services.AddSingleton<StatementProfileCatalog>();
+builder.Services.AddScoped<IBankAccountService, BankAccountService>();
+builder.Services.AddScoped<IBankStatementService, BankStatementService>();
+builder.Services.AddScoped<IBankReconciliationService, BankReconciliationService>();
+builder.Services.AddHostedService<StatementImportProcessor>();
 
 // Add vault background service
 builder.Services.AddHostedService<VaultExpirationService>();
@@ -186,7 +205,27 @@ builder.Services.AddAuthorizationBuilder()
     // Cash count approval access (Admin or Supervisor)
     .AddPolicy("CashCountApprove", policy =>
         policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString())
-              .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme));
+              .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme))
+    .AddPolicy("BankReconciliation", policy =>
+        policy.RequireRole(UserRole.Admin.ToString())
+              .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme))
+    .AddPolicy("BankingApi", policy =>
+        policy.RequireAuthenticatedUser().AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme))
+    .AddPolicy("BankReconciliationApi", policy =>
+        policy.RequireRole(UserRole.Admin.ToString()).AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme));
+
+var apiAuthorization = builder.Services.AddAuthorizationBuilder();
+foreach (var policyName in new[] { "VaultView", "VaultAccess", "VaultAdjust", "CashCountApprove" })
+{
+    apiAuthorization.AddPolicy($"{policyName}Api", policy =>
+        policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString())
+            .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme));
+}
+foreach (var policyName in new[] { "VaultApprove", "UserManagement" })
+{
+    apiAuthorization.AddPolicy($"{policyName}Api", policy =>
+        policy.RequireRole(UserRole.Admin.ToString()).AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme));
+}
 
 // Add health checks
 builder.Services.AddHealthChecks()
@@ -344,7 +383,9 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 }).AllowAnonymous();
 
 // Map REST API endpoints (for Android app)
-var apiGroup = app.MapGroup("/api");
+var apiGroup = app.MapGroup("/api").RequireAuthorization("BankingApi");
+apiGroup.MapGroup("/banking").WithTags("Banking").MapBankingApi();
+app.MapBankingEvidence();
 
 apiGroup.MapGroup("/auth")
     .WithTags("Authentication")
@@ -464,3 +505,5 @@ static async Task WriteHealthCheckResponse(HttpContext context, HealthReport rep
 
     await context.Response.WriteAsJsonAsync(result);
 }
+
+public partial class Program { }

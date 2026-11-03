@@ -109,6 +109,8 @@ public class WalletBalanceSummary
 
 public class SessionStatus
 {
+    [JsonPropertyName("balanceBasis")]
+    public string BalanceBasis { get; set; } = "Stored wallet balances";
     [JsonPropertyName("sessionId")]
     public long? SessionId { get; set; }
 
@@ -227,6 +229,11 @@ public class AgentWallet
 
 public class CashSessionListItem
 {
+    [JsonPropertyName("workflowDisplay")]
+    public string WorkflowDisplay { get; set; } = "Legacy";
+
+    [JsonPropertyName("workflowVersion")]
+    public int WorkflowVersion { get; set; } = 1;
     [JsonPropertyName("id")]
     public long Id { get; set; }
 
@@ -260,7 +267,7 @@ public class CashSessionListItem
     [JsonPropertyName("pendingApprovalCount")]
     public int PendingApprovalCount { get; set; }
 
-    public string StatusDisplay => Status switch
+    public string StatusDisplay => WorkflowVersion == 2 ? WorkflowDisplay : Status switch
     {
         1 => "Open",
         0 => "Closed",

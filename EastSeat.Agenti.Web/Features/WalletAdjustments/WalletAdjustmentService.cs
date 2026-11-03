@@ -1,5 +1,6 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Notifications;
 using Microsoft.ApplicationInsights;
@@ -13,6 +14,9 @@ namespace EastSeat.Agenti.Web.Features.WalletAdjustments;
 public class WalletAdjustmentService(
     ApplicationDbContext dbContext,
     INotificationService notificationService,
+    ISessionBalanceService balances,
+    IBusinessClock businessClock,
+    IBankingAccessService bankingAccess,
     TelemetryClient? telemetryClient = null) : IWalletAdjustmentService
 {
     /// <inheritdoc />
@@ -31,16 +35,42 @@ public class WalletAdjustmentService(
 
         var branchId = agent.BranchId.Value;
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var businessDate = businessClock.Today;
+        var requestHash = BankingRequestIdentity.Hash(new
+        {
+            Version = 1, form.WalletId, form.Reason, form.Amount, Notes = form.Notes?.Trim(),
+            OccurredAt = form.OccurredAt?.ToUniversalTime(), BankReference = form.BankReference?.Trim()
+        });
+        if (form.CommandId.HasValue)
+        {
+            var replay = await dbContext.WalletAdjustments.AsNoTracking().SingleOrDefaultAsync(
+                a => a.AgentId == agent.Id && a.CommandId == form.CommandId);
+            if (replay != null)
+                return replay.RequestHash == requestHash
+                    ? WalletAdjustmentSaveResult.Ok(replay.Id)
+                    : WalletAdjustmentSaveResult.Error("This adjustment request identity was already used for different details.");
+        }
 
         // Find today's active session
         var session = await dbContext.CashSessions
-            .Where(s => s.BranchId == branchId && s.SessionDate == today && s.Status == CashSessionStatus.Open)
+            .Where(s => s.BranchId == branchId && s.Status == CashSessionStatus.Open &&
+                ((s.WorkflowVersion == SessionWorkflowVersion.BankReconciliation && s.SessionDate == businessDate) ||
+                 (s.WorkflowVersion == SessionWorkflowVersion.Legacy && s.SessionDate == today)))
             .FirstOrDefaultAsync();
 
         if (session == null)
         {
             return WalletAdjustmentSaveResult.Error("No active cash session found. A session must be open to record adjustments.");
         }
+        var modern = session.WorkflowVersion == SessionWorkflowVersion.BankReconciliation;
+        if (modern && (!form.CommandId.HasValue || form.CommandId == Guid.Empty))
+            return WalletAdjustmentSaveResult.Error("A stable request identity is required for an adjustment.");
+        if (modern && (!form.OccurredAt.HasValue || form.OccurredAt > businessClock.UtcNow ||
+            businessClock.GetBusinessDate(form.OccurredAt.Value) != session.SessionDate))
+            return WalletAdjustmentSaveResult.Error("Enter the adjustment's non-future date and time for this session.");
+        if (modern && (decimal.Round(form.Amount, 2) != form.Amount || form.Amount > 9_999_999_999_999_999.99m ||
+            !Enum.IsDefined(form.Reason) || form.BankReference?.Length > 256 || form.Notes?.Length > 2000))
+            return WalletAdjustmentSaveResult.Error("Check the amount, adjustment reason, reference and notes.");
 
         // Verify agent has an approved opening count in this session
         var hasApprovedOpening = await dbContext.CashCounts
@@ -96,14 +126,26 @@ public class WalletAdjustmentService(
 
         try
         {
+            if (modern)
+            {
+                var actor = await bankingAccess.GetActorAsync(userId);
+                await bankingAccess.RequireTradingSessionAsync(actor, session.Id);
+            }
             // Check amount doesn't exceed effective balance (wallet.Balance - existing non-rejected adjustments)
-            var existingAdjustmentTotal = await dbContext.WalletAdjustments
-                .Where(a => a.CashSessionId == session.Id &&
-                            a.WalletId == form.WalletId &&
-                            a.Status != WalletAdjustmentStatus.Rejected)
-                .SumAsync(a => a.Amount);
-
-            var effectiveBalance = wallet.Balance - existingAdjustmentTotal;
+            decimal effectiveBalance;
+            if (modern)
+            {
+                var positions = await balances.GetPositionsAsync(session.Id, agent.Id, includePendingAdjustments: true);
+                effectiveBalance = positions.SingleOrDefault(p => p.WalletId == wallet.Id)?.AvailableForTransfer
+                    ?? throw new BankingRuleException("The selected wallet is not part of this session's opening allocation.");
+            }
+            else
+            {
+                var existingAdjustmentTotal = await dbContext.WalletAdjustments
+                    .Where(a => a.CashSessionId == session.Id && a.WalletId == form.WalletId &&
+                        a.Status != WalletAdjustmentStatus.Rejected).SumAsync(a => a.Amount);
+                effectiveBalance = wallet.Balance - existingAdjustmentTotal;
+            }
             if (form.Amount > effectiveBalance)
             {
                 await transaction.RollbackAsync();
@@ -122,10 +164,22 @@ public class WalletAdjustmentService(
                 Currency = wallet.Currency,
                 Notes = form.Notes?.Trim(),
                 RecordedByUserId = userId,
-                CreatedAt = DateTimeOffset.UtcNow
+                CreatedAt = businessClock.UtcNow,
+                OccurredAt = form.OccurredAt?.ToUniversalTime(),
+                CommandId = form.CommandId,
+                RequestHash = form.CommandId.HasValue ? requestHash : null,
+                BankReference = form.BankReference?.Trim()
             };
 
             dbContext.WalletAdjustments.Add(adjustment);
+            if (modern)
+            {
+                session.RegisterVersion++;
+                session.Version++;
+                await WorkflowNotifications.AddForBranchAsync(dbContext, branchId, "Wallet adjustment pending approval",
+                    "A recorded wallet adjustment requires approval.", NotificationType.WalletAdjustmentRecorded,
+                    "/cashcount-approvals", businessClock.UtcNow, includeSupervisors: true);
+            }
             await dbContext.SaveChangesAsync();
             adjustmentId = adjustment.Id;
             await transaction.CommitAsync();
@@ -133,6 +187,8 @@ public class WalletAdjustmentService(
         catch
         {
             await transaction.RollbackAsync();
+            if (modern)
+                dbContext.ChangeTracker.Clear();
             throw;
         }
 
@@ -140,12 +196,13 @@ public class WalletAdjustmentService(
         var agentName = agent.User != null ? $"{agent.User.FirstName} {agent.User.LastName}".Trim() : agent.Code;
         var reasonDisplay = GetReasonDisplayText(form.Reason);
 
-        await notificationService.NotifyBranchAdminsAsync(
-            branchId,
-            "Wallet Adjustment Pending Approval",
-            $"{agentName} recorded a {wallet.WalletType?.Name} wallet adjustment of UGX {form.Amount:N0} ({reasonDisplay}) requiring your approval.",
-            NotificationType.WalletAdjustmentRecorded,
-            "/cashcount-approvals");
+        if (!modern)
+            await notificationService.NotifyBranchAdminsAsync(
+                branchId,
+                "Wallet Adjustment Pending Approval",
+                $"{agentName} recorded a {wallet.WalletType?.Name} wallet adjustment of UGX {form.Amount:N0} ({reasonDisplay}) requiring your approval.",
+                NotificationType.WalletAdjustmentRecorded,
+                "/cashcount-approvals");
 
         telemetryClient?.TrackEvent("wallet_adjustment_recorded", new Dictionary<string, string>
         {
@@ -169,6 +226,7 @@ public class WalletAdjustmentService(
         }
 
         var adjustment = await dbContext.WalletAdjustments
+            .Include(a => a.CashSession)
             .Include(a => a.Agent)
                 .ThenInclude(a => a!.User)
             .FirstOrDefaultAsync(a => a.Id == adjustmentId);
@@ -177,6 +235,8 @@ public class WalletAdjustmentService(
         {
             return WalletAdjustmentSaveResult.Error("Wallet adjustment not found.");
         }
+        if (adjustment.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            return await ReviewModernAdjustmentAsync(adminUserId, adjustmentId, approve: true, reason: null);
 
         if (adjustment.Status != WalletAdjustmentStatus.Pending)
         {
@@ -225,6 +285,7 @@ public class WalletAdjustmentService(
         }
 
         var adjustment = await dbContext.WalletAdjustments
+            .Include(a => a.CashSession)
             .Include(a => a.Agent)
                 .ThenInclude(a => a!.User)
             .FirstOrDefaultAsync(a => a.Id == adjustmentId);
@@ -233,6 +294,8 @@ public class WalletAdjustmentService(
         {
             return WalletAdjustmentSaveResult.Error("Wallet adjustment not found.");
         }
+        if (adjustment.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            return await ReviewModernAdjustmentAsync(adminUserId, adjustmentId, approve: false, reason);
 
         if (adjustment.Status != WalletAdjustmentStatus.Pending)
         {
@@ -258,6 +321,87 @@ public class WalletAdjustmentService(
         }
 
         return WalletAdjustmentSaveResult.Ok(adjustmentId);
+    }
+
+    private async Task<WalletAdjustmentSaveResult> ReviewModernAdjustmentAsync(string userId, long adjustmentId, bool approve, string? reason)
+    {
+        var actor = await bankingAccess.GetActorAsync(userId);
+        if (actor.Role is not (UserRole.Admin or UserRole.Supervisor))
+            throw new UnauthorizedAccessException("Opening and wallet-adjustment approval requires an administrator or supervisor.");
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+        try
+        {
+            var adjustment = await dbContext.WalletAdjustments.Include(a => a.CashSession).Include(a => a.Agent)
+                .SingleAsync(a => a.Id == adjustmentId);
+            await dbContext.Entry(adjustment).ReloadAsync();
+            await dbContext.Entry(adjustment.CashSession!).ReloadAsync();
+            if (adjustment.CashSession!.BranchId != actor.BranchId)
+                throw new UnauthorizedAccessException("This adjustment belongs to a different branch.");
+            if (adjustment.RecordedByUserId == actor.UserId || adjustment.Agent?.UserId == actor.UserId)
+                throw new UnauthorizedAccessException("You cannot review your own wallet adjustment.");
+            var target = approve ? WalletAdjustmentStatus.Approved : WalletAdjustmentStatus.Rejected;
+            if (adjustment.Status == target && (approve || adjustment.RejectionReason == reason?.Trim()))
+            {
+                await transaction.CommitAsync();
+                return WalletAdjustmentSaveResult.Ok(adjustment.Id);
+            }
+            if (adjustment.Status != WalletAdjustmentStatus.Pending)
+                throw new BankingConflictException("This adjustment has already been reviewed. Refresh its status.");
+            adjustment.Status = target;
+            if (approve)
+            {
+                adjustment.ApprovedByUserId = actor.UserId;
+                adjustment.ApprovedAt = businessClock.UtcNow;
+            }
+            else
+            {
+                adjustment.RejectedByUserId = actor.UserId;
+                adjustment.RejectedAt = businessClock.UtcNow;
+                adjustment.RejectionReason = reason!.Trim();
+            }
+            await TouchModernSessionAsync(adjustment.CashSessionId, adjustment.Id, actor.UserId);
+            WorkflowNotifications.AddForUser(dbContext, adjustment.Agent!.UserId,
+                approve ? "Wallet adjustment approved" : "Wallet adjustment rejected",
+                approve ? "Your recorded wallet adjustment has been approved." : "Your recorded wallet adjustment was rejected; review the explanation.",
+                NotificationType.WalletAdjustmentRecorded, "/cashcount", businessClock.UtcNow);
+            await dbContext.SaveChangesAsync();
+            await transaction.CommitAsync();
+            return WalletAdjustmentSaveResult.Ok(adjustment.Id);
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            dbContext.ChangeTracker.Clear();
+            throw;
+        }
+    }
+
+    private async Task TouchModernSessionAsync(long sessionId, long adjustmentId, string userId)
+    {
+        var session = await dbContext.CashSessions.SingleAsync(s => s.Id == sessionId);
+        if (session.WorkflowVersion != SessionWorkflowVersion.BankReconciliation)
+            return;
+        session.RegisterVersion++;
+        session.Version++;
+        var reviews = await dbContext.BankReconciliationReviews.Where(r =>
+                dbContext.BankReconciliationResults.Any(result => result.ReviewId == r.Id && result.CashSessionId == sessionId))
+            .ToListAsync();
+        foreach (var review in reviews)
+        {
+            review.Version++;
+            if (review.Status is BankReconciliationStatus.Reconciled or BankReconciliationStatus.WithExceptions)
+            {
+                review.Status = BankReconciliationStatus.NeedsReview;
+                dbContext.BankReconciliationDecisions.Add(new BankReconciliationDecision
+                {
+                    BankAccountId = review.BankAccountId, ReviewId = review.Id, CashSessionId = sessionId,
+                    Kind = ReconciliationDecisionKind.ReviewInvalidated,
+                    DetailsJson = System.Text.Json.JsonSerializer.Serialize(new { WalletAdjustmentId = adjustmentId }),
+                    Reason = "A wallet adjustment decision changed the session's expected positions.",
+                    PerformedByUserId = userId, PerformedAt = businessClock.UtcNow
+                });
+            }
+        }
     }
 
     /// <inheritdoc />
@@ -321,8 +465,11 @@ public class WalletAdjustmentService(
         }
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var businessDate = businessClock.Today;
         var session = await dbContext.CashSessions
-            .Where(s => s.BranchId == agent.BranchId.Value && s.SessionDate == today && s.Status == CashSessionStatus.Open)
+            .Where(s => s.BranchId == agent.BranchId.Value &&
+                ((s.WorkflowVersion == SessionWorkflowVersion.BankReconciliation && s.SessionDate == businessDate) ||
+                 (s.WorkflowVersion == SessionWorkflowVersion.Legacy && s.SessionDate == today && s.Status == CashSessionStatus.Open)))
             .FirstOrDefaultAsync();
 
         if (session == null)

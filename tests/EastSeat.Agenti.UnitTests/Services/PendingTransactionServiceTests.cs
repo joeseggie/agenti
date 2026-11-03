@@ -94,6 +94,28 @@ public class PendingTransactionServiceTests : IDisposable
     #region RecordPendingTransactionAsync Tests
 
     [Fact]
+    public async Task RecordPendingTransactionAsync_AfterMidnightEat_DoesNotFallBackToOpenModernSession()
+    {
+        _testSession.WorkflowVersion = SessionWorkflowVersion.BankReconciliation;
+        await _dbContext.SaveChangesAsync();
+        var clock = new Moq.Mock<EastSeat.Agenti.Shared.Services.IBusinessClock>();
+        clock.SetupGet(c => c.Today).Returns(_testSession.SessionDate.AddDays(1));
+        var sut = new PendingTransactionService(_dbContext, businessClock: clock.Object);
+
+        var result = await sut.RecordPendingTransactionAsync(_testUser.Id, new PendingTransactionFormModel
+        {
+            WalletId = _testWallet.Id,
+            Type = PendingTransactionType.OutboundTransferFailed,
+            Amount = 50_000m,
+            CustomerAccountNumber = "0771234567",
+            Notes = "Failed deposit recorded after midnight"
+        });
+
+        result.Success.Should().BeFalse();
+        (await _dbContext.PendingTransactions.AnyAsync()).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task RecordPendingTransactionAsync_WithValidData_ReturnsSuccess()
     {
         var form = new PendingTransactionFormModel

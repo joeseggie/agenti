@@ -1,5 +1,6 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.ApplicationInsights;
 using Microsoft.EntityFrameworkCore;
@@ -11,7 +12,8 @@ namespace EastSeat.Agenti.Web.Features.PendingTransactions;
 /// </summary>
 public class PendingTransactionService(
     ApplicationDbContext dbContext,
-    TelemetryClient? telemetryClient = null) : IPendingTransactionService
+    TelemetryClient? telemetryClient = null,
+    IBusinessClock? businessClock = null) : IPendingTransactionService
 {
     /// <inheritdoc />
     public async Task<PendingTransactionSaveResult> RecordPendingTransactionAsync(
@@ -30,9 +32,20 @@ public class PendingTransactionService(
 
         var branchId = agent.BranchId.Value;
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var businessToday = (businessClock ?? new BusinessClock(TimeProvider.System)).Today;
 
-        var session = await dbContext.CashSessions
-            .Where(s => s.BranchId == branchId && s.SessionDate == today && s.Status == CashSessionStatus.Open)
+        var session = await dbContext.CashSessions.FirstOrDefaultAsync(s => s.BranchId == branchId &&
+            s.SessionDate == businessToday && s.WorkflowVersion == SessionWorkflowVersion.BankReconciliation);
+        if (session?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+        {
+            if (form.Type != PendingTransactionType.SelfLiquidationFailed)
+                return PendingTransactionSaveResult.Error("Record customer failures in the customer transaction register, including the actual cash and bank movements.");
+            if (session.OperationalClosedAt.HasValue || session.Status != CashSessionStatus.Open)
+                return PendingTransactionSaveResult.Error("This session is operationally closed.");
+        }
+        session ??= await dbContext.CashSessions
+            .Where(s => s.BranchId == branchId && s.SessionDate == today && s.Status == CashSessionStatus.Open &&
+                        s.WorkflowVersion == SessionWorkflowVersion.Legacy)
             .FirstOrDefaultAsync();
 
         if (session == null)
@@ -101,6 +114,11 @@ public class PendingTransactionService(
         if (pendingTransaction == null)
         {
             return PendingTransactionSaveResult.Error("Pending transaction not found.");
+        }
+        if (pendingTransaction.CustomerTransactionId.HasValue)
+        {
+            return PendingTransactionSaveResult.Error(
+                "This banking case uses linked transaction events. Update it through the customer transaction workflow.");
         }
 
         // Authorization: only the recording agent or an Admin/Supervisor of the same branch can update
@@ -316,6 +334,7 @@ public class PendingTransactionService(
 
     private static PendingTransactionDto MapToDto(PendingTransaction t) => new()
     {
+        CustomerTransactionId = t.CustomerTransactionId,
         Id = t.Id,
         WalletId = t.WalletId,
         WalletName = t.Wallet != null ? t.Wallet.Name : "Unknown",

@@ -7,6 +7,11 @@ namespace EastSeat.Agenti.Web.Features.CashSessions;
 /// </summary>
 public class CashSessionListItemDto
 {
+    public SessionWorkflowVersion WorkflowVersion { get; set; } = SessionWorkflowVersion.Legacy;
+    public DateTimeOffset? OperationalClosedAt { get; set; }
+    public decimal? TotalReportedClosingAmount { get; set; }
+    public string WorkflowDisplay => WorkflowVersion == SessionWorkflowVersion.Legacy ? "Legacy" :
+        OperationalClosedAt.HasValue ? AllClosingCountsApproved ? "Trading ended; approval recorded" : "Trading ended; awaiting bank review" : "Bank reconciliation";
     public long Id { get; set; }
     public DateOnly SessionDate { get; set; }
     public CashSessionStatus Status { get; set; }
@@ -25,6 +30,9 @@ public class CashSessionListItemDto
 /// </summary>
 public class CashSessionDetailDto
 {
+    public SessionWorkflowVersion WorkflowVersion { get; set; } = SessionWorkflowVersion.Legacy;
+    public DateTimeOffset? OperationalClosedAt { get; set; }
+    public decimal? TotalReportedClosingAmount { get; set; }
     public long Id { get; set; }
     public DateOnly SessionDate { get; set; }
     public CashSessionStatus Status { get; set; }
@@ -40,13 +48,14 @@ public class CashSessionDetailDto
 /// </summary>
 public class AgentSessionSummaryDto
 {
+    public SessionWorkflowVersion WorkflowVersion { get; set; } = SessionWorkflowVersion.Legacy;
     public long AgentId { get; set; }
     public string AgentName { get; set; } = string.Empty;
     public string AgentCode { get; set; } = string.Empty;
     public CashCountSummaryDto? OpeningCount { get; set; }
     public CashCountSummaryDto? ClosingCount { get; set; }
     public decimal TotalAdjustments { get; set; }
-    public decimal? Variance => ClosingCount != null && OpeningCount != null
+    public decimal? Variance => WorkflowVersion == SessionWorkflowVersion.Legacy && ClosingCount != null && OpeningCount != null
         ? ClosingCount.TotalAmount - (OpeningCount.TotalAmount - TotalAdjustments)
         : null;
     public bool HasDiscrepancy => Variance.HasValue && Variance.Value != 0;
@@ -73,6 +82,7 @@ public class CashCountSummaryDto
 /// </summary>
 public class WalletCountSummaryDto
 {
+    public DateTimeOffset? ObservedAt { get; set; }
     public long WalletId { get; set; }
     public string WalletName { get; set; } = string.Empty;
     public string WalletTypeName { get; set; } = string.Empty;

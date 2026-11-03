@@ -13,6 +13,7 @@ public class WalletCountEntryDto
     public bool SupportsDenominations { get; set; }
     public decimal ExpectedBalance { get; set; }
     public decimal CountedAmount { get; set; }
+    public DateTimeOffset? ObservedAt { get; set; }
     public DenominationBreakdown? Denominations { get; set; }
 }
 
@@ -26,16 +27,17 @@ public class CashCountFormModel
     public bool IsOpening { get; set; }
     public DateOnly? CountDate { get; set; }
     public string? Explanation { get; set; }
+    public bool IsReadOnly { get; set; }
     public List<WalletCountEntryDto> WalletEntries { get; set; } = [];
 
     /// <summary>
-    /// For opening counts: the total of the agent's most recent approved closing count.
-    /// Null when the agent has no prior closing count (first ever opening count).
+    /// For legacy opening counts: the total of the agent's most recent approved closing count.
+    /// Null without a prior approved closing or when the workflow uses operational snapshots.
     /// </summary>
     public decimal? PreviousClosingTotal { get; set; }
 
     /// <summary>
-    /// For opening counts: the date of the most recent approved closing count.
+    /// For legacy opening counts: the date of the most recent approved closing count.
     /// </summary>
     public DateOnly? PreviousClosingDate { get; set; }
 
@@ -81,6 +83,10 @@ public class CashCountSaveResult
 /// </summary>
 public class CurrentSessionDto
 {
+    public SessionWorkflowVersion WorkflowVersion { get; set; } = SessionWorkflowVersion.Legacy;
+    public bool CanRecordCustomerTransactions { get; set; }
+    public long? CorrectionRequestId { get; set; }
+    public DateTimeOffset? ServerTime { get; set; }
     public long? SessionId { get; set; }
     public DateOnly? SessionDate { get; set; }
     public string StatusText { get; set; } = "No Active Session";
@@ -109,6 +115,7 @@ public class CurrentSessionDto
 /// </summary>
 public class PendingApprovalDto
 {
+    public SessionWorkflowVersion WorkflowVersion { get; set; } = SessionWorkflowVersion.Legacy;
     public long CashCountId { get; set; }
     public long CashSessionId { get; set; }
     public DateOnly SessionDate { get; set; }

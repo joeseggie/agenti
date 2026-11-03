@@ -33,4 +33,12 @@
     <ProjectReference Include="..\..\EastSeat.Agenti.Web\EastSeat.Agenti.Web.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\..\EastSeat.Agenti.Android\Models\ApiModels.cs" Link="Android\ApiModels.cs" />
+    <Compile Include="..\..\EastSeat.Agenti.Android\Services\IAccessTokenProvider.cs" Link="Android\IAccessTokenProvider.cs" />
+    <Compile Include="..\..\EastSeat.Agenti.Android\Services\AuthenticatedApiHandler.cs" Link="Android\AuthenticatedApiHandler.cs" />
+    <Compile Include="..\..\EastSeat.Agenti.Android\Services\IBankingApiClient.cs" Link="Android\IBankingApiClient.cs" />
+    <Compile Include="..\..\EastSeat.Agenti.Android\Services\BankingApiClient.cs" Link="Android\BankingApiClient.cs" />
+  </ItemGroup>
+
 </Project>

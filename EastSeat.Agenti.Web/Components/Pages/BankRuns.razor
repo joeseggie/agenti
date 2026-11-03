@@ -4,12 +4,15 @@
 @using EastSeat.Agenti.Web.Features.BankRuns
 @using EastSeat.Agenti.Web.Features.CashCounts
 @using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Shared.Services
 @attribute [Authorize]
 @rendermode InteractiveServer
 @inject IBankRunService BankRunService
 @inject ICashCountService CashCountService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ISnackbar Snackbar
+@inject IBusinessClock BusinessClock
+@inject ILogger<BankRuns> Logger
 
 <PageTitle>Bank Runs - Agenti</PageTitle>
 
@@ -153,6 +156,12 @@
                                       @bind-Value="_formModel.ReceiptNumber"
                                       HelperText="Bank deposit slip or receipt number." />
                     </MudItem>
+                    @if (_currentSession?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+                    {
+                        <MudItem xs="12">
+                            <MudTextField T="string" Label="Receipt date/time (Uganda)" @bind-Value="_receiptTime" Placeholder="yyyy-MM-dd HH:mm:ss" />
+                        </MudItem>
+                    }
                     <MudItem xs="12">
                         <MudText Typo="Typo.body2" Class="mb-1">Bank Deposit Slip / Receipt Image</MudText>
                         <InputFile id="receiptImageInput" OnChange="OnReceiptImageSelected" accept="image/*" style="display:none" />
@@ -212,6 +221,7 @@
     private string? _errorMessage;
     private MudForm? _form;
     private BankRunFormModel _formModel = new();
+    private string _receiptTime = string.Empty;
     private string? _userId;
     private CurrentSessionDto? _currentSession;
 
@@ -266,7 +276,8 @@
 
     private async Task OpenRecordDialog()
     {
-        _formModel = new BankRunFormModel();
+        _formModel = new BankRunFormModel { CommandId = Guid.NewGuid() };
+        _receiptTime = BusinessTimeText.Format(BusinessClock.UtcNow);
         _receiptImageFileName = null;
         _receiptImageDataUrl = null;
         _errorMessage = null;
@@ -284,8 +295,10 @@
             _cashWallet = cashWallets.Select(w => new WalletEntry(w.Id, w.Name, w.Balance)).FirstOrDefault();
             _walletTypeOptions = await BankRunService.GetAgentNonCashWalletTypesAsync(_userId);
         }
-        catch
+        catch (Exception exception)
         {
+            Logger.LogError("Bank-run wallets failed to load with {ExceptionType}.", exception.GetType().Name);
+            _errorMessage = "Wallet balances could not be loaded. Refresh before recording a bank run.";
             _cashWallet = null;
             _walletTypeOptions = [];
         }
@@ -333,6 +346,8 @@
 
         try
         {
+            if (_currentSession?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+                _formModel.OccurredAt = BusinessTimeText.Parse(_receiptTime);
             var result = await BankRunService.RecordBankRunAsync(_userId!, _formModel);
             if (result.Success)
             {
@@ -345,6 +360,15 @@
             {
                 _errorMessage = result.ErrorMessage;
             }
+        }
+        catch (BankingRuleException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError("Bank-run save failed with {ExceptionType}.", exception.GetType().Name);
+            _errorMessage = "The request could not be confirmed. Refresh the register before retrying; your form is retained.";
         }
         finally
         {

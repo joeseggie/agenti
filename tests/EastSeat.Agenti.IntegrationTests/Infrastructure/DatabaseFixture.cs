@@ -20,7 +20,7 @@ public class DatabaseFixture : IAsyncLifetime
         var testPassword = Environment.GetEnvironmentVariable("TEST_DB_PASSWORD") ?? "test_container_pwd_" + Guid.NewGuid().ToString("N")[..8];
         
         _container = new PostgreSqlBuilder()
-            .WithImage("postgres:17")
+            .WithImage("postgres:16-alpine")
             .WithDatabase("agenti_test")
             .WithUsername("testuser")
             .WithPassword(testPassword)

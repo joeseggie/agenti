@@ -5,6 +5,7 @@
 @using EastSeat.Agenti.Shared.Domain.Enums
 @using EastSeat.Agenti.Web.Features.WalletAdjustments
 @using EastSeat.Agenti.Web.Features.Transactions
+@using EastSeat.Agenti.Shared.Services
 @attribute [Authorize]
 @rendermode InteractiveServer
 @inject ICashCountService CashCountService
@@ -13,6 +14,7 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
+@inject IBusinessClock BusinessClock
 
 <PageTitle>Cash Count - Agenti</PageTitle>
 
@@ -62,8 +64,14 @@
         @if (_currentSession?.HasPendingApproval == true)
         {
             <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mt-4">
-                You have a cash count pending admin approval. You can still edit it and save as draft or
-                re-submit it for approval until the admin acts on it.
+                @if (_currentSession.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+                {
+                    <span>Submitted closing observations are locked. Older closing reviews do not block the next day's opening approval.</span>
+                }
+                else
+                {
+                    <span>You have a cash count pending admin approval. You can still edit it and save as draft or re-submit it until the admin acts.</span>
+                }
             </MudAlert>
         }
 
@@ -108,6 +116,14 @@
                     }
                 </MudStack>
             </MudPaper>
+            @if (_currentSession?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            {
+                <MudButton Href="/customer-transactions" Variant="Variant.Outlined" Color="Color.Primary" Class="mt-3">Customer register and case follow-ups</MudButton>
+                @if (_currentSession.CorrectionRequestId.HasValue)
+                {
+                    <MudButton Href="@($"/customer-transactions?correctionId={_currentSession.CorrectionRequestId}")" Color="Color.Warning" Class="mt-3">Open requested historical correction</MudButton>
+                }
+            }
         }
 
         <!-- Action Buttons -->
@@ -271,6 +287,10 @@
                         <MudTh Style="text-align: right;">Expected (UGX)</MudTh>
                     }
                     <MudTh Style="text-align: right;">Counted (UGX)</MudTh>
+                    @if (_currentSession?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+                    {
+                        <MudTh>Balance observed (Uganda)</MudTh>
+                    }
                     <MudTh Style="width: 50px;"></MudTh>
                 </HeaderContent>
                 <RowTemplate>
@@ -296,6 +316,14 @@
                                 Style="max-width: 160px; display: inline-flex;" HideSpinButtons="true" />
                         }
                     </MudTd>
+                    @if (_currentSession?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+                    {
+                        <MudTd DataLabel="Observed at">
+                            <MudTextField T="string" Value="@ObservationText(context)" ValueChanged="@((string value) => SetObservation(context, value))"
+                                Placeholder="yyyy-MM-dd HH:mm:ss" Margin="Margin.Dense" />
+                            <MudButton Size="Size.Small" OnClick="@(() => ObserveNow(context))">Confirm observed now</MudButton>
+                        </MudTd>
+                    }
                     <MudTd Style="text-align: center;">
                         @if (context.SupportsDenominations)
                         {
@@ -424,12 +452,14 @@
             }
 
             <!-- Explanation field for closing counts with discrepancy -->
-            @if (!_countForm.IsOpening && _countForm.TotalVariance != 0)
+            @if (!_countForm.IsOpening && (_currentSession?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation
+                ? _countForm.WalletEntries.Any(w => w.CountedAmount != w.ExpectedBalance)
+                : _countForm.TotalVariance != 0))
             {
                 <MudTextField @bind-Value="_countForm.Explanation"
-                    Label="@(_countForm.TotalVariance > 0 ? "Explanation for surplus" : "Explanation for shortage")"
+                    Label="@(_countForm.TotalVariance == 0 ? "Explanation for wallet differences" : _countForm.TotalVariance > 0 ? "Explanation for surplus" : "Explanation for shortage")"
                     Variant="Variant.Outlined" Lines="3" Class="mt-3"
-                    HelperText="Required: explain the difference between opening and closing amounts"
+                    HelperText="Required: explain the difference between expected and counted amounts"
                     Required="true" RequiredError="Explanation is required when there is a discrepancy" />
             }
 
@@ -577,6 +607,10 @@
                   ?? await CashCountService.InitializeCashCountFormAsync(_userId, isOpening)
                 : await CashCountService.InitializeCashCountFormAsync(_userId, isOpening);
 
+            _observationTimes.Clear();
+            foreach (var wallet in _countForm.WalletEntries)
+                _observationTimes[wallet.WalletId] = wallet.ObservedAt.HasValue ? BusinessTimeText.Format(wallet.ObservedAt.Value) : string.Empty;
+
             _isCountingMode = true;
         }
         finally
@@ -591,6 +625,19 @@
         _isCountingMode = false;
         _countForm = null;
         _expandedWalletIds.Clear();
+    }
+
+    private readonly Dictionary<long, string> _observationTimes = [];
+    private string ObservationText(WalletCountEntryDto wallet) => _observationTimes.GetValueOrDefault(wallet.WalletId, string.Empty);
+    private void SetObservation(WalletCountEntryDto wallet, string value)
+    {
+        _observationTimes[wallet.WalletId] = value;
+        wallet.ObservedAt = BusinessTimeText.TryParse(value, out var instant) ? instant : null;
+    }
+    private void ObserveNow(WalletCountEntryDto wallet)
+    {
+        wallet.ObservedAt = BusinessClock.UtcNow;
+        _observationTimes[wallet.WalletId] = BusinessTimeText.Format(wallet.ObservedAt.Value);
     }
 
     private void ToggleDenominationRow(long walletId)

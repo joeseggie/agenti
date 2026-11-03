@@ -1,0 +1,316 @@
+@page "/bank-reconciliation"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Shared.Services
+@using EastSeat.Agenti.Web.Features.BankReconciliation
+@using EastSeat.Agenti.Web.Features.BankStatements
+@using EastSeat.Agenti.Web.Features.CashSessions
+@inherits BankingPageBase
+@attribute [Authorize(Policy = "BankReconciliation")]
+@rendermode InteractiveServer
+@inject IBankReconciliationService Reconciliation
+@inject IBankAccountService Accounts
+@inject IBankEvidenceService Evidence
+@inject IBankingAccessService Access
+@inject ICashSessionService Sessions
+@inject IBusinessClock Clock
+@inject Microsoft.Extensions.Options.IOptions<BankEvidenceOptions> EvidenceOptions
+
+<PageTitle>Bank Reconciliation - Agenti</PageTitle>
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudStack Row="true" Justify="Justify.SpaceBetween">
+        <MudText Typo="Typo.h4">Bank reconciliation</MudText>
+        <MudButton Href="/bank-statements">Bank statements</MudButton>
+        <MudButton OnClick="RefreshAsync" Disabled="Busy">Refresh</MudButton>
+    </MudStack>
+    <MudText Class="my-2">Admin-only review. Approval certifies frozen observations and never repeats an old vault allocation.</MudText>
+    @if (Error != null) { <MudAlert Severity="Severity.Error" Class="my-3">@Error</MudAlert> }
+    @if (Busy) { <MudProgressLinear Indeterminate="true" Class="my-3" /> }
+    <MudPaper Class="pa-4 my-3" Outlined="true">
+        <MudGrid>
+            <MudItem xs="12" sm="4">
+                <MudSelect T="long" Label="Account" Value="_accountId" ValueChanged="SelectAccountAsync" Disabled="Busy">
+                    @foreach (var account in _accounts) { <MudSelectItem T="long" Value="@account.Id">@account.BankName - @account.AccountIdentifier</MudSelectItem> }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3"><MudTextField T="string" Label="From session date (yyyy-MM-dd)" @bind-Value="_from" Disabled="Busy" /></MudItem>
+            <MudItem xs="12" sm="3"><MudTextField T="string" Label="Through session date (yyyy-MM-dd)" @bind-Value="_to" Disabled="Busy" /></MudItem>
+            <MudItem xs="12" sm="2"><MudButton OnClick="CreateAsync" Disabled="@(Busy || _accountId == 0)" Color="Color.Primary" Variant="Variant.Filled">Start review</MudButton></MudItem>
+        </MudGrid>
+        <MudText Typo="Typo.caption">Choose a daily, weekly, or monthly date range. Each included session keeps its own approval and exceptions.</MudText>
+        <MudSelect T="long" Label="Existing review" Value="_reviewId" ValueChanged="OpenReviewAsync" Disabled="Busy">
+            @foreach (var review in _reviews)
+            {
+                <MudSelectItem T="long" Value="@review.Id">#@review.Id @review.FromDate to @review.ToDate - @review.Status</MudSelectItem>
+            }
+        </MudSelect>
+    </MudPaper>
+    @if (Loaded && Error == null && _accounts.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">Register a bank account and prepare statement evidence before reviewing sessions.</MudAlert>
+    }
+    @if (_review != null)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Class="my-3">
+            <MudText Typo="Typo.h5">Review #@_review.Id - @_review.Status</MudText>
+            <MudButton OnClick="AutoMatchAsync" Disabled="Busy" Color="Color.Primary" Variant="Variant.Outlined">Match unique exact entries</MudButton>
+        </MudStack>
+        @foreach (var issue in _review.PeriodIssues) { <MudAlert Severity="Severity.Warning" Class="my-2">@issue</MudAlert> }
+        @foreach (var session in _review.Sessions)
+        {
+            <MudPaper Class="pa-4 my-3" Outlined="true">
+                <MudText Typo="Typo.h6">@session.SessionDate - session #@session.CashSessionId</MudText>
+                <MudText>Closing approval: @session.ApprovalStatus; reconciliation: @session.Status</MudText>
+                <MudText Typo="Typo.body2">Statement bank closing: @(session.StatementClosingBalance?.ToString("N2") ?? "Not established"); reported bank closing: @(session.ReportedBankClosingBalance?.ToString("N2") ?? "-"); explained timing difference: @session.ExplainedBankDifference.ToString("N2"); unexplained: @(session.UnexplainedBankDifference?.ToString("N2") ?? "-")</MudText>
+                @foreach (var issue in session.BlockingReasons) { <MudText Color="Color.Error">@issue</MudText> }
+                @foreach (var note in session.Notes) { <MudText Color="Color.Warning">@note</MudText> }
+                <MudTable T="WalletReconciliationDto" Items="session.Wallets" Dense="true" Class="my-2">
+                    <HeaderContent><MudTh>Wallet</MudTh><MudTh>Opening</MudTh><MudTh>Register expected</MudTh><MudTh>Explained bank adjustments</MudTh><MudTh>Expected close</MudTh><MudTh>Reported close</MudTh><MudTh>Variance</MudTh></HeaderContent>
+                    <RowTemplate Context="wallet">
+                        <MudTd>@wallet.WalletName</MudTd><MudTd>@wallet.Opening.ToString("N2")</MudTd>
+                        <MudTd>@wallet.RegisterExpected.ToString("N2")</MudTd><MudTd>@wallet.BankAdjustments.ToString("N2")</MudTd>
+                        <MudTd>@wallet.ExpectedClosing.ToString("N2")</MudTd><MudTd>@wallet.ReportedClosing.ToString("N2")</MudTd>
+                        <MudTd>@wallet.Variance.ToString("N2")</MudTd>
+                    </RowTemplate>
+                </MudTable>
+                @foreach (var adjustment in session.Adjustments)
+                {
+                    <MudText Typo="Typo.caption">@adjustment.Kind: @adjustment.Amount.ToString("N2") - @adjustment.Explanation</MudText>
+                }
+                <MudButton OnClick="@(() => ApproveAsync(session))" Disabled="@(Busy || !session.CanApprove)" Color="Color.Success" Variant="Variant.Filled" Class="mr-2">
+                    Approve against this evidence
+                </MudButton>
+                <MudButton OnClick="@(() => SelectCorrection(session))" Disabled="@(Busy || !session.ClosingCountId.HasValue)">Request historical correction</MudButton>
+            </MudPaper>
+        }
+        <MudGrid Class="my-4">
+            <MudItem xs="12" md="6">
+                <MudText Typo="Typo.h6">Bank occurrences</MudText>
+                <MudSelect T="long" Label="Selected bank occurrence" @bind-Value="_bankId" Disabled="Busy">
+                    @foreach (var bank in _review.BankEntries)
+                    {
+                        <MudSelectItem T="long" Value="@bank.Id">#@bank.Id @bank.SignedAmount.ToString("N2") @bank.TransactionNumber / @bank.Reference</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudTable T="BankLedgerItemDto" Items="_review.BankEntries" Dense="true">
+                    <HeaderContent><MudTh>ID / posted</MudTh><MudTh>Reference / customer</MudTh><MudTh>Movement</MudTh><MudTh>Disposition</MudTh></HeaderContent>
+                    <RowTemplate>
+                        <MudTd>#@context.Id<br />@UgandaTime(context.LedgerAt)</MudTd>
+                        <MudTd>@context.TransactionNumber / @context.Reference<br />@context.CustomerIdentifier<br />@context.Narration</MudTd>
+                        <MudTd>@context.SignedAmount.ToString("N2")</MudTd>
+                        <MudTd>@context.Classification<br /><MudLink Href="@($"/banking-evidence/{context.EvidenceFileId}")" Target="_blank">Source</MudLink></MudTd>
+                    </RowTemplate>
+                    <PagerContent><MudTablePager /></PagerContent>
+                </MudTable>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudText Typo="Typo.h6">Register / expected case settlements</MudText>
+                <MudSelect T="string" Label="Selected register source" @bind-Value="_legKey" Disabled="Busy">
+                    @foreach (var leg in _review.RegisterEntries)
+                    {
+                        <MudSelectItem T="string" Value="@LegKey(leg)">@leg.Kind #@leg.Id - @leg.SignedAmount.ToString("N2") @leg.Reference</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudTable T="BankLegDto" Items="_review.RegisterEntries" Dense="true">
+                    <HeaderContent><MudTh>Source</MudTh><MudTh>Time / reference</MudTh><MudTh>Amount</MudTh><MudTh>Customer case</MudTh></HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.Kind #@context.Id</MudTd><MudTd>@UgandaTime(context.OccurredAt)<br />@context.Reference</MudTd>
+                        <MudTd>@context.SignedAmount.ToString("N2") @(context.PendingApproval ? "(approval pending)" : "")</MudTd>
+                        <MudTd>
+                            @if (context.CustomerTransactionId.HasValue) { <MudLink Href="@($"/customer-transactions/{context.CustomerTransactionId}")">#@context.CustomerTransactionId</MudLink> }
+                        </MudTd>
+                    </RowTemplate>
+                    <PagerContent><MudTablePager /></PagerContent>
+                </MudTable>
+            </MudItem>
+        </MudGrid>
+        <MudPaper Class="pa-4 my-3" Outlined="true">
+            <MudText Typo="Typo.h6">Manual match / bank-only classification</MudText>
+            <MudTextField T="string" Label="Evidence-based decision reason" @bind-Value="_reason" Lines="2" Disabled="Busy" />
+            <MudNumericField T="long?" Label="Related case movement ID, if several reversals could apply" @bind-Value="_relatedMovementId" />
+            <MudButton OnClick="MatchAsync" Disabled="@(Busy || _bankId == 0 || string.IsNullOrEmpty(_legKey))" Color="Color.Primary">Match selected pair</MudButton>
+            <MudSelect T="BankTransactionClassification" Label="Bank-only classification" @bind-Value="_classification">
+                @foreach (var classification in Enum.GetValues<BankTransactionClassification>()) { <MudSelectItem T="BankTransactionClassification" Value="@classification">@classification</MudSelectItem> }
+            </MudSelect>
+            <MudNumericField T="long" Label="Evidence file ID (use source file or uploaded proof)" @bind-Value="_evidenceId" Min="0" />
+            <InputFile OnChange="UploadProofAsync" accept=".jpg,.jpeg,.png,.pdf" disabled="@Busy" />
+            <MudButton OnClick="ClassifyAsync" Disabled="@(Busy || _bankId == 0)" Color="Color.Secondary">Save classification</MudButton>
+            <MudSelect T="long" Label="Existing match to remove" @bind-Value="_matchId">
+                @foreach (var match in _review.Matches) { <MudSelectItem T="long" Value="@match.Id">#@match.Id: bank #@match.BankTransactionId to @match.Kind #@match.SourceId</MudSelectItem> }
+            </MudSelect>
+            <MudButton OnClick="UnmatchAsync" Disabled="@(Busy || _matchId == 0)" Color="Color.Warning">Remove match with audit reason</MudButton>
+        </MudPaper>
+        <MudPaper Class="pa-4 my-3" Outlined="true">
+            <MudText Typo="Typo.h6">Document an exception</MudText>
+            <MudSelect T="long" Label="Affected session" @bind-Value="_exception.CashSessionId">
+                @foreach (var session in _review.Sessions) { <MudSelectItem T="long" Value="@session.CashSessionId">@session.SessionDate (#@session.CashSessionId)</MudSelectItem> }
+            </MudSelect>
+            <MudSelect T="BankExceptionKind" Label="Exception type" @bind-Value="_exception.Kind">
+                @foreach (var kind in Enum.GetValues<BankExceptionKind>()) { <MudSelectItem T="BankExceptionKind" Value="@kind">@kind</MudSelectItem> }
+            </MudSelect>
+            <MudNumericField T="decimal" Label="Affected amount" @bind-Value="_exception.Amount" Min="0.01m" />
+            <MudCheckBox T="bool" @bind-Value="_useBank" Label="Tie to the selected bank occurrence" />
+            <MudCheckBox T="bool" @bind-Value="_useLeg" Label="Tie to the selected register source / case settlement" />
+            <MudNumericField T="long?" Label="Customer case ID, if not selected above" @bind-Value="_exception.CustomerTransactionId" />
+            <MudCheckBox T="bool" @bind-Value="_exception.BankExplanationVerified" Label="I verified the bank's explanation against the attached evidence" />
+            @if (_exception.Kind == BankExceptionKind.PostingDelay)
+            {
+                <MudSelect T="bool?" Label="Does the reported closing balance already include the delayed posting?" @bind-Value="_exception.ReflectedInClosingBalance">
+                    <MudSelectItem T="bool?" Value="@((bool?)true)">Yes</MudSelectItem>
+                    <MudSelectItem T="bool?" Value="@((bool?)false)">No</MudSelectItem>
+                </MudSelect>
+            }
+            <MudTextField T="string" Label="Exception explanation" @bind-Value="_exception.Explanation" Lines="3" />
+            <MudText Typo="Typo.body2">Uses evidence file #@_evidenceId selected or uploaded above.</MudText>
+            <MudButton OnClick="RecordExceptionAsync" Disabled="Busy" Color="Color.Warning">Record exception</MudButton>
+            @foreach (var exception in _review.Exceptions)
+            {
+                <MudPaper Class="pa-3 my-2" Outlined="true">
+                    <MudText>#@exception.Id @exception.Kind - @exception.Amount.ToString("N2") - @(exception.IsResolved ? "Resolved" : "Outstanding")</MudText>
+                    <MudText>@exception.Explanation</MudText>
+                    <MudButton OnClick="@(() => ResolveAsync(exception))" Disabled="@(Busy || exception.IsResolved || _bankId == 0)">
+                        Resolve using selected bank occurrence and decision reason
+                    </MudButton>
+                </MudPaper>
+            }
+        </MudPaper>
+        @if (_correction.CashCountId > 0)
+        {
+            <MudPaper Class="pa-4 my-3" Outlined="true">
+                <MudText Typo="Typo.h6">Return closing #@_correction.CashCountId for controlled correction</MudText>
+                <MudTextField T="string" Label="Movement IDs to correct (comma-separated)" @bind-Value="_movementIds" />
+                <MudCheckBox T="bool" @bind-Value="_correction.AllowMissingTransactions" Label="Allow adding missing historical customer records" />
+                <MudTextField T="string" Label="Instructions for the agent" @bind-Value="_correction.Reason" Lines="3" />
+                <MudButton OnClick="ReturnAsync" Disabled="Busy" Color="Color.Warning">Send correction request</MudButton>
+            </MudPaper>
+        }
+    }
+</MudContainer>
+
+@code {
+    [SupplyParameterFromQuery] public long? SessionId { get; set; }
+    private List<BankAccountDto> _accounts = [];
+    private List<BankReviewListItemDto> _reviews = [];
+    private long _accountId;
+    private long _reviewId;
+    private BankReconciliationReviewDto? _review;
+    private string _from = string.Empty;
+    private string _to = string.Empty;
+    private long _bankId;
+    private string? _legKey;
+    private long? _relatedMovementId;
+    private long _matchId;
+    private long _evidenceId;
+    private string _reason = string.Empty;
+    private BankTransactionClassification _classification;
+    private BankExceptionForm _exception = new() { Kind = BankExceptionKind.UnexplainedMovement };
+    private bool _useBank;
+    private bool _useLeg = true;
+    private ClosingCorrectionForm _correction = new();
+    private string _movementIds = string.Empty;
+    private readonly Dictionary<string, Guid> _approvalCommands = [];
+
+    protected override Task OnInitializedAsync() => RunAsync(async () =>
+    {
+        _accounts = await Accounts.GetAccountsAsync(UserId);
+        _accountId = _accounts.FirstOrDefault()?.Id ?? 0;
+        var date = Clock.Today;
+        if (SessionId.HasValue)
+        {
+            var actor = await Access.GetActorAsync(UserId);
+            date = (await Sessions.GetCashSessionsAsync(actor.BranchId)).SingleOrDefault(s => s.Id == SessionId)?.SessionDate ?? date;
+        }
+        _from = _to = date.ToString("yyyy-MM-dd");
+        if (_accountId != 0) _reviews = await Reconciliation.GetReviewsAsync(UserId, _accountId);
+    });
+
+    private Task SelectAccountAsync(long id) => RunAsync(async () =>
+    {
+        _accountId = id; _review = null; _reviewId = 0;
+        _reviews = await Reconciliation.GetReviewsAsync(UserId, id);
+    });
+    private Task RefreshAsync() => RunAsync(async () =>
+    {
+        if (_accountId != 0) _reviews = await Reconciliation.GetReviewsAsync(UserId, _accountId);
+        if (_reviewId != 0) _review = await Reconciliation.GetAsync(UserId, _reviewId);
+    });
+    private Task CreateAsync() => RunAsync(async () =>
+    {
+        _review = await Reconciliation.CreateAsync(UserId, _accountId, ParseDate(_from), ParseDate(_to));
+        _reviewId = _review.Id;
+        _reviews = await Reconciliation.GetReviewsAsync(UserId, _accountId);
+    });
+    private Task OpenReviewAsync(long id) => RunAsync(async () => { _reviewId = id; _review = await Reconciliation.GetAsync(UserId, id); });
+    private Task AutoMatchAsync() => RunAsync(async () => _review = await Reconciliation.AutoMatchAsync(UserId, _review!.Id, _review.Version));
+    private static string LegKey(BankLegDto leg) => $"{leg.Kind}:{leg.Id}";
+    private BankLegDto SelectedLeg() => _review!.RegisterEntries.SingleOrDefault(l => LegKey(l) == _legKey)
+        ?? throw new BankingRuleException("Select a register source.");
+    private Task MatchAsync() => RunAsync(async () =>
+    {
+        var leg = SelectedLeg();
+        _review = await Reconciliation.MatchAsync(UserId, _review!.Id, new BankMatchForm
+        {
+            ExpectedReviewVersion = _review.Version, BankTransactionId = _bankId, Kind = leg.Kind, SourceId = leg.Id,
+            RelatedMovementId = _relatedMovementId, Reason = _reason
+        });
+    });
+    private Task UnmatchAsync() => RunAsync(async () => _review = await Reconciliation.UnmatchAsync(UserId, _review!.Id, _matchId, _review.Version, _reason));
+    private Task ClassifyAsync() => RunAsync(async () =>
+    {
+        var evidenceId = _evidenceId != 0 ? _evidenceId : _review!.BankEntries.Single(b => b.Id == _bankId).EvidenceFileId;
+        _review = await Reconciliation.ClassifyAsync(UserId, _review!.Id, new BankClassificationForm
+        {
+            ExpectedReviewVersion = _review.Version, BankTransactionId = _bankId,
+            Classification = _classification, EvidenceFileId = evidenceId, Reason = _reason
+        });
+    });
+    private Task UploadProofAsync(InputFileChangeEventArgs args) => RunAsync(async () =>
+    {
+        await using var stream = args.File.OpenReadStream(EvidenceOptions.Value.MaxFileBytes);
+        _evidenceId = (await Evidence.UploadAsync(UserId, _accountId, Guid.NewGuid(), args.File.Name, false, stream)).Id;
+    });
+    private Task RecordExceptionAsync() => RunAsync(async () =>
+    {
+        _exception.ExpectedReviewVersion = _review!.Version;
+        _exception.EvidenceFileId = _evidenceId;
+        _exception.BankTransactionId = _useBank ? _bankId : null;
+        _exception.CustomerMovementId = null; _exception.BankRunId = null; _exception.WalletAdjustmentId = null;
+        if (_useLeg)
+        {
+            var leg = SelectedLeg();
+            if (leg.Kind == BankLegKind.CustomerMovement) _exception.CustomerMovementId = leg.Id;
+            if (leg.Kind == BankLegKind.BankRun) _exception.BankRunId = leg.Id;
+            if (leg.Kind == BankLegKind.WalletAdjustment) _exception.WalletAdjustmentId = leg.Id;
+            if (leg.CustomerTransactionId.HasValue) _exception.CustomerTransactionId = leg.CustomerTransactionId;
+        }
+        _review = await Reconciliation.RecordExceptionAsync(UserId, _review.Id, _exception);
+        _exception = new() { Kind = BankExceptionKind.UnexplainedMovement };
+    });
+    private Task ResolveAsync(BankExceptionDto exception) => RunAsync(async () =>
+        _review = await Reconciliation.ResolveExceptionAsync(UserId, _review!.Id, exception.Id, _bankId, _review.Version, _reason));
+    private void SelectCorrection(SessionReconciliationDto session)
+    {
+        _correction = new ClosingCorrectionForm { CashCountId = session.ClosingCountId!.Value, AllowMissingTransactions = true };
+        _movementIds = string.Empty;
+    }
+    private Task ReturnAsync() => RunAsync(async () =>
+    {
+        var ids = new List<long>();
+        foreach (var value in _movementIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!long.TryParse(value, out var id)) throw new BankingRuleException("Enter numeric movement IDs separated by commas.");
+            ids.Add(id);
+        }
+        _correction.MovementIds = ids;
+        _correction.ExpectedReviewVersion = _review!.Version;
+        _review = await Reconciliation.ReturnForCorrectionAsync(UserId, _review.Id, _correction);
+        _correction = new();
+    });
+    private Task ApproveAsync(SessionReconciliationDto session) => RunAsync(async () =>
+    {
+        var key = $"{_review!.Id}:{session.CashSessionId}:{session.BasisHash}";
+        if (!_approvalCommands.TryGetValue(key, out var command)) _approvalCommands[key] = command = Guid.NewGuid();
+        _review = await Reconciliation.ApproveClosingAsync(UserId, _review.Id, session.CashSessionId,
+            command, _review.Version, session.BasisHash);
+    });
+}

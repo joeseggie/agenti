@@ -1,9 +1,11 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Notifications;
 using Microsoft.ApplicationInsights;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
 
 namespace EastSeat.Agenti.Web.Features.BankRuns;
 
@@ -13,6 +15,9 @@ namespace EastSeat.Agenti.Web.Features.BankRuns;
 public class BankRunService(
     ApplicationDbContext dbContext,
     INotificationService notificationService,
+    ISessionBalanceService balances,
+    IBusinessClock businessClock,
+    IBankingAccessService bankingAccess,
     TelemetryClient? telemetryClient = null) : IBankRunService
 {
     /// <inheritdoc />
@@ -31,16 +36,43 @@ public class BankRunService(
 
         var branchId = agent.BranchId.Value;
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var businessDate = businessClock.Today;
+        var requestHash = BankingRequestIdentity.Hash(new
+        {
+            Version = 1, model.ToWalletTypeId, model.Amount, ReceiptNumber = model.ReceiptNumber?.Trim(),
+            Notes = model.Notes?.Trim(), OccurredAt = model.OccurredAt?.ToUniversalTime(),
+            ImageHash = model.ReceiptImage == null ? null : Convert.ToHexString(SHA256.HashData(model.ReceiptImage)),
+            model.ReceiptImageContentType
+        });
+        if (model.CommandId.HasValue)
+        {
+            var replay = await dbContext.BankRuns.AsNoTracking().SingleOrDefaultAsync(
+                b => b.AgentId == agent.Id && b.CommandId == model.CommandId);
+            if (replay != null)
+                return replay.RequestHash == requestHash
+                    ? BankRunSaveResult.Ok(replay.Id)
+                    : BankRunSaveResult.Error("This bank-run request identity was already used for different details.");
+        }
 
         // Find today's open session
         var session = await dbContext.CashSessions
-            .Where(s => s.BranchId == branchId && s.SessionDate == today && s.Status == CashSessionStatus.Open)
+            .Where(s => s.BranchId == branchId && s.Status == CashSessionStatus.Open &&
+                ((s.WorkflowVersion == SessionWorkflowVersion.BankReconciliation && s.SessionDate == businessDate) ||
+                 (s.WorkflowVersion == SessionWorkflowVersion.Legacy && s.SessionDate == today)))
             .FirstOrDefaultAsync();
 
         if (session == null)
         {
             return BankRunSaveResult.Error("No active cash session found. A session must be open to record a bank run.");
         }
+        var modern = session.WorkflowVersion == SessionWorkflowVersion.BankReconciliation;
+        if (modern && (!model.CommandId.HasValue || model.CommandId == Guid.Empty))
+            return BankRunSaveResult.Error("A stable request identity is required for a bank run.");
+        if (modern && (!model.OccurredAt.HasValue || model.OccurredAt > businessClock.UtcNow ||
+            businessClock.GetBusinessDate(model.OccurredAt.Value) != session.SessionDate))
+            return BankRunSaveResult.Error("Enter the bank receipt's non-future date and time for this session.");
+        if (modern && (decimal.Round(model.Amount, 2) != model.Amount || model.Amount > 9_999_999_999_999_999.99m))
+            return BankRunSaveResult.Error("Bank run amounts must fit the supported range and use at most two decimal places.");
 
         // Agent must have an approved opening count before doing a bank run
         var hasApprovedOpening = await dbContext.CashCounts
@@ -80,6 +112,11 @@ public class BankRunService(
 
         try
         {
+            if (modern)
+            {
+                var actor = await bankingAccess.GetActorAsync(userId);
+                await bankingAccess.RequireTradingSessionAsync(actor, session.Id);
+            }
             // Auto-discover the agent's active cash wallet — bank runs always originate from cash.
             var fromWallet = await dbContext.Wallets
                 .Include(w => w.WalletType)
@@ -107,18 +144,34 @@ public class BankRunService(
                 return BankRunSaveResult.Error("The destination wallet type must not be Cash.");
             }
 
-            if (model.Amount > fromWallet.Balance)
+            var sourceBalance = fromWallet.Balance;
+            var destinationBalance = toWallet.Balance;
+            var availableCash = sourceBalance;
+            if (modern)
+            {
+                if (fromWallet.Currency != toWallet.Currency)
+                    throw new BankingRuleException("A bank run cannot transfer between different currencies.");
+                var positions = await balances.GetPositionsAsync(session.Id, agent.Id, includePendingAdjustments: true);
+                var source = positions.SingleOrDefault(p => p.WalletId == fromWallet.Id)
+                    ?? throw new BankingRuleException("The cash wallet is not part of this session's opening allocation.");
+                var destination = positions.SingleOrDefault(p => p.WalletId == toWallet.Id)
+                    ?? throw new BankingRuleException("The destination wallet is not part of this session's opening allocation.");
+                sourceBalance = source.ExpectedBalance;
+                destinationBalance = destination.ExpectedBalance;
+                availableCash = source.AvailableForTransfer;
+            }
+            if (model.Amount > availableCash)
             {
                 await dbTransaction.RollbackAsync();
                 return BankRunSaveResult.Error(
-                    $"Bank run amount ({model.Amount:N0}) exceeds the cash wallet balance ({fromWallet.Balance:N0}).");
+                    $"Bank run amount ({model.Amount:N0}) exceeds the cash wallet balance available for transfer ({availableCash:N0}).");
             }
 
             // Deduct from cash wallet and credit bank wallet
-            fromWallet.Balance -= model.Amount;
+            fromWallet.Balance = sourceBalance - model.Amount;
             fromWallet.UpdatedAt = DateTimeOffset.UtcNow;
 
-            toWallet.Balance += model.Amount;
+            toWallet.Balance = destinationBalance + model.Amount;
             toWallet.UpdatedAt = DateTimeOffset.UtcNow;
             toWalletName = toWallet.Name;
 
@@ -135,10 +188,21 @@ public class BankRunService(
                 ReceiptImageContentType = model.ReceiptImageContentType,
                 Notes = model.Notes?.Trim(),
                 RecordedByUserId = userId,
-                CreatedAt = DateTimeOffset.UtcNow
+                CreatedAt = businessClock.UtcNow,
+                OccurredAt = model.OccurredAt?.ToUniversalTime(),
+                CommandId = model.CommandId,
+                RequestHash = model.CommandId.HasValue ? requestHash : null
             };
 
             dbContext.BankRuns.Add(bankRun);
+            if (modern)
+            {
+                session.RegisterVersion++;
+                session.Version++;
+                await WorkflowNotifications.AddForBranchAsync(dbContext, branchId, "Bank run recorded",
+                    "A bank run has been recorded in the active session.", NotificationType.BankRunRecorded,
+                    "/bank-runs", businessClock.UtcNow, includeSupervisors: true);
+            }
             await dbContext.SaveChangesAsync();
             bankRunId = bankRun.Id;
             await dbTransaction.CommitAsync();
@@ -146,17 +210,20 @@ public class BankRunService(
         catch
         {
             await dbTransaction.RollbackAsync();
+            if (modern)
+                dbContext.ChangeTracker.Clear();
             throw;
         }
 
         // Notify branch admins
         var agentName = agent.User != null ? $"{agent.User.FirstName} {agent.User.LastName}".Trim() : agent.Code;
-        await notificationService.NotifyBranchAdminsAsync(
-            branchId,
-            "Bank Run Recorded",
-            $"{agentName} recorded a bank run of UGX {model.Amount:N0} to {toWalletName}.",
-            NotificationType.BankRunRecorded,
-            "/bank-runs");
+        if (!modern)
+            await notificationService.NotifyBranchAdminsAsync(
+                branchId,
+                "Bank Run Recorded",
+                $"{agentName} recorded a bank run of UGX {model.Amount:N0} to {toWalletName}.",
+                NotificationType.BankRunRecorded,
+                "/bank-runs");
 
         telemetryClient?.TrackEvent("bank_run_recorded", new Dictionary<string, string>
         {
@@ -202,8 +269,11 @@ public class BankRunService(
         }
 
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var businessDate = businessClock.Today;
         var session = await dbContext.CashSessions
-            .Where(s => s.BranchId == agent.BranchId.Value && s.SessionDate == today && s.Status == CashSessionStatus.Open)
+            .Where(s => s.BranchId == agent.BranchId.Value &&
+                ((s.WorkflowVersion == SessionWorkflowVersion.BankReconciliation && s.SessionDate == businessDate) ||
+                 (s.WorkflowVersion == SessionWorkflowVersion.Legacy && s.SessionDate == today && s.Status == CashSessionStatus.Open)))
             .FirstOrDefaultAsync();
 
         if (session == null)

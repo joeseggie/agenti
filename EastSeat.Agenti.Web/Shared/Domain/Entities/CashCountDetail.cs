@@ -9,6 +9,7 @@ public class CashCountDetail
     public long CashCountId { get; set; }
     public long WalletId { get; set; }
     public decimal Amount { get; set; }
+    public DateTimeOffset? ObservedAt { get; set; }
     public string? Denominations { get; set; } // JSON format for denomination breakdown
 
     // Navigation properties

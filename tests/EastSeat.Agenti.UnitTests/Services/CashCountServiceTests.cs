@@ -87,7 +87,11 @@ public class CashCountServiceTests : IDisposable
 
         _dbContext.SaveChanges();
 
-        _sut = new CashCountService(_dbContext, _vaultServiceMock.Object, _notificationServiceMock.Object, _walletAdjustmentServiceMock.Object);
+        var bankWorkflow = new Mock<IBankSessionWorkflow>();
+        bankWorkflow.Setup(w => w.IsModernBranchAsync(It.IsAny<long>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        bankWorkflow.Setup(w => w.HandlesFormAsync(It.IsAny<long>(), It.IsAny<CashCountFormModel>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        _sut = new CashCountService(_dbContext, _vaultServiceMock.Object, _notificationServiceMock.Object,
+            _walletAdjustmentServiceMock.Object, bankWorkflow.Object);
     }
 
     public void Dispose()
@@ -1098,6 +1102,37 @@ public class CashCountServiceTests : IDisposable
 
         form.PreviousClosingTotal.Should().BeNull();
         form.OpeningVariance.Should().Be(0m);
+    }
+
+    [Theory]
+    [InlineData(SessionWorkflowVersion.Legacy, 800, true)]
+    [InlineData(SessionWorkflowVersion.Legacy, 1000, true)]
+    [InlineData(SessionWorkflowVersion.BankReconciliation, 800, false)]
+    public async Task GetPendingApprovalsAsync_OpeningComparisonRespectsWorkflowVersion(
+        SessionWorkflowVersion workflowVersion, decimal openingTotal, bool comparesPreviousApproval)
+    {
+        var (session, openingCount) = await SeedPreviousClosingAndTodayOpeningAsync(
+            previousClosingTotal: 1000m, openingTotal, openingExplanation: "Opening observations for review.");
+        session.WorkflowVersion = workflowVersion;
+        openingCount.Status = CashCountStatus.PendingApproval;
+        await _dbContext.SaveChangesAsync();
+
+        var pending = (await _sut.GetPendingApprovalsAsync(_testBranch.Id))
+            .Single(count => count.CashCountId == openingCount.Id);
+
+        pending.WorkflowVersion.Should().Be(workflowVersion);
+        if (comparesPreviousApproval)
+        {
+            pending.OpeningTotal.Should().Be(1000m);
+            pending.Variance.Should().Be(openingTotal - 1000m);
+            pending.HasDiscrepancy.Should().Be(openingTotal != 1000m);
+        }
+        else
+        {
+            pending.OpeningTotal.Should().BeNull();
+            pending.Variance.Should().BeNull();
+            pending.HasDiscrepancy.Should().BeFalse();
+        }
     }
 
     /// <summary>

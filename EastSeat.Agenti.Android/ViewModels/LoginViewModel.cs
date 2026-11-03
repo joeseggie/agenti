@@ -1,4 +1,5 @@
 using EastSeat.Agenti.Android.Services;
+using Microsoft.Extensions.Logging;
 
 namespace EastSeat.Agenti.Android.ViewModels;
 
@@ -8,6 +9,7 @@ namespace EastSeat.Agenti.Android.ViewModels;
 public class LoginViewModel : BaseViewModel
 {
     private readonly IAuthService _authService;
+    private readonly ILogger<LoginViewModel> _logger;
     private string _email = string.Empty;
     private string _password = string.Empty;
 
@@ -23,9 +25,10 @@ public class LoginViewModel : BaseViewModel
         set => SetProperty(ref _password, value);
     }
 
-    public LoginViewModel(IAuthService authService)
+    public LoginViewModel(IAuthService authService, ILogger<LoginViewModel> logger)
     {
         _authService = authService;
+        _logger = logger;
     }
 
     public async Task<bool> LoginAsync()
@@ -46,13 +49,16 @@ public class LoginViewModel : BaseViewModel
                 ErrorMessage = "Invalid email or password. Please try again.";
             return success;
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
+            _logger.LogWarning("Sign-in connection failed with {RequestError} ({CauseType}).",
+                exception.HttpRequestError, exception.GetBaseException().GetType().Name);
             ErrorMessage = "Cannot connect to the server. Please check your internet connection.";
             return false;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
+            _logger.LogError("Sign-in failed with {ExceptionType}.", exception.GetType().Name);
             ErrorMessage = "An unexpected error occurred. Please try again.";
             return false;
         }

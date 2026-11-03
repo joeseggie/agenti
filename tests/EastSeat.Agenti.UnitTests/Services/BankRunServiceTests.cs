@@ -1,5 +1,6 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.UnitTests.Helpers.TestDataBuilders;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.BankRuns;
@@ -93,7 +94,9 @@ public class BankRunServiceTests : IDisposable
 
         _dbContext.SaveChanges();
 
-        _sut = new BankRunService(_dbContext, _notificationServiceMock.Object);
+        var clock = new BusinessClock(TimeProvider.System);
+        _sut = new BankRunService(_dbContext, _notificationServiceMock.Object,
+            new SessionBalanceService(_dbContext, clock), clock, new BankingAccessService(_dbContext, clock));
     }
 
     public void Dispose()

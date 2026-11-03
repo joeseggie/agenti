@@ -84,21 +84,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
 
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: ${{ env.TEST_DB_USER }}
-          POSTGRES_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
-          POSTGRES_DB: ${{ env.TEST_DB_NAME }}
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U agenti_user"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -113,8 +98,6 @@ jobs:
 
       - name: Run integration tests
         run: dotnet test tests/EastSeat.Agenti.IntegrationTests/EastSeat.Agenti.IntegrationTests.csproj --configuration Release --logger trx --results-directory TestResults
-        env:
-          ConnectionStrings__DefaultConnection: "Server=localhost;Port=5432;Database=${{ env.TEST_DB_NAME }};User Id=${{ env.TEST_DB_USER }};Password=${{ secrets.TEST_DB_PASSWORD }};"
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -129,21 +112,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
 
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: ${{ env.TEST_DB_USER }}
-          POSTGRES_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
-          POSTGRES_DB: ${{ env.TEST_DB_NAME }}
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U agenti_user"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -156,10 +124,14 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore tests/EastSeat.Agenti.E2ETests/EastSeat.Agenti.E2ETests.csproj
 
+      - name: Build browser tests
+        run: dotnet build tests/EastSeat.Agenti.E2ETests/EastSeat.Agenti.E2ETests.csproj --configuration Release --no-restore
+
+      - name: Install Playwright browser
+        run: pwsh tests/EastSeat.Agenti.E2ETests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+
       - name: Run E2E tests
-        run: dotnet test tests/EastSeat.Agenti.E2ETests/EastSeat.Agenti.E2ETests.csproj --configuration Release --logger trx --results-directory TestResults
-        env:
-          ConnectionStrings__DefaultConnection: "Server=localhost;Port=5432;Database=${{ env.TEST_DB_NAME }};User Id=${{ env.TEST_DB_USER }};Password=${{ secrets.TEST_DB_PASSWORD }};"
+        run: dotnet test tests/EastSeat.Agenti.E2ETests/EastSeat.Agenti.E2ETests.csproj --configuration Release --no-build --filter "Category!=AndroidDevice" --logger trx --results-directory TestResults
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

@@ -10,7 +10,7 @@ namespace EastSeat.Agenti.Android.Services;
 /// </summary>
 public class AuthService : IAuthService
 {
-    private const string TokenKey = "agenti_jwt_token";
+    private const string TokenKey = SecureAccessTokenProvider.TokenKey;
     private const string UserKey = "agenti_user_info";
 
     private readonly IApiService _apiService;

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
 
 namespace EastSeat.Agenti.Web.Features.Dashboard;
@@ -10,10 +11,12 @@ namespace EastSeat.Agenti.Web.Features.Dashboard;
 public class DashboardService : IDashboardService
 {
     private readonly IDbContextFactory<ApplicationDbContext> _dbContextFactory;
+    private readonly IBusinessClock _clock;
 
-    public DashboardService(IDbContextFactory<ApplicationDbContext> dbContextFactory)
+    public DashboardService(IDbContextFactory<ApplicationDbContext> dbContextFactory, IBusinessClock? clock = null)
     {
         _dbContextFactory = dbContextFactory;
+        _clock = clock ?? new BusinessClock(TimeProvider.System);
     }
 
     /// <inheritdoc />
@@ -62,14 +65,21 @@ public class DashboardService : IDashboardService
 
         // Get the current session for today
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var currentSession = await context.CashSessions
-            .Where(s => s.SessionDate == today)
+        var businessToday = _clock.Today;
+        var currentSession = await context.CashSessions.Include(s => s.CashCounts)
+            .Where(s => s.SessionDate == businessToday && s.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            .OrderByDescending(s => s.OpenedAt).FirstOrDefaultAsync();
+        currentSession ??= await context.CashSessions
+            .Where(s => s.SessionDate == today && s.WorkflowVersion == SessionWorkflowVersion.Legacy)
             .OrderByDescending(s => s.OpenedAt)
             .FirstOrDefaultAsync();
 
         var sessionStatus = currentSession != null
             ? new SessionStatusDto
             {
+                UsesBankReconciliation = currentSession.WorkflowVersion == SessionWorkflowVersion.BankReconciliation,
+                OperationalClosedAt = currentSession.OperationalClosedAt,
+                PendingClosingApprovalCount = currentSession.CashCounts.Count(c => !c.IsOpening && c.Status == CashCountStatus.PendingApproval),
                 SessionId = currentSession.Id,
                 SessionDate = currentSession.SessionDate,
                 Status = currentSession.Status,

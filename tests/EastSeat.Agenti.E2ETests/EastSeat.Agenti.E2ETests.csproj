@@ -28,6 +28,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\EastSeat.Agenti.Web\EastSeat.Agenti.Web.csproj" />
+    <Compile Include="..\EastSeat.Agenti.UnitTests\Helpers\BankingScenario.cs" Link="Infrastructure\BankingScenario.cs" />
+    <Compile Include="..\EastSeat.Agenti.IntegrationTests\Infrastructure\DatabaseFixture.cs" Link="Infrastructure\DatabaseFixture.cs" />
+    <Compile Include="..\EastSeat.Agenti.IntegrationTests\Infrastructure\BankingApplicationFactory.cs" Link="Infrastructure\BankingApplicationFactory.cs" />
   </ItemGroup>
 
 </Project>

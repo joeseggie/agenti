@@ -2,7 +2,10 @@
 @using EastSeat.Agenti.Shared.Domain.Enums
 @using EastSeat.Agenti.Web.Features.CashCounts
 @using EastSeat.Agenti.Web.Features.WalletAdjustments
+@using EastSeat.Agenti.Shared.Services
 @inject IWalletAdjustmentService WalletAdjustmentService
+@inject IBusinessClock BusinessClock
+@inject ILogger<RecordWalletAdjustmentDialog> Logger
 
 <MudDialog>
     <DialogContent>
@@ -47,6 +50,8 @@
                 <MudNumericField T="decimal" @bind-Value="_form.Amount" Label="Amount (UGX)"
                     Variant="Variant.Outlined" Min="1" HideSpinButtons="true"
                     Required="true" RequiredError="Amount is required" />
+                <MudTextField T="string" Label="Occurrence date/time (Uganda)" @bind-Value="_occurredAt" Placeholder="yyyy-MM-dd HH:mm:ss" />
+                <MudTextField T="string" Label="Bank reference, if applicable" @bind-Value="_form.BankReference" />
 
                 <MudTextField @bind-Value="_form.Notes" Label="Notes" Variant="Variant.Outlined"
                     Lines="3"
@@ -83,7 +88,8 @@
     [Parameter]
     public string UserId { get; set; } = string.Empty;
 
-    private WalletAdjustmentFormModel _form = new();
+    private WalletAdjustmentFormModel _form = new() { CommandId = Guid.NewGuid() };
+    private string _occurredAt = string.Empty;
     private List<WalletCountEntryDto> _wallets = [];
     private bool _isLoading = true;
     private bool _isSaving = false;
@@ -97,6 +103,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        _occurredAt = BusinessTimeText.Format(BusinessClock.UtcNow);
         try
         {
             // Load agent's wallets with current balances for the closing count form
@@ -122,6 +129,7 @@
 
         try
         {
+            _form.OccurredAt = BusinessTimeText.Parse(_occurredAt);
             var result = await WalletAdjustmentService.RecordAdjustmentAsync(UserId, _form);
             if (result.Success)
             {
@@ -131,6 +139,15 @@
             {
                 _errorMessage = result.ErrorMessage;
             }
+        }
+        catch (BankingRuleException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError("Wallet-adjustment save failed with {ExceptionType}.", exception.GetType().Name);
+            _errorMessage = "The adjustment could not be confirmed. Your form has been retained.";
         }
         finally
         {

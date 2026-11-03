@@ -33,6 +33,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\EastSeat.Agenti.Web\EastSeat.Agenti.Web.csproj" />
+    <Compile Include="..\EastSeat.Agenti.UnitTests\Helpers\BankingScenario.cs" Link="Infrastructure\BankingScenario.cs" />
   </ItemGroup>
 
 </Project>

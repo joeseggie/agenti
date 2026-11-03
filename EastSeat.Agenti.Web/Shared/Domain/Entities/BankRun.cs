@@ -35,6 +35,9 @@ public class BankRun
     public string? Notes { get; set; }
     public string RecordedByUserId { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? OccurredAt { get; set; }
+    public Guid? CommandId { get; set; }
+    public string? RequestHash { get; set; }
 
     // Navigation properties
     public CashSession? CashSession { get; set; }

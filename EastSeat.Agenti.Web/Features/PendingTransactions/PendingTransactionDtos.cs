@@ -41,6 +41,7 @@ public class PendingTransactionUpdateModel
 /// </summary>
 public class PendingTransactionDto
 {
+    public long? CustomerTransactionId { get; set; }
     public long Id { get; set; }
     public long WalletId { get; set; }
     public string WalletName { get; set; } = string.Empty;
