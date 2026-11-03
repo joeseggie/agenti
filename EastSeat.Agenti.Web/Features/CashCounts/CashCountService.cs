@@ -228,11 +228,18 @@ public class CashCountService(
                 : null
         }).ToList();
 
+        var countDate = DateOnly.FromDateTime(DateTime.UtcNow);
+        var previousClosing = isOpening
+            ? await GetPreviousApprovedClosingCountAsync(agent.Id, countDate)
+            : null;
+
         return new CashCountFormModel
         {
             IsOpening = isOpening,
-            CountDate = DateOnly.FromDateTime(DateTime.UtcNow),
-            WalletEntries = walletEntries
+            CountDate = countDate,
+            WalletEntries = walletEntries,
+            PreviousClosingTotal = previousClosing?.TotalAmount,
+            PreviousClosingDate = previousClosing?.CountDate
         };
     }
 
@@ -525,6 +532,40 @@ public class CashCountService(
         cashCount.SubmittedAt = DateTimeOffset.UtcNow;
         cashCount.Status = CashCountStatus.PendingApproval;
 
+        // Rule: opening count must match the previous day's approved closing count (float
+        // conservation). When it differs, the agent must explain the difference and a
+        // discrepancy is raised for admin review.
+        if (cashCount.IsOpening)
+        {
+            var previousClosing = await GetPreviousApprovedClosingCountAsync(agent.Id, cashCount.CountDate);
+
+            if (previousClosing != null && cashCount.TotalAmount != previousClosing.TotalAmount)
+            {
+                if (string.IsNullOrWhiteSpace(cashCount.Explanation))
+                {
+                    cashCount.Status = CashCountStatus.Draft;
+                    cashCount.SubmittedAt = null;
+                    await dbContext.SaveChangesAsync();
+                    return CashCountSaveResult.Error("Opening count differs from the previous closing count. Please provide an explanation for the discrepancy.");
+                }
+
+                dbContext.Discrepancies.Add(new Discrepancy
+                {
+                    CashSessionId = cashCount.CashSessionId,
+                    CashCountId = cashCount.Id,
+                    Status = DiscrepancyStatus.PendingReview,
+                    ExpectedAmount = previousClosing.TotalAmount,
+                    ActualAmount = cashCount.TotalAmount,
+                    Variance = cashCount.TotalAmount - previousClosing.TotalAmount,
+                    Reason = $"Opening count differs from closing count of {previousClosing.CountDate:yyyy-MM-dd}.",
+                    Explanation = cashCount.Explanation,
+                    ExplainedByUserId = agent.Id,
+                    ExplainedAt = DateTimeOffset.UtcNow,
+                    CreatedAt = DateTimeOffset.UtcNow
+                });
+            }
+        }
+
         // For closing counts, compute the adjusted expected total (opening - wallet adjustments)
         if (!cashCount.IsOpening)
         {
@@ -802,15 +843,48 @@ public class CashCountService(
             }
         }
 
+        // Modern openings use operational snapshots and bank bridges, not previous approval status.
+        var legacyOpeningCounts = pendingCounts
+            .Where(c => c.IsOpening && c.CashSession!.WorkflowVersion == SessionWorkflowVersion.Legacy)
+            .ToList();
+        var openingAgentIds = legacyOpeningCounts
+            .Select(c => c.AgentId)
+            .Distinct()
+            .ToList();
+
+        var previousClosingCounts = new List<(long AgentId, DateOnly CountDate, decimal TotalAmount)>();
+        if (openingAgentIds.Count > 0)
+        {
+            var maxOpeningDate = legacyOpeningCounts.Max(c => c.CountDate);
+            previousClosingCounts = (await dbContext.CashCounts
+                .Where(c => openingAgentIds.Contains(c.AgentId) &&
+                            !c.IsOpening &&
+                            c.Status == CashCountStatus.Approved &&
+                            c.CountDate < maxOpeningDate)
+                .Select(c => new { c.AgentId, c.CountDate, c.TotalAmount })
+                .ToListAsync())
+                .Select(c => (c.AgentId, c.CountDate, c.TotalAmount))
+                .ToList();
+        }
+
         return pendingCounts.Select(count =>
         {
-            decimal? adjustedOpeningTotal = null;
-            if (!count.IsOpening)
+            decimal? expectedTotal = null;
+            if (count.IsOpening && count.CashSession!.WorkflowVersion == SessionWorkflowVersion.Legacy)
+            {
+                var previousClosing = previousClosingCounts
+                    .Where(c => c.AgentId == count.AgentId && c.CountDate < count.CountDate)
+                    .OrderByDescending(c => c.CountDate)
+                    .Select(c => (decimal?)c.TotalAmount)
+                    .FirstOrDefault();
+                expectedTotal = previousClosing;
+            }
+            else if (!count.IsOpening)
             {
                 openingTotalsLookup.TryGetValue((count.CashSessionId, count.AgentId), out var ot);
                 adjustmentTotalsLookup.TryGetValue((count.CashSessionId, count.AgentId), out var adjTotal);
                 var adjusted = ot - adjTotal;
-                adjustedOpeningTotal = adjusted > 0 ? adjusted : (ot > 0 ? adjusted : (decimal?)null);
+                expectedTotal = adjusted > 0 ? adjusted : (ot > 0 ? adjusted : (decimal?)null);
             }
 
             return new PendingApprovalDto
@@ -827,10 +901,10 @@ public class CashCountService(
                 IsOpening = count.IsOpening,
                 Status = count.Status,
                 TotalAmount = count.TotalAmount,
-                OpeningTotal = adjustedOpeningTotal,
-                Variance = adjustedOpeningTotal.HasValue ? count.TotalAmount - adjustedOpeningTotal.Value : null,
+                OpeningTotal = expectedTotal,
+                Variance = expectedTotal.HasValue ? count.TotalAmount - expectedTotal.Value : null,
                 Explanation = count.Explanation,
-                HasDiscrepancy = adjustedOpeningTotal.HasValue && count.TotalAmount != adjustedOpeningTotal.Value,
+                HasDiscrepancy = expectedTotal.HasValue && count.TotalAmount != expectedTotal.Value,
                 SubmittedAt = count.SubmittedAt ?? count.CreatedAt
             };
         }).ToList();
@@ -967,6 +1041,10 @@ public class CashCountService(
             Denominations = DenominationBreakdown.FromJson(d.Denominations)
         }).ToList();
 
+        var previousClosing = cashCount.IsOpening
+            ? await GetPreviousApprovedClosingCountAsync(agent.Id, cashCount.CountDate)
+            : null;
+
         return new CashCountFormModel
         {
             CashCountId = cashCount.Id,
@@ -974,11 +1052,29 @@ public class CashCountService(
             IsOpening = cashCount.IsOpening,
             CountDate = cashCount.CountDate,
             Explanation = cashCount.Explanation,
-            WalletEntries = walletEntries
+            WalletEntries = walletEntries,
+            PreviousClosingTotal = previousClosing?.TotalAmount,
+            PreviousClosingDate = previousClosing?.CountDate
         };
     }
 
     // ---- Private helpers ----
+
+    /// <summary>
+    /// Gets the agent's most recent approved closing count before the given date.
+    /// Used to compare an opening count against the previous day's closing balance.
+    /// </summary>
+    private async Task<CashCount?> GetPreviousApprovedClosingCountAsync(long agentId, DateOnly beforeDate)
+    {
+        return await dbContext.CashCounts
+            .Where(c => c.AgentId == agentId &&
+                        !c.IsOpening &&
+                        c.Status == CashCountStatus.Approved &&
+                        c.CountDate < beforeDate)
+            .OrderByDescending(c => c.CountDate)
+            .ThenByDescending(c => c.Id)
+            .FirstOrDefaultAsync();
+    }
 
     /// <summary>
     /// Review comment: wraps vault withdrawal + wallet updates + status change in a single transaction.
@@ -1017,6 +1113,16 @@ public class CashCountService(
             cashCount.Status = CashCountStatus.Approved;
             cashCount.ApprovedAt = DateTimeOffset.UtcNow;
             cashCount.ApprovedByUserId = adminUserId;
+
+            // Approve the opening discrepancy (if any) raised at submission time.
+            var discrepancy = await dbContext.Discrepancies
+                .FirstOrDefaultAsync(d => d.CashCountId == cashCount.Id && d.Status == DiscrepancyStatus.PendingReview);
+            if (discrepancy != null)
+            {
+                discrepancy.Status = DiscrepancyStatus.Approved;
+                discrepancy.ApprovedByUserId = adminUserId;
+                discrepancy.ApprovedAt = DateTimeOffset.UtcNow;
+            }
 
             await dbContext.SaveChangesAsync();
             await transaction.CommitAsync();
