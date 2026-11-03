@@ -102,6 +102,41 @@ public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : Integ
     }
 
     [Fact]
+    public async Task Reservations_AggregateOutstandingCasesWithoutNettingSettledCases()
+    {
+        using var scenario = new BankingScenario(DbContext);
+        scenario.AddApprovedOpening();
+        var deposit = scenario.AddCustomerTransaction();
+        var withdrawal = scenario.AddCustomerTransaction();
+        var settled = scenario.AddCustomerTransaction();
+        var future = scenario.AddCustomerTransaction();
+        CustomerMovement Movement(long id, CustomerTransactionKind kind, CustomerMovementKind movementKind,
+            decimal cash, decimal bank, decimal settledAmount) => new()
+        {
+            CustomerTransactionId = id, CashSessionId = scenario.Session.Id, Kind = movementKind,
+            TransactionKind = kind, CashEffect = cash, BankEffect = bank, CustomerSettledAmount = settledAmount,
+            Amount = 50_000m, CommandId = Guid.NewGuid(), RecordedByUserId = scenario.User.Id,
+            OccurredAt = BankingScenario.Now, RecordedAt = BankingScenario.Now
+        };
+        var futureMovement = Movement(future.Id, CustomerTransactionKind.Deposit,
+            CustomerMovementKind.PendingAttempt, 50_000m, 0m, 0m);
+        futureMovement.OccurredAt = BankingScenario.Now.AddDays(1);
+        DbContext.CustomerMovements.AddRange(
+            Movement(deposit.Id, CustomerTransactionKind.Deposit, CustomerMovementKind.FailedAttempt, 50_000m, -50_000m, 0m),
+            Movement(withdrawal.Id, CustomerTransactionKind.Withdrawal, CustomerMovementKind.PendingAttempt, -10_000m, 40_000m, 10_000m),
+            Movement(settled.Id, CustomerTransactionKind.Deposit, CustomerMovementKind.Completed, 50_000m, -50_000m, 50_000m),
+            futureMovement);
+        await DbContext.SaveChangesAsync();
+        var clock = new BusinessClock(new BankingTestClock());
+
+        var positions = await new SessionBalanceService(DbContext, clock)
+            .GetPositionsAsync(scenario.Session.Id, scenario.Agent.Id);
+
+        Assert.Equal(50_000m, positions.Single(p => p.WalletId == scenario.CashWallet.Id).ReservedCustomerCash);
+        Assert.Equal(30_000m, positions.Single(p => p.WalletId == scenario.BankWallet.Id).ReservedBankSettlement);
+    }
+
+    [Fact]
     public async Task PopulatedLegacyMigration_PreservesAmountsAndDoesNotInventSettlements()
     {
         // A separate database keeps migration rehearsal isolated from other test fixtures.

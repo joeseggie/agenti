@@ -1,3 +1,4 @@
+using System.Globalization;
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Services;
 
@@ -71,7 +72,9 @@ internal static class StatementValidation
 
     internal static string Fingerprint(BankStatementRow row) => BankingRequestIdentity.Hash(new
     {
-        LedgerAt = LedgerTime(row).ToUniversalTime(), row.Currency, row.SignedAmount, row.RunningBalance
+        LedgerAt = LedgerTime(row).ToUniversalTime(), row.Currency,
+        SignedAmount = row.SignedAmount.ToString("F2", CultureInfo.InvariantCulture),
+        RunningBalance = row.RunningBalance.ToString("F2", CultureInfo.InvariantCulture)
     });
 
     internal static bool SameFinancialFacts(BankStatementRow left, BankStatementRow right) =>

@@ -102,6 +102,44 @@ public class BankStatementTests
     }
 
     [Fact]
+    public async Task CorrectedWeakIdentity_DifferentDecimalScalesRetainOverlapCandidate()
+    {
+        using var fixture = new BankingTestContext();
+        var profile = new SyntheticProfile(Statement([Row(null, -100.00m, 800.00m, 0)], 900m),
+            reliableIdentity: false);
+        var (service, evidence) = Setup(fixture, profile);
+        var first = await StartProcessedAsync(fixture, service, evidence, "correction.csv", "original");
+        var preview = await service.GetPreviewAsync(fixture.Admin.Id, first);
+        var row = preview.Rows.Single();
+        var corrected = await service.CorrectRowAsync(fixture.Admin.Id, first, row.Id, new CorrectStatementRowForm
+        {
+            ExpectedVersion = preview.Import.Version, Narration = row.Narration,
+            CustomerIdentifier = row.CustomerIdentifier, Currency = row.Currency,
+            SignedAmount = -100m, RunningBalance = 900m, OccurredAt = row.OccurredAt,
+            HasPreciseTimestamp = true, Reason = "Corrected against the retained statement."
+        });
+        await service.CommitAsync(fixture.Admin.Id, first,
+            new CommitStatementForm { ExpectedVersion = corrected.Import.Version });
+        var existingId = (await fixture.Db.BankTransactions.SingleAsync()).Id;
+
+        profile.Statement = Statement([Row(null, -100.00m, 900.00m, 0)], 900.00m);
+        var second = await StartProcessedAsync(fixture, service, evidence, "overlap.csv", "overlap");
+        var overlap = await service.GetPreviewAsync(fixture.Admin.Id, second);
+        var overlappingRow = overlap.Rows.Single();
+
+        Assert.Equal([existingId], overlappingRow.PossibleExistingTransactionIds);
+        Assert.True(overlappingRow.RequiresIdentityDecision);
+        await service.CommitAsync(fixture.Admin.Id, second, new CommitStatementForm
+        {
+            ExpectedVersion = overlap.Import.Version,
+            Resolutions = [new(overlappingRow.Id, StatementRowResolutionKind.LinkExisting, existingId,
+                "Verified the same financial occurrence.")]
+        });
+        Assert.Equal(1, await fixture.Db.BankTransactions.CountAsync());
+        Assert.Equal(2, await fixture.Db.BankStatementOccurrences.CountAsync());
+    }
+
+    [Fact]
     public async Task ExtractionCorrection_RetainsOriginalAndCannotCommitBadArithmetic()
     {
         using var fixture = new BankingTestContext();

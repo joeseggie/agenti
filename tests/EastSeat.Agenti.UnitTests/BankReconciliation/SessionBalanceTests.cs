@@ -130,6 +130,61 @@ public class SessionBalanceTests
     }
 
     [Fact]
+    public async Task Reservations_AggregatePerCaseAndRespectSnapshotCutoffAndCorrections()
+    {
+        using var fixture = new BankingTestContext();
+        AddOpening(fixture);
+        var deposit = fixture.AddCustomerTransaction();
+        var withdrawal = fixture.AddCustomerTransaction();
+        var settled = fixture.AddCustomerTransaction();
+        var original = Movement(fixture, withdrawal.Id, CustomerMovementKind.PendingAttempt, 0m, 70_000m);
+        fixture.Db.CustomerMovements.AddRange(
+            Movement(fixture, deposit.Id, CustomerMovementKind.FailedAttempt, 50_000m, 0m),
+            original,
+            Movement(fixture, settled.Id, CustomerMovementKind.Completed, 50_000m, -50_000m));
+        await fixture.Db.SaveChangesAsync();
+        var correction = Movement(fixture, withdrawal.Id, CustomerMovementKind.PendingAttempt, 0m, 40_000m);
+        correction.SupersedesMovementId = original.Id;
+        correction.TransactionKind = CustomerTransactionKind.Withdrawal;
+        fixture.Db.CustomerMovements.Add(correction);
+        await fixture.Db.SaveChangesAsync();
+        var paid = Movement(fixture, withdrawal.Id, CustomerMovementKind.CashPayment, -10_000m, 0m);
+        paid.RelatedMovementId = correction.Id;
+        paid.CustomerSettledAmount = 10_000m;
+        var retry = Movement(fixture, deposit.Id, CustomerMovementKind.Retry, 0m, -50_000m);
+        retry.OccurredAt = BankingTestContext.Now.AddMinutes(30);
+        fixture.Db.CustomerMovements.AddRange(paid, retry);
+        await fixture.Db.SaveChangesAsync();
+
+        var closing = new CashCount
+        {
+            CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id, IsOpening = false,
+            CountDate = fixture.Session.SessionDate, CreatedAt = BankingTestContext.Now
+        };
+        fixture.Db.CashCounts.Add(closing);
+        await fixture.Db.SaveChangesAsync();
+        var snapshot = new CashCountSnapshot
+        {
+            CashCountId = closing.Id, CapturedAt = BankingTestContext.Now, CapturedByUserId = fixture.User.Id,
+            WalletsJson = CountSnapshotCodec.Serialize(
+            [
+                new(fixture.CashWallet.Id, "Cash", WalletTypeEnum.Cash, "UGX", 190_000m, BankingTestContext.Now, null),
+                new(fixture.BankWallet.Id, "Bank", WalletTypeEnum.Bank, "UGX", 990_000m, BankingTestContext.Now, fixture.Account.Id)
+            ])
+        };
+        fixture.Db.CashCountSnapshots.Add(snapshot);
+        await fixture.Db.SaveChangesAsync();
+
+        var atSnapshot = await CreateService(fixture).GetPositionsAtSnapshotAsync(snapshot.Id);
+        Assert.Equal(50_000m, atSnapshot.Single(p => p.WalletId == fixture.CashWallet.Id).ReservedCustomerCash);
+        Assert.Equal(30_000m, atSnapshot.Single(p => p.WalletId == fixture.BankWallet.Id).ReservedBankSettlement);
+
+        var current = await CreateService(fixture).GetPositionsAsync(fixture.Session.Id, fixture.Agent.Id);
+        Assert.Equal(0m, current.Single(p => p.WalletId == fixture.CashWallet.Id).ReservedCustomerCash);
+        Assert.Equal(30_000m, current.Single(p => p.WalletId == fixture.BankWallet.Id).ReservedBankSettlement);
+    }
+
+    [Fact]
     public void BusinessClock_UsesUgandaDateAcrossUtcMidnightBoundary()
     {
         var instant = new DateTimeOffset(2026, 11, 1, 21, 5, 0, TimeSpan.Zero);

@@ -452,12 +452,14 @@
             }
 
             <!-- Explanation field for closing counts with discrepancy -->
-            @if (!_countForm.IsOpening && _countForm.TotalVariance != 0)
+            @if (!_countForm.IsOpening && (_currentSession?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation
+                ? _countForm.WalletEntries.Any(w => w.CountedAmount != w.ExpectedBalance)
+                : _countForm.TotalVariance != 0))
             {
                 <MudTextField @bind-Value="_countForm.Explanation"
-                    Label="@(_countForm.TotalVariance > 0 ? "Explanation for surplus" : "Explanation for shortage")"
+                    Label="@(_countForm.TotalVariance == 0 ? "Explanation for wallet differences" : _countForm.TotalVariance > 0 ? "Explanation for surplus" : "Explanation for shortage")"
                     Variant="Variant.Outlined" Lines="3" Class="mt-3"
-                    HelperText="Required: explain the difference between opening and closing amounts"
+                    HelperText="Required: explain the difference between expected and counted amounts"
                     Required="true" RequiredError="Explanation is required when there is a discrepancy" />
             }
 

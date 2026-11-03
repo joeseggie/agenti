@@ -105,35 +105,45 @@ public sealed class SessionBalanceService(ApplicationDbContext db, IBusinessCloc
                 positions[adjustment.WalletId].Adjustments += adjustment.Amount;
         }
 
-        var customerCash = await db.CustomerMovements.AsNoTracking()
+        var end = caseCutoff ?? now;
+        var effectiveMovements = db.CustomerMovements.AsNoTracking()
             .Where(m => m.CustomerTransaction!.AgentId == agentId &&
-                        !db.CustomerMovements.Any(next => next.SupersedesMovementId == m.Id))
+                        m.OccurredAt <= end &&
+                        !db.CustomerMovements.Any(next => next.SupersedesMovementId == m.Id));
+        var totals = effectiveMovements
+            .GroupBy(m => m.CustomerTransactionId)
+            .Select(g => new
+            {
+                CustomerTransactionId = g.Key,
+                CashEffect = g.Sum(m => m.CashEffect),
+                BankEffect = g.Sum(m => m.BankEffect),
+                SettledAmount = g.Sum(m => m.CustomerSettledAmount)
+            });
+        var primaryMovements = effectiveMovements.Where(m => m.RelatedMovementId == null &&
+            (m.Kind == CustomerMovementKind.Completed || m.Kind == CustomerMovementKind.FailedAttempt ||
+             m.Kind == CustomerMovementKind.PendingAttempt || m.Kind == CustomerMovementKind.Voided));
+        var reservations = await primaryMovements
+            .Join(totals, m => m.CustomerTransactionId, t => t.CustomerTransactionId, (m, t) => new
+            {
+                m.CustomerTransaction!.CashWalletId,
+                BankWalletId = m.CustomerTransaction.BankAccount!.WalletId,
+                Kind = m.TransactionKind ?? m.CustomerTransaction.Kind,
+                t.CashEffect, t.BankEffect, t.SettledAmount
+            })
             .Select(m => new
             {
-                m.CustomerTransactionId, m.CustomerTransaction!.CashWalletId,
-                BankWalletId = m.CustomerTransaction.BankAccount!.WalletId,
-                m.Kind, m.CashEffect, m.BankEffect, m.CustomerSettledAmount, m.OccurredAt,
-                m.RelatedMovementId, m.TransactionKind, OriginalKind = m.CustomerTransaction.Kind
+                m.CashWalletId, m.BankWalletId,
+                Cash = m.Kind == CustomerTransactionKind.Deposit ? m.CashEffect - m.SettledAmount : 0m,
+                Bank = m.BankEffect - (m.Kind == CustomerTransactionKind.Deposit ? -m.SettledAmount : m.SettledAmount)
             })
+            .Where(r => r.Cash > 0 || r.Bank > 0)
             .ToListAsync(cancellationToken);
-        foreach (var customer in customerCash.GroupBy(m => m.CustomerTransactionId))
+        foreach (var reservation in reservations)
         {
-            var walletId = customer.First().CashWalletId;
-            var end = caseCutoff ?? now;
-            var occurred = customer.Where(m => m.OccurredAt <= end).ToList();
-            var primary = occurred.SingleOrDefault(m => m.RelatedMovementId == null &&
-                m.Kind is CustomerMovementKind.Completed or CustomerMovementKind.FailedAttempt or CustomerMovementKind.PendingAttempt or CustomerMovementKind.Voided);
-            if (primary == null)
-                continue;
-            var completedAmount = occurred.Sum(m => m.CustomerSettledAmount);
-            var kind = primary.TransactionKind ?? primary.OriginalKind;
-            if (kind == CustomerTransactionKind.Deposit && positions.TryGetValue(walletId, out var position))
-                position.ReservedCustomerCash += Math.Max(0, occurred.Sum(m => m.CashEffect) - completedAmount);
-            if (positions.TryGetValue(primary.BankWalletId, out var bankPosition))
-            {
-                var expectedBankEffect = kind == CustomerTransactionKind.Deposit ? -completedAmount : completedAmount;
-                bankPosition.ReservedBankSettlement += Math.Max(0, occurred.Sum(m => m.BankEffect) - expectedBankEffect);
-            }
+            if (positions.TryGetValue(reservation.CashWalletId, out var position))
+                position.ReservedCustomerCash += Math.Max(0, reservation.Cash);
+            if (positions.TryGetValue(reservation.BankWalletId, out var bankPosition))
+                bankPosition.ReservedBankSettlement += Math.Max(0, reservation.Bank);
         }
 
         return positions.Values.OrderBy(p => p.WalletName).ToList();
