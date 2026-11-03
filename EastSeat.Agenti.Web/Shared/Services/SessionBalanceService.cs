@@ -33,6 +33,7 @@ public sealed class SessionBalanceService(ApplicationDbContext db, IBusinessCloc
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw new InvalidOperationException("An approved opening snapshot is required to calculate session balances.");
         var wallets = CountSnapshotCodec.Deserialize(opening.WalletsJson);
+        var openingWalletIds = wallets.Select(w => w.WalletId).ToArray();
         var positions = wallets.ToDictionary(w => w.WalletId, w => new SessionWalletPosition
         {
             WalletId = w.WalletId, WalletName = w.WalletName, Currency = w.Currency, OpeningAmount = w.Amount
@@ -60,7 +61,8 @@ public sealed class SessionBalanceService(ApplicationDbContext db, IBusinessCloc
         var movements = await db.CustomerMovements.AsNoTracking()
             .Where(m => m.CustomerTransaction!.AgentId == agentId &&
                         (m.CashSessionId == sessionId ||
-                         (m.CashEffect == 0 && (m.Kind == CustomerMovementKind.BankReversal ||
+                         (openingWalletIds.Contains(m.CustomerTransaction.BankAccount!.WalletId) &&
+                          m.CashEffect == 0 && (m.Kind == CustomerMovementKind.BankReversal ||
                                                m.Kind == CustomerMovementKind.BankPostingObserved))) &&
                         !db.CustomerMovements.Any(next => next.SupersedesMovementId == m.Id))
             .Select(m => new

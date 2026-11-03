@@ -79,6 +79,57 @@ public class SessionBalanceTests
     }
 
     [Fact]
+    public async Task Projection_IgnoresCrossSessionBankMovementsOutsideOpeningWalletsButValidatesCurrentSession()
+    {
+        using var fixture = new BankingTestContext();
+        AddOpening(fixture);
+        var retiredWallet = new Wallet
+        {
+            AgentId = fixture.Agent.Id, WalletTypeId = 2, Name = "Retired bank", Currency = "UGX",
+            IsActive = false, CreatedAt = BankingTestContext.Now
+        };
+        fixture.Db.Wallets.Add(retiredWallet);
+        await fixture.Db.SaveChangesAsync();
+        var retiredAccount = new BankAccount
+        {
+            BranchId = fixture.Account.BranchId, WalletId = retiredWallet.Id, BankName = "Retired bank",
+            AccountIdentifier = "RETIRED-ACCOUNT", CreatedAt = BankingTestContext.Now
+        };
+        var priorSession = new CashSession
+        {
+            BranchId = fixture.Session.BranchId, SessionDate = fixture.Session.SessionDate.AddDays(-1),
+            OpenedAt = BankingTestContext.Now.AddDays(-1), Status = CashSessionStatus.Closed,
+            WorkflowVersion = SessionWorkflowVersion.BankReconciliation
+        };
+        fixture.Db.AddRange(retiredAccount, priorSession);
+        await fixture.Db.SaveChangesAsync();
+        var customer = new CustomerTransaction
+        {
+            BankAccountId = retiredAccount.Id, AgentId = fixture.Agent.Id,
+            OriginatingSessionId = fixture.Session.Id, CashWalletId = fixture.CashWallet.Id,
+            Kind = CustomerTransactionKind.Deposit, Amount = 50_000m, CustomerIdentifier = "RETIRED-WALLET",
+            CommandId = Guid.NewGuid(), RecordedByUserId = fixture.User.Id,
+            OccurredAt = BankingTestContext.Now, RecordedAt = BankingTestContext.Now
+        };
+        fixture.Db.CustomerTransactions.Add(customer);
+        await fixture.Db.SaveChangesAsync();
+        var historicalMovement = Movement(
+            fixture, customer.Id, CustomerMovementKind.BankReversal, 0m, 50_000m);
+        historicalMovement.CashSessionId = priorSession.Id;
+        fixture.Db.CustomerMovements.Add(historicalMovement);
+        await fixture.Db.SaveChangesAsync();
+
+        var positions = await CreateService(fixture).GetPositionsAsync(fixture.Session.Id, fixture.Agent.Id);
+        Assert.Equal(1_000_000m, positions.Single(p => p.WalletId == fixture.BankWallet.Id).ExpectedBalance);
+
+        fixture.Db.CustomerMovements.Add(Movement(
+            fixture, customer.Id, CustomerMovementKind.BankReversal, 0m, 50_000m));
+        await fixture.Db.SaveChangesAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => CreateService(fixture).GetPositionsAsync(fixture.Session.Id, fixture.Agent.Id));
+    }
+
+    [Fact]
     public void BusinessClock_UsesUgandaDateAcrossUtcMidnightBoundary()
     {
         var instant = new DateTimeOffset(2026, 11, 1, 21, 5, 0, TimeSpan.Zero);

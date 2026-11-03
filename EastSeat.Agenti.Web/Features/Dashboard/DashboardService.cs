@@ -70,7 +70,7 @@ public class DashboardService : IDashboardService
             .Where(s => s.SessionDate == businessToday && s.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
             .OrderByDescending(s => s.OpenedAt).FirstOrDefaultAsync();
         currentSession ??= await context.CashSessions
-            .Where(s => s.SessionDate == today)
+            .Where(s => s.SessionDate == today && s.WorkflowVersion == SessionWorkflowVersion.Legacy)
             .OrderByDescending(s => s.OpenedAt)
             .FirstOrDefaultAsync();
 

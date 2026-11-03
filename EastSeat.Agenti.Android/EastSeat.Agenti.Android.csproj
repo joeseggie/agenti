@@ -32,7 +32,7 @@
 
 	<ItemGroup>
 		<EmbeddedResource Include="Resources\Raw\appsettings.json" LogicalName="appsettings.json" />
-		<EmbeddedResource Include="Resources\Raw\appsettings.Development.json" LogicalName="appsettings.Development.json" Condition="'$(Configuration)' == 'Debug'" />
+		<EmbeddedResource Include="Resources\Raw\appsettings.Development.json" LogicalName="appsettings.Development.json" Condition="'$(Configuration)' == 'Debug' and Exists('Resources\Raw\appsettings.Development.json')" />
 		<AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute" Condition="'$(Configuration)' == 'Debug' and '$(BankingTestApiUrl)' != ''">
 			<_Parameter1>Agenti.BankingTestApiUrl</_Parameter1>
 			<_Parameter2>$(BankingTestApiUrl)</_Parameter2>
