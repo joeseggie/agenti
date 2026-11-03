@@ -47,6 +47,8 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         var page = await agent.NewPageAsync();
         await page.GotoAsync(root + "/customer-transactions");
         await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Customer transactions", Exact = true })).ToBeVisibleAsync();
+        // Banking controls stay disabled until the Blazor circuit is interactive; wait so input is not lost to prerendered markup.
+        await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Save transaction", Exact = true })).ToBeEnabledAsync(new() { Timeout = 30_000 });
         await page.GetByLabel("Amount", new() { Exact = true }).FillAsync("50000");
         await page.GetByLabel("Customer account / phone", new() { Exact = true }).FillAsync("0012345");
         await page.GetByLabel("Bank transaction number", new() { Exact = true }).FillAsync("SYNTHETIC-DEPOSIT");
@@ -94,7 +96,7 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await AddCookieAsync(administrator, app, scenario.Admin, root);
         var adminPage = await administrator.NewPageAsync();
         await adminPage.GotoAsync(root + "/bank-statements");
-        await Expect(adminPage.Locator("input[type=file]")).ToBeVisibleAsync();
+        await Expect(adminPage.Locator("input[type=file]")).ToBeEnabledAsync(new() { Timeout = 30_000 });
         var source = new ParsedStatement("SYNTHETIC-ACCOUNT", "UGX", BankBalanceBasis.Ledger,
             new DateTimeOffset(2026, 11, 2, 0, 0, 0, TimeSpan.FromHours(3)),
             new DateTimeOffset(2026, 11, 3, 0, 0, 0, TimeSpan.FromHours(3)),

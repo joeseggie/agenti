@@ -10,17 +10,19 @@ public abstract class BankingPageBase : ComponentBase
 {
     [Inject] protected AuthenticationStateProvider Authentication { get; set; } = null!;
     [Inject] protected ILogger<BankingPageBase> Log { get; set; } = null!;
+    private bool _busy;
     protected string UserId { get; private set; } = string.Empty;
     protected bool IsAdmin { get; private set; }
-    protected bool Busy { get; private set; }
+    // Prerendered markup has no event handlers; keep inputs disabled until the circuit is interactive so typed data is not discarded.
+    protected bool Busy => _busy || !RendererInfo.IsInteractive;
     protected bool Loaded { get; private set; }
     protected string? Error { get; private set; }
 
     protected async Task<bool> RunAsync(Func<Task> action)
     {
-        if (Busy)
+        if (_busy)
             return false;
-        Busy = true;
+        _busy = true;
         Error = null;
         try
         {
@@ -54,7 +56,7 @@ public abstract class BankingPageBase : ComponentBase
         }
         finally
         {
-            Busy = false;
+            _busy = false;
         }
         return false;
     }
