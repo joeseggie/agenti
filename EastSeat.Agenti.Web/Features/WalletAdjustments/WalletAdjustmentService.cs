@@ -337,6 +337,8 @@ public class WalletAdjustmentService(
             await dbContext.Entry(adjustment.CashSession!).ReloadAsync();
             if (adjustment.CashSession!.BranchId != actor.BranchId)
                 throw new UnauthorizedAccessException("This adjustment belongs to a different branch.");
+            if (adjustment.RecordedByUserId == actor.UserId || adjustment.Agent?.UserId == actor.UserId)
+                throw new UnauthorizedAccessException("You cannot review your own wallet adjustment.");
             var target = approve ? WalletAdjustmentStatus.Approved : WalletAdjustmentStatus.Rejected;
             if (adjustment.Status == target && (approve || adjustment.RejectionReason == reason?.Trim()))
             {

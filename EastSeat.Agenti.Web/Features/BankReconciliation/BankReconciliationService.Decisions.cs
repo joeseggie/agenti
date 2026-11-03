@@ -230,6 +230,8 @@ public sealed partial class BankReconciliationService
             if (session.BasisHash != basisHash)
                 throw new BankingConflictException("The evidence changed after it was reviewed. Refresh before approving.");
             var count = await db.CashCounts.Include(c => c.Agent).SingleAsync(c => c.Id == session.ClosingCountId, cancellationToken);
+            if (count.Agent!.UserId == userId)
+                throw new UnauthorizedAccessException("You cannot certify your own closing.");
             var previousStatus = count.Status;
             if (count.Status is not (CashCountStatus.PendingApproval or CashCountStatus.Approved))
                 throw new BankingRuleException("This closing is not awaiting financial certification.");

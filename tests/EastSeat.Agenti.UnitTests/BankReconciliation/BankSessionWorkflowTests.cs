@@ -169,6 +169,15 @@ public class BankSessionWorkflowTests
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             service.ApproveAdjustmentAsync(foreignAdmin.Id, result.AdjustmentId!.Value));
+        await fixture.Db.SaveChangesAsync();
+        await fixture.Db.Users.Where(u => u.Id == fixture.User.Id).ExecuteUpdateAsync(s => s.SetProperty(u => u.Role, UserRole.Supervisor));
+        var selfReview = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.ApproveAdjustmentAsync(fixture.User.Id, result.AdjustmentId!.Value));
+        Assert.Contains("your own wallet adjustment", selfReview.Message);
+        Assert.Equal(WalletAdjustmentStatus.Pending, (await fixture.Db.WalletAdjustments.AsNoTracking()
+            .SingleAsync(a => a.Id == result.AdjustmentId)).Status);
+        await fixture.Db.SaveChangesAsync();
+        await fixture.Db.Users.Where(u => u.Id == fixture.User.Id).ExecuteUpdateAsync(s => s.SetProperty(u => u.Role, UserRole.Agent));
         var approved = await service.ApproveAdjustmentAsync(fixture.Admin.Id, result.AdjustmentId!.Value);
         var replay = await service.ApproveAdjustmentAsync(fixture.Admin.Id, result.AdjustmentId.Value);
 

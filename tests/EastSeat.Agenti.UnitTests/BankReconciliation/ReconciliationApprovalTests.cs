@@ -36,6 +36,14 @@ public class ReconciliationApprovalTests
         (await fixture.Db.Wallets.FindAsync(fixture.BankWallet.Id))!.Balance = 777_000m;
         (await fixture.Db.Vaults.SingleAsync()).CurrentBalance = 123m;
         await fixture.Db.SaveChangesAsync();
+        await fixture.Db.Users.Where(u => u.Id == fixture.User.Id).ExecuteUpdateAsync(s => s.SetProperty(u => u.Role, UserRole.Admin));
+        var selfCertification = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            reconciliation.ApproveClosingAsync(fixture.User.Id, review.Id, fixture.Session.Id, Guid.NewGuid(), version, basis));
+        Assert.Contains("your own closing", selfCertification.Message);
+        Assert.Equal(CashCountStatus.PendingApproval, (await fixture.Db.CashCounts.AsNoTracking()
+            .SingleAsync(c => c.Id == closingId)).Status);
+        await fixture.Db.SaveChangesAsync();
+        await fixture.Db.Users.Where(u => u.Id == fixture.User.Id).ExecuteUpdateAsync(s => s.SetProperty(u => u.Role, UserRole.Agent));
 
         var approved = await reconciliation.ApproveClosingAsync(fixture.Admin.Id, review.Id, fixture.Session.Id, command, version, basis);
         await reconciliation.ApproveClosingAsync(fixture.Admin.Id, review.Id, fixture.Session.Id, command, version, basis);

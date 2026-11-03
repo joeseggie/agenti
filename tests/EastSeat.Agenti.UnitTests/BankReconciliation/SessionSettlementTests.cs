@@ -115,6 +115,10 @@ public class SessionSettlementTests
         var opening = AddCount(fixture, true, 100_000m, 1_000_000m);
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.ApproveOpeningAsync(fixture.User.Id, opening.Id));
+        await fixture.Db.SaveChangesAsync();
+        await fixture.Db.Users.Where(u => u.Id == fixture.User.Id).ExecuteUpdateAsync(s => s.SetProperty(u => u.Role, UserRole.Supervisor));
+        var selfApproval = await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.ApproveOpeningAsync(fixture.User.Id, opening.Id));
+        Assert.Contains("your own opening", selfApproval.Message);
         await Assert.ThrowsAnyAsync<InvalidOperationException>(() => service.ApproveOpeningAsync(fixture.Admin.Id, opening.Id));
 
         Assert.False(await fixture.Db.SessionFloatSettlements.AnyAsync());

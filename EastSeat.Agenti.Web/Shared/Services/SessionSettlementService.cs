@@ -40,6 +40,8 @@ public sealed class SessionSettlementService(
                 throw new UnauthorizedAccessException("Only administrators or supervisors can approve opening counts.");
             if (count.IsOpening != isOpening || session.WorkflowVersion != SessionWorkflowVersion.BankReconciliation)
                 throw new BankingRuleException("This operation requires a matching bank-reconciliation cash count.");
+            if (isOpening && (count.Agent!.UserId == actor.UserId || count.AgentId == actor.AgentId))
+                throw new UnauthorizedAccessException("You cannot approve your own opening count.");
 
             var stage = isOpening ? FloatSettlementStage.Opening : FloatSettlementStage.Closing;
             var existing = await db.SessionFloatSettlements.AsNoTracking()
