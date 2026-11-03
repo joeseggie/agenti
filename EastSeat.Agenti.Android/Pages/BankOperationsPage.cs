@@ -1,3 +1,4 @@
+using EastSeat.Agenti.Android.Models;
 using EastSeat.Agenti.Android.Services;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
@@ -55,7 +56,12 @@ public sealed class BankOperationsPage(
             return;
         }
         Reset(opening ? "Opening observation" : "Closing observation");
-        var key = $"count-{serverForm.CashSessionId}-{opening}";
+        // CashSessionId is null before the first opening save, so key by business date and discard drafts for another count.
+        var key = $"count-{serverForm.CountDate:yyyyMMdd}-{opening}";
+        var stored = await Drafts.LoadAsync<BankingDraft<CashCountFormModel>>(UserId, key);
+        if (stored != null && (stored.Form.CountDate != serverForm.CountDate ||
+                               (stored.Form.CashCountId.HasValue && stored.Form.CashCountId != serverForm.CashCountId)))
+            Drafts.Remove(UserId, key);
         var draft = await EditAsync(key, () => serverForm);
         var form = draft.Form;
         if (serverForm.CashCountId.HasValue) form.CashCountId = serverForm.CashCountId;
@@ -133,6 +139,13 @@ public sealed class BankOperationsPage(
         var key = $"bank-run-{current.SessionId}";
         var draft = await EditAsync(key, () => new BankRunFormModel { CommandId = Guid.NewGuid() });
         var form = draft.Form;
+        if (form.ReceiptImage != null)
+        {
+            // Older drafts embedded the image bytes; move them out of secure storage, which is rewritten on every keystroke.
+            draft.Text[ReceiptPathKey] = await StoreReceiptAsync(form.ReceiptImage, null);
+            form.ReceiptImage = null;
+            await SaveDraftAsync();
+        }
         Select("Destination wallet", wallets, w => w.Name, w => w.WalletTypeId == form.ToWalletTypeId, w => form.ToWalletTypeId = w.WalletTypeId);
         Field(draft, "amount", "Amount deposited", Number(form.Amount), value => form.Amount = Money(value), true);
         Field(draft, "reference", "Deposit receipt reference", form.ReceiptNumber ?? "", value => form.ReceiptNumber = value);
@@ -152,7 +165,7 @@ public sealed class BankOperationsPage(
                 if (buffer.Length + count > 5 * 1024 * 1024) throw new BankingRuleException("The deposit slip image must be at most 5 MB.");
                 buffer.Write(chunk, 0, count);
             }
-            form.ReceiptImage = buffer.ToArray();
+            draft.Text[ReceiptPathKey] = await StoreReceiptAsync(buffer.ToArray(), draft.Text.GetValueOrDefault(ReceiptPathKey));
             form.ReceiptImageContentType = file.ContentType;
             await SaveDraftAsync();
             Text($"Attached deposit slip: {file.FileName}");
@@ -160,11 +173,41 @@ public sealed class BankOperationsPage(
         Action("Save bank run (or retry)", async () =>
         {
             await ReadFormAsync();
-            await Api.PostAsync<BankRunFormModel, BankRunSaveResult>("bank-runs", form);
+            var receiptPath = draft.Text.GetValueOrDefault(ReceiptPathKey);
+            form.ReceiptImage = !string.IsNullOrEmpty(receiptPath) && File.Exists(receiptPath)
+                ? await File.ReadAllBytesAsync(receiptPath)
+                : null;
+            try
+            {
+                await Api.PostAsync<BankRunFormModel, BankRunSaveResult>("bank-runs", form);
+            }
+            finally
+            {
+                form.ReceiptImage = null;
+            }
             Drafts.Remove(UserId, key);
+            DeleteReceipt(receiptPath);
             await LoadAsync();
         });
         Action("Keep draft and return", LoadAsync);
+    }
+
+    private const string ReceiptPathKey = "receipt-path";
+
+    private static async Task<string> StoreReceiptAsync(byte[] content, string? replacedPath)
+    {
+        var directory = Path.Combine(FileSystem.AppDataDirectory, "banking-drafts");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, $"{Guid.NewGuid():N}.receipt");
+        await File.WriteAllBytesAsync(path, content);
+        DeleteReceipt(replacedPath);
+        return path;
+    }
+
+    private static void DeleteReceipt(string? path)
+    {
+        if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            File.Delete(path);
     }
 
     private async Task AdjustmentAsync(CurrentSessionDto current)
