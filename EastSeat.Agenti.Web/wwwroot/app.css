@@ -1,18 +1,91 @@
-/* Mobile: reduce main content horizontal padding */
-@media (max-width: 599.98px) {
-  .mud-main-content {
-    padding-left: 8px !important;
-    padding-right: 8px !important;
-  }
+:root {
+  font-family: "Roboto", sans-serif;
 }
 
-/* Ensure tables scroll horizontally as fallback */
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Roboto", sans-serif;
+}
+
+.mud-layout {
+  min-height: 100vh;
+  background-color: var(--mud-palette-background);
+}
+
+.app-topbar {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 24px rgba(13, 30, 52, 0.12) !important;
+}
+
+.app-brand-title {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.15;
+}
+
+.app-brand-subtitle {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  opacity: 0.72;
+}
+
+.app-drawer {
+  border-right: 1px solid var(--mud-palette-divider);
+}
+
+.app-drawer .mud-drawer-content {
+  padding: 0.75rem 0.65rem;
+}
+
+.app-drawer .mud-nav-link {
+  min-height: 44px;
+  margin: 2px 0;
+  border-radius: 10px;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.app-drawer .mud-nav-link.active {
+  color: var(--mud-palette-primary);
+  background-color: color-mix(in srgb, var(--mud-palette-primary) 10%, transparent);
+  font-weight: 600;
+}
+
+.app-main-content {
+  min-height: calc(100vh - 64px);
+  padding-right: clamp(12px, 2.4vw, 36px) !important;
+  padding-bottom: 2rem;
+  padding-left: clamp(12px, 2.4vw, 36px) !important;
+}
+
+.mud-card {
+  border: 1px solid var(--mud-palette-divider);
+  border-radius: 16px;
+  box-shadow: 0 6px 24px rgba(20, 37, 61, 0.05);
+}
+
+.mud-button-root:not(.mud-icon-button) {
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: none;
+}
+
 .mud-table-container {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
 
-/* Touch-friendly tap targets on mobile */
+a,
+.btn-link {
+  color: var(--mud-palette-primary);
+}
+
 @media (max-width: 959.98px) {
   .mud-icon-button {
     min-width: 44px;
@@ -20,9 +93,10 @@
   }
 }
 
-a,
-.btn-link {
-  color: #006bb7;
+@media (max-width: 599.98px) {
+  .app-brand-subtitle {
+    display: none;
+  }
 }
 
 .btn-primary {
