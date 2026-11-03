@@ -44,7 +44,8 @@ public class PendingTransactionService(
                 return PendingTransactionSaveResult.Error("This session is operationally closed.");
         }
         session ??= await dbContext.CashSessions
-            .Where(s => s.BranchId == branchId && s.SessionDate == today && s.Status == CashSessionStatus.Open)
+            .Where(s => s.BranchId == branchId && s.SessionDate == today && s.Status == CashSessionStatus.Open &&
+                        s.WorkflowVersion == SessionWorkflowVersion.Legacy)
             .FirstOrDefaultAsync();
 
         if (session == null)
