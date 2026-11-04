@@ -14,10 +14,14 @@
 <MudSnackbarProvider />
 
 <MudLayout>
-    <MudAppBar Elevation="1" Color="Color.Primary">
+    <MudAppBar Elevation="0" Color="Color.Default" Class="app-topbar">
         <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
-            OnClick="@ToggleDrawer" />
-        <MudText Typo="Typo.h6" Class="ml-3">Agenti ERP</MudText>
+            OnClick="@ToggleDrawer" aria-label="Toggle navigation" />
+        <MudIcon Icon="@Icons.Material.Filled.AccountBalance" Color="Color.Secondary" Size="Size.Medium" />
+        <MudStack Spacing="0" Class="ml-3">
+            <MudText Typo="Typo.h6" Class="app-brand-title">Agenti</MudText>
+            <MudText Typo="Typo.overline" Class="app-brand-subtitle">Branch operations</MudText>
+        </MudStack>
         <MudSpacer />
         <AuthorizeView>
             <Authorized>
@@ -62,12 +66,12 @@
         </AuthorizeView>
     </MudAppBar>
 
-    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="2"
+    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="0" Class="app-drawer"
         Variant="DrawerVariant.Responsive" Breakpoint="Breakpoint.Md">
         <NavMenu />
     </MudDrawer>
 
-    <MudMainContent Class="pt-16 px-4">
+    <MudMainContent Class="app-main-content pt-16 px-4">
         @Body
     </MudMainContent>
 </MudLayout>
