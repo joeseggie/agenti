@@ -159,3 +159,86 @@ h1:focus {
 .form-floating > .form-control:focus::placeholder {
   text-align: start;
 }
+
+.dashboard-page {
+  padding-bottom: 2rem;
+}
+
+.dashboard-heading {
+  margin-bottom: 1.5rem;
+}
+
+.dashboard-eyebrow {
+  color: var(--mud-palette-secondary);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.dashboard-title {
+  margin-bottom: 0.2rem;
+  font-weight: 700;
+}
+
+.dashboard-surface {
+  height: 100%;
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+
+.dashboard-surface:hover {
+  box-shadow: 0 12px 30px rgba(20, 37, 61, 0.10);
+}
+
+.session-status-card .mud-card-content {
+  padding: 1.4rem;
+}
+
+.dashboard-icon {
+  width: 44px;
+  height: 44px;
+}
+
+.session-chip {
+  font-weight: 600;
+}
+
+.dashboard-metrics,
+.dashboard-wallets {
+  margin-top: 1.25rem;
+}
+
+.metric-card .mud-card-content {
+  padding: 1.35rem;
+}
+
+.metric-value {
+  margin-top: 0.2rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.difference-card .mud-card-content {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 70%);
+}
+
+.wallets-heading {
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 599.98px) {
+  .dashboard-heading {
+    align-items: flex-start !important;
+  }
+
+  .dashboard-title {
+    font-size: 1.8rem;
+  }
+
+  .session-status-card .mud-card-content,
+  .metric-card .mud-card-content {
+    padding: 1rem;
+  }
+
+  .metric-value {
+    font-size: 1.15rem;
+  }
+}
