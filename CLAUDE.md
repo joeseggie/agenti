@@ -490,6 +490,7 @@ The `docs/` directory contains detailed documentation:
 - `DEVELOPMENT_GUIDE.md` - Development environment setup
 - `IMPLEMENTATION_SUMMARY.md` - Implementation overview
 - `VAULT_FEATURE_SUMMARY.md` - Vault feature details
+- `agenti-banking-business-workflow.md` - Customer banking and bank-statement reconciliation user workflow (with `.excalidraw`, `.svg` and `.png` diagrams)
 
 ## Common Development Tasks
 
