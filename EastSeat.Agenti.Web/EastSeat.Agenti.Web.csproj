@@ -24,6 +24,9 @@
     <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
     <PackageReference Include="Serilog.Sinks.ApplicationInsights" Version="4.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
+    <!-- Override vulnerable transitive dependencies from EF tooling. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.14" />
   </ItemGroup>
 
 </Project>
