@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2740" height="4725" viewBox="0 0 2740 4725" style="white-space:pre" font-family="Arial, Helvetica, sans-serif">
+<title>Agenti: verified bank workflow enrollment process</title>
+<desc>Swimlane process for enrolling one branch bank account in the verified bank workflow, steps E0 to E10 with decision gates G1 to G3, across business owner and finance, developer and release team, administrator, and teller and approver lanes.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto" markerUnits="strokeWidth"><path d="M1 1 L9 5 L1 9" fill="none" stroke="#495057" stroke-width="1.5"/></marker></defs>
+<rect width="2740" height="4725" fill="#ffffff"/>
+<rect x="80" y="220" width="2600" height="130" rx="12" fill="#FDE7E9" stroke="#D13438" stroke-width="2"/>
+<rect x="60" y="380" width="500" height="4200" rx="12" fill="none" stroke="#1864ab" stroke-width="2"/>
+<rect x="80" y="400" width="460" height="80" rx="12" fill="#a5d8ff" stroke="#1864ab" stroke-width="2"/>
+<rect x="600" y="380" width="500" height="4200" rx="12" fill="none" stroke="#862e9c" stroke-width="2"/>
+<rect x="620" y="400" width="460" height="80" rx="12" fill="#f3d9fa" stroke="#862e9c" stroke-width="2"/>
+<rect x="1140" y="380" width="1000" height="4200" rx="12" fill="none" stroke="#e67700" stroke-width="2"/>
+<rect x="1160" y="400" width="960" height="80" rx="12" fill="#fff3bf" stroke="#e67700" stroke-width="2"/>
+<rect x="2180" y="380" width="500" height="4200" rx="12" fill="none" stroke="#2f9e44" stroke-width="2"/>
+<rect x="2200" y="400" width="460" height="80" rx="12" fill="#b2f2bb" stroke="#2f9e44" stroke-width="2"/>
+<rect x="80" y="520" width="460" height="135" rx="12" fill="#a5d8ff" stroke="#1864ab" stroke-width="2"/>
+<rect x="80" y="735" width="460" height="225" rx="12" fill="#a5d8ff" stroke="#1864ab" stroke-width="2"/>
+<rect x="80" y="1040" width="460" height="315" rx="12" fill="#a5d8ff" stroke="#1864ab" stroke-width="2"/>
+<rect x="1160" y="1040" width="460" height="315" rx="12" fill="#fff3bf" stroke="#e67700" stroke-width="2"/>
+<rect x="620" y="1435" width="460" height="270" rx="12" fill="#f3d9fa" stroke="#862e9c" stroke-width="2"/>
+<rect x="2200" y="1435" width="460" height="270" rx="12" fill="#b2f2bb" stroke="#2f9e44" stroke-width="2"/>
+<rect x="620" y="1785" width="460" height="180" rx="12" fill="#dee2e6" stroke="#495057" stroke-width="2"/>
+<rect x="620" y="2045" width="460" height="225" rx="12" fill="#f3d9fa" stroke="#862e9c" stroke-width="2"/>
+<rect x="1160" y="2350" width="460" height="270" rx="12" fill="#fff3bf" stroke="#e67700" stroke-width="2"/>
+<rect x="1160" y="2700" width="460" height="225" rx="12" fill="#fff3bf" stroke="#e67700" stroke-width="2"/>
+<rect x="620" y="2700" width="460" height="315" rx="12" fill="#FDE7E9" stroke="#D13438" stroke-width="2"/>
+<rect x="1160" y="3005" width="460" height="225" rx="12" fill="#dee2e6" stroke="#495057" stroke-width="2"/>
+<rect x="1660" y="3005" width="460" height="225" rx="12" fill="#FDE7E9" stroke="#D13438" stroke-width="2"/>
+<rect x="1160" y="3310" width="460" height="225" rx="12" fill="#fff3bf" stroke="#e67700" stroke-width="2"/>
+<rect x="1160" y="3615" width="460" height="225" rx="12" fill="#dee2e6" stroke="#495057" stroke-width="2"/>
+<rect x="1660" y="3615" width="460" height="225" rx="12" fill="#FDE7E9" stroke="#D13438" stroke-width="2"/>
+<rect x="2200" y="3920" width="460" height="315" rx="12" fill="#b2f2bb" stroke="#2f9e44" stroke-width="2"/>
+<rect x="2200" y="4315" width="460" height="225" rx="12" fill="#b2f2bb" stroke="#2f9e44" stroke-width="2"/>
+<rect x="1660" y="4315" width="460" height="225" rx="12" fill="#fff3bf" stroke="#e67700" stroke-width="2"/>
+<polyline points="310,655 310,735" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="310,960 310,1040" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="540,847.5 1390,847.5 1390,1040" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="310,1355 310,1395 850,1395 850,1435" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="850,1705 850,1785" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="850,1965 850,2045" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="620,1875 200,1875 200,1355" fill="none" stroke="#495057" stroke-width="2" stroke-dasharray="10 7" marker-end="url(#arrow)"/>
+<polyline points="850,2270 850,2310 1390,2310 1390,2350" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="1620,1197.5 2430,1197.5 2430,1435" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="2430,1705 2430,2485 1620,2485" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="1390,2620 1390,2700" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="1390,2925 1390,3005" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="1390,3230 1390,3310" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="1620,3117.5 1660,3117.5" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="1890,3005 1890,2812.5 1620,2812.5" fill="none" stroke="#495057" stroke-width="2" stroke-dasharray="10 7" marker-end="url(#arrow)"/>
+<polyline points="1390,3535 1390,3615" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="1620,3727.5 1660,3727.5" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="1890,3615 1890,3422.5 1620,3422.5" fill="none" stroke="#495057" stroke-width="2" stroke-dasharray="10 7" marker-end="url(#arrow)"/>
+<polyline points="1390,3840 1390,3880 2430,3880 2430,3920" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="2430,4235 2430,4315" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="2200,4427.5 2120,4427.5" fill="none" stroke="#495057" stroke-width="2" stroke-dasharray="10 7" marker-end="url(#arrow)"/>
+<rect x="80" y="4626" width="40" height="28" rx="6" fill="#a5d8ff" stroke="#1864ab" stroke-width="2"/>
+<rect x="400" y="4626" width="40" height="28" rx="6" fill="#f3d9fa" stroke="#862e9c" stroke-width="2"/>
+<rect x="720" y="4626" width="40" height="28" rx="6" fill="#fff3bf" stroke="#e67700" stroke-width="2"/>
+<rect x="1040" y="4626" width="40" height="28" rx="6" fill="#b2f2bb" stroke="#2f9e44" stroke-width="2"/>
+<rect x="1360" y="4626" width="40" height="28" rx="6" fill="#dee2e6" stroke="#495057" stroke-width="2"/>
+<rect x="1680" y="4626" width="40" height="28" rx="6" fill="#FDE7E9" stroke="#D13438" stroke-width="2"/>
+<polyline points="2000,4640 2044,4640" fill="none" stroke="#495057" stroke-width="2" marker-end="url(#arrow)"/>
+<polyline points="2320,4640 2364,4640" fill="none" stroke="#495057" stroke-width="2" stroke-dasharray="10 7" marker-end="url(#arrow)"/>
+<text font-size="30" fill="#000000"><tspan x="80" y="73" font-weight="700">Agenti: Verified Bank Workflow Enrollment</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="80" y="128">Step-by-step enrollment of one branch bank account into the new-session (bank reconciliation) workflow | Web and Android</tspan><tspan x="80" y="173">Baseline: main 4ff05e1 (PR #94). Describes intended procedure after release; not proof of production deployment.</tspan></text>
+<text font-size="20" fill="#000000"><tspan x="100" y="267" font-weight="700">RELEASE GATE: E8 (enable) is impossible until a verified statement profile for this bank is installed (E1-E3).</tspan><tspan x="100" y="317">The inspected code registers none. E4-E6 can be prepared now; uploads stay private evidence. One active teller and one enrolled account per branch.</tspan></text>
+<text font-size="20" fill="#000000" text-anchor="middle"><tspan x="310" y="447" font-weight="700">BUSINESS OWNER / FINANCE</tspan></text>
+<text font-size="20" fill="#000000" text-anchor="middle"><tspan x="850" y="447" font-weight="700">DEVELOPER / RELEASE TEAM</tspan></text>
+<text font-size="20" fill="#000000" text-anchor="middle"><tspan x="1640" y="447" font-weight="700">ADMINISTRATOR</tspan></text>
+<text font-size="20" fill="#000000" text-anchor="middle"><tspan x="2430" y="447" font-weight="700">TELLER AND APPROVERS</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="100" y="570.5" font-weight="700">START</tspan><tspan x="100" y="615.5">Decision to enroll one branch account</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="100" y="785.5" font-weight="700">E0  AGREE SCOPE AND OWNERS</tspan><tspan x="100" y="830.5">In: branch, the one teller, the one bank</tspan><tspan x="100" y="875.5">account, approvers, finance sign-off owner</tspan><tspan x="100" y="920.5">Out: named people and a target date</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="100" y="1113" font-weight="700">E1  COLLECT BANK SAMPLES</tspan><tspan x="100" y="1158">In: redacted statements for each format</tspan><tspan x="100" y="1203">used (CSV, XLSX, selectable-text PDF),</tspan><tspan x="100" y="1248">incl. zero-activity and overlapping periods</tspan><tspan x="100" y="1293">Out: sample set + expected values</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="1180" y="1090.5" font-weight="700">E4  PREPARE PEOPLE AND WALLETS</tspan><tspan x="1180" y="1135.5">Teller user (Role Agent) auto-creates the</tspan><tspan x="1180" y="1180.5">agent; one active Cash + one active Bank</tspan><tspan x="1180" y="1225.5">Account wallet, same currency; other</tspan><tspan x="1180" y="1270.5">approvers; fund the vault if it is short</tspan><tspan x="1180" y="1315.5">Out: the branch&apos;s only active agent</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="640" y="1485.5" font-weight="700">E2  BUILD THE STATEMENT PROFILE</tspan><tspan x="640" y="1530.5">In: E1 samples</tspan><tspan x="640" y="1575.5">Implement IStatementImportProfile;</tspan><tspan x="640" y="1620.5">golden-fixture tests per format</tspan><tspan x="640" y="1665.5">Out: profile + passing tests</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="2220" y="1485.5" font-weight="700">E5  CLOSE OUT LEGACY OPERATIONS</tspan><tspan x="2220" y="1530.5">Finish every legacy session (Closed);</tspan><tspan x="2220" y="1575.5">the teller&apos;s last approved legacy closing</tspan><tspan x="2220" y="1620.5">must include the bank wallet</tspan><tspan x="2220" y="1665.5">Out: no open legacy session</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="640" y="1835.5" font-weight="700">G1  PROFILE VERIFIED?</tspan><tspan x="640" y="1880.5">Golden fixtures pass, balances reconcile,</tspan><tspan x="640" y="1925.5">finance signs off basis and identity</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="640" y="2095.5" font-weight="700">E3  RELEASE THE PROFILE</tspan><tspan x="640" y="2140.5">Set IsVerified = true; register in</tspan><tspan x="640" y="2185.5">Program.cs; deploy the web application</tspan><tspan x="640" y="2230.5">Out: profile listed as verified</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="1180" y="2400.5" font-weight="700">E6  REGISTER THE BANK ACCOUNT</tspan><tspan x="1180" y="2445.5">In: agent bank wallet, bank name, account</tspan><tspan x="1180" y="2490.5">identifier on statement, time zone,</tspan><tspan x="1180" y="2535.5">confirmed balance basis, verified profile</tspan><tspan x="1180" y="2580.5">Out: binding saved; enrollment Paused</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="1180" y="2750.5" font-weight="700">E7  TRIAL IMPORT</tspan><tspan x="1180" y="2795.5">Upload a recent original statement;</tspan><tspan x="1180" y="2840.5">Refresh preview until processing ends</tspan><tspan x="1180" y="2885.5">Out: ReadyForReview or Failed + errors</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="640" y="2750.5" font-weight="700">NOTE  CURRENT RELEASE</tspan><tspan x="640" y="2795.5">The inspected code registers no verified</tspan><tspan x="640" y="2840.5">statement profile. Until E3 ships: E4-E6</tspan><tspan x="640" y="2885.5">can be prepared (binding without a</tspan><tspan x="640" y="2930.5">profile), uploads remain private evidence,</tspan><tspan x="640" y="2975.5">and E8 stays blocked by gate G3.</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="1180" y="3078" font-weight="700">G2  PREVIEW CORRECT?</tspan><tspan x="1180" y="3123">ReadyForReview, 0 errors, coverage and</tspan><tspan x="1180" y="3168">balances match the bank&apos;s figures</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="1680" y="3055.5" font-weight="700">FIX  CONFIGURATION OR PROFILE</tspan><tspan x="1680" y="3100.5">Admin corrects account settings, or the</tspan><tspan x="1680" y="3145.5">developer fixes and redeploys the profile;</tspan><tspan x="1680" y="3190.5">then Reprocess as new revision</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="1180" y="3360.5" font-weight="700">E8  ENABLE NEW-SESSION WORKFLOW</tspan><tspan x="1180" y="3405.5">Select Refresh, then Enable new-session</tspan><tspan x="1180" y="3450.5">workflow (Android: confirm the dialog)</tspan><tspan x="1180" y="3495.5">Out: New-session enrollment: Enabled</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="1180" y="3665.5" font-weight="700">G3  ALL ENABLE GATES PASS?</tspan><tspan x="1180" y="3710.5">Verified profile + basis; 1 active agent;</tspan><tspan x="1180" y="3755.5">1 Cash + 1 Bank wallet; no open legacy</tspan><tspan x="1180" y="3800.5">session; one currency</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="1680" y="3688" font-weight="700">FIX  THE REPORTED PREREQUISITE</tspan><tspan x="1680" y="3733">Read the message; correct users, wallets,</tspan><tspan x="1680" y="3778">sessions or profile; then Refresh</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="2220" y="3970.5" font-weight="700">E9  DAY ONE (NEXT BUSINESS DATE)</tspan><tspan x="2220" y="4015.5">Teller: opening count, each wallet once</tspan><tspan x="2220" y="4060.5">with observation time -&gt; submit</tspan><tspan x="2220" y="4105.5">Another Admin/Supervisor approves; trade;</tspan><tspan x="2220" y="4150.5">submit closing; another Admin reconciles</tspan><tspan x="2220" y="4195.5">and certifies the closing</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="2220" y="4388" font-weight="700">END  BRANCH ENROLLED</tspan><tspan x="2220" y="4433">Daily cycle per the business workflow</tspan><tspan x="2220" y="4478">(D1-D9, R1-R6)</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="1680" y="4365.5" font-weight="700">E10  LATER CHANGES</tspan><tspan x="1680" y="4410.5">Pause stops new openings once modern</tspan><tspan x="1680" y="4455.5">sessions exist; new profile versions</tspan><tspan x="1680" y="4500.5">repeat E1-E3 and the trial import (E7)</tspan></text>
+<text font-size="16" fill="#000000"><tspan x="640" y="832.5">in parallel</tspan></text>
+<text font-size="16" fill="#000000"><tspan x="862" y="2010">Yes</tspan></text>
+<text font-size="16" fill="#000000"><tspan x="225" y="1842">No: more samples</tspan><tspan x="225" y="1862">or fixes</tspan></text>
+<text font-size="16" fill="#000000"><tspan x="880" y="2333">profile installed</tspan></text>
+<text font-size="16" fill="#000000"><tspan x="1402" y="3275">Yes</tspan></text>
+<text font-size="16" fill="#000000"><tspan x="1626" y="3104.5">No</tspan></text>
+<text font-size="16" fill="#000000"><tspan x="1700" y="2799.5">retry</tspan></text>
+<text font-size="16" fill="#000000"><tspan x="1626" y="3714.5">No</tspan></text>
+<text font-size="16" fill="#000000"><tspan x="1700" y="3409.5">retry</tspan></text>
+<text font-size="16" fill="#000000"><tspan x="1402" y="3865">Yes</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="140" y="4646">Business owner / finance</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="460" y="4646">Developer / release team</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="780" y="4646">Administrator</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="1100" y="4646">Teller and approvers</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="1420" y="4646">Decision gate</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="1740" y="4646">Fix or warning</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="2060" y="4646">Next step</tspan></text>
+<text font-size="18" fill="#000000"><tspan x="2380" y="4646">Retry loop or later change</tspan></text>
+</svg>
