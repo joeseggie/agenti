@@ -491,6 +491,7 @@ The `docs/` directory contains detailed documentation:
 - `IMPLEMENTATION_SUMMARY.md` - Implementation overview
 - `VAULT_FEATURE_SUMMARY.md` - Vault feature details
 - `agenti-banking-business-workflow.md` - Customer banking and bank-statement reconciliation user workflow (with `.excalidraw`, `.svg` and `.png` diagrams)
+- `bank-workflow-enrollment-guide.md` - Step-by-step verified bank workflow enrollment guide (with `.excalidraw`, `.svg` and `.png` diagrams)
 
 ## Common Development Tasks
 

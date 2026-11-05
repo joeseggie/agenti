@@ -57,6 +57,8 @@ An approver cannot approve their own modern opening, review their own modern wal
 | **A2 - Admin** | Open Statements and Accounts; select **Register a bank account**, then **Save account binding**. | Existing agent bank wallet; bank name; account identifier as shown on statements; statement timezone; confirmed balance basis (Ledger, Available or Float); installed statement profile. Currency comes from the wallet. | A bank-account record bound to the existing wallet. No money moves and old sessions remain unchanged. | Wrong branch, inactive wallet or duplicate wallet binding is rejected. Account identity, timezone and balance basis cannot be casually rewritten after activity. |
 | **A3 - Admin** | Select the account and **Enable new-session workflow**. | Active account and wallets; verified matching profile/balance basis; completed legacy sessions; one active agent, one enrolled bank account, one active cash wallet and one active bank wallet in the branch; consistent wallet currency. | Eligible new sessions use the new workflow. Existing sessions retain their version/history. | Validation explains the unmet prerequisite. Pausing enrollment later stops new enrollment; it does not turn modern sessions back into legacy ones. |
 
+For the detailed enrollment procedure, prerequisites, enable gates and troubleshooting, see [Bank workflow enrollment guide](bank-workflow-enrollment-guide.md).
+
 ## 4. Daily agent workflow
 
 | ID / actor | User action | Expected inputs | Output / outcome | Decision / next step |
