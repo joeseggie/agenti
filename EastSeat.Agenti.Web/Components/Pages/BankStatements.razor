@@ -41,10 +41,10 @@
                     <MudSelect T="BankBalanceBasis" Label="Confirmed balance basis" @bind-Value="_newAccount.BalanceBasis">
                         @foreach (var basis in Enum.GetValues<BankBalanceBasis>()) { <MudSelectItem T="BankBalanceBasis" Value="@basis">@basis</MudSelectItem> }
                     </MudSelect>
-                    <MudSelect T="string" Label="Verified statement profile" @bind-Value="_newAccount.ImportProfileKey" Clearable="true">
+                    <MudSelect T="string" Label="Statement profile" @bind-Value="_newAccount.ImportProfileKey" Clearable="true">
                         @foreach (var profile in _setup.Profiles)
                         {
-                            <MudSelectItem T="string" Value="@profile.Key">@profile.DisplayName</MudSelectItem>
+                            <MudSelectItem T="string" Value="@profile.Key">@profile.DisplayName@(profile.IsVerified ? "" : " (not verified)")</MudSelectItem>
                         }
                     </MudSelect>
                     <MudButton OnClick="CreateAccountAsync" Disabled="Busy" Color="Color.Primary" Variant="Variant.Filled">Save account binding</MudButton>
@@ -79,7 +79,7 @@
                         @foreach (var basis in Enum.GetValues<BankBalanceBasis>()) { <MudSelectItem T="BankBalanceBasis" Value="@basis">@basis</MudSelectItem> }
                     </MudSelect>
                     <MudSelect T="string" Label="Statement profile" @bind-Value="_editAccount.ImportProfileKey" Clearable="true">
-                        @foreach (var profile in _setup!.Profiles) { <MudSelectItem T="string" Value="@profile.Key">@profile.DisplayName</MudSelectItem> }
+                        @foreach (var profile in _setup!.Profiles) { <MudSelectItem T="string" Value="@profile.Key">@profile.DisplayName@(profile.IsVerified ? "" : " (not verified)")</MudSelectItem> }
                     </MudSelect>
                     <MudButton OnClick="ConfigureAsync" Disabled="Busy">Save configuration</MudButton>
                 </MudExpansionPanel>

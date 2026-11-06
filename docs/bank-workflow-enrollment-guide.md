@@ -8,11 +8,13 @@ This guide is the step-by-step procedure for enrolling one branch's bank account
 
 This is a description of the implementation and its intended operating procedure after release, not confirmation that it is deployed or enabled in production. No production data was accessed to prepare it.
 
-**Release gate:** the inspected application registers no statement profile; `EastSeat.Agenti.Web\Program.cs:176` registers only the empty profile catalog. Until steps E1-E3 install a verified profile, **Statements and Accounts** shows the warning below and enabling fails gate 1 (G3):
+**Release gate:** the application registers a Centenary agency-float XLSX candidate, but it is explicitly unverified. No bank profile can parse statements or pass enable gate 1 until it passes G1 and is released as verified. The **Statements and Accounts** warning remains while no profile is verified:
 
 > No bank-specific importer is verified yet. Representative redacted CSV, Excel and selectable-text PDF samples must be verified before activation. Files can be retained as private evidence; they will not be treated as successfully parsed statements.
 
 Steps E4-E6 can be prepared now.
+
+For the Centenary XLSX candidate's exact preparation, mapping, date-only limitation and additional sample requirements, see [Centenary agency-float XLSX statement profile](centenary-agency-float-statement-profile.md).
 
 Companion files:
 
@@ -137,6 +139,8 @@ For each sample, finance records the values the profile must reproduce:
 | Whether transaction numbers are unique and stable across overlapping statements | Decides whether the profile can return a reliable identity. |
 | Timestamp precision (date only, or date and time) | Sets `HasPreciseTimestamp`. |
 
+**Date-only timestamps are a release blocker for this reconciliation workflow.** A row assigned only to a business date cannot establish a precise session cutoff balance or the midnight coverage bridge on an active day. Require a timed bank export or an approved, tested engine change before signing off a date-only profile; never fabricate times. For the current Centenary candidate, see the [profile-specific limitation and options](centenary-agency-float-statement-profile.md#status-and-release-gate).
+
 ### E2 - Build the statement profile
 
 A statement profile is a C# class that implements `IStatementImportProfile` (`EastSeat.Agenti.Web\Features\BankStatements\StatementProfile.cs`). Each account uses one profile, so the profile must list every content type the branch will upload.
@@ -196,7 +200,7 @@ Field limits: `Currency` is 3 characters; `SourceLocation` is required and at mo
 
 Default processing limits (section 10): 10,000 rows per statement, 120 seconds per import and 5,242,880 bytes per file.
 
-Parser libraries: the inspected code references no CSV, Excel or PDF parsing library. CSV can be read with the .NET base class library; XLSX and PDF need a maintained library whose licence has been reviewed. Don't use OCR, run macros, follow external workbook links or send statements to outside services.
+Parser libraries: the Centenary candidate uses a bounded reader built on .NET `ZipArchive` and `XmlReader`; it does not evaluate formulas or follow external workbook links. For other bank layouts, choose a maintained parser and review its licence. Don't use OCR, run macros or send statements to outside services.
 
 **Skeleton** (`EastSeat.Agenti.Web\Features\BankStatements\ExampleBankCsvStatementProfile.cs`; the names and values are placeholders):
 
@@ -296,6 +300,7 @@ Pass only when all of these hold:
 - The golden-fixture tests pass for every sample and format.
 - Each statement's opening balance plus its movements equals its closing balance, and every running balance reconciles.
 - The identifier, currency, basis, coverage, row count and totals equal finance's expected values.
+- Timestamp precision supports session cutoffs and overnight coverage; unresolved date-only activity blocks approval.
 - Credits are positive and debits negative.
 - Reliable identities are unique across overlapping samples, or the profile returns `null`.
 - Unreadable or damaged files throw `StatementParsingException` and never return partial data.
@@ -307,7 +312,8 @@ If a check fails, go back to E1 for missing samples or expected values, or to E2
 
 1. Set `IsVerified => true`, keep the registration and merge through a reviewed pull request.
 2. Deploy the web application through the normal pipeline ([CI/CD pipeline](CI_CD_PIPELINE.md)).
-3. Sign in as the enrolling Admin and open **Bank Reconciliation** > **Statements and Accounts**. The release-gate warning is gone and the profile is listed under **Verified statement profile**. Over the API, `GET /api/banking/admin/accounts/setup` lists the profile with `isVerified: true`.
+3. Sign in as the enrolling Admin and open **Bank Reconciliation** > **Statements and Accounts**. The profile is marked verified. Over the API, `GET /api/banking/admin/accounts/setup` lists it with `isVerified: true`.
+4. If the account was bound while this profile was unverified, edit **Account configuration**, select the now-verified profile, and **Save configuration** again. The account's verified-profile flag is captured on save; deployment alone does not update it.
 
 ### E4 - Prepare people and wallets
 
@@ -359,13 +365,13 @@ Gate 4 blocks enabling while a legacy session is active: "Finish active legacy s
 | Account identifier shown on statement | Exactly as printed, for example `0123456789` | Required; up to 256 characters; leading zeros are kept. Statements must show the same identifier. |
 | Statement time zone | `Africa/Kampala`, unless finance says otherwise | Must be a valid time zone. |
 | Confirmed balance basis | Ledger, Available or Float | Must match the profile. "Unverified" can be saved but blocks enabling. |
-| Verified statement profile | The profile released in E3 | Optional now; needed for E7 and E8. |
+| Statement profile | The profile released in E3 | Optional now; needed for E7 and E8. Unverified choices are labeled **(not verified)** and cannot process statements or enable the workflow. |
 
 Select **Save account binding**. The account then shows "New-session enrollment: Paused". Its currency comes from the wallet.
 
 To change the settings later, select **Refresh**, choose the account under **Bank account**, edit **Account configuration** and select **Save configuration**.
 
-**Android:** open **Bank statements** from the menu and tap **Configure a bank account**. Fill in "Bank wallet", "Bank name", "Bank account identifier", "Bank timezone identifier", "Balance basis" and "Verified import profile", then tap **Save account configuration**, or **Keep draft and return** to finish later. To change the settings later, tap **Edit: {bank name}**. Until an account exists, the list shows "No bank accounts configured. Link the branch's bank wallet first." While no verified profile is installed, the form shows "No verified production import profiles are installed. Original files can still be retained privately." in place of the profile list.
+**Android:** open **Bank statements** from the menu and tap **Configure a bank account**. Fill in "Bank wallet", "Bank name", "Bank account identifier", "Bank timezone identifier", "Balance basis" and "Import profile", then tap **Save account configuration**, or **Keep draft and return** to finish later. Unverified profiles are labeled **(not verified)**. To change the settings later, tap **Edit: {bank name}**. Until an account exists, the list shows "No bank accounts configured. Link the branch's bank wallet first." When no verified profile is installed, the form shows "No verified production import profiles are installed. Original files can still be retained privately."
 
 | Message | Fix |
 |---|---|
@@ -384,6 +390,8 @@ To change the settings later, select **Refresh**, choose the account under **Ban
 ### E7 - Trial import
 
 Prove the profile works on a real, current statement before enabling.
+
+For the Centenary candidate, use only the original, unedited XLSX. Since **Date To** is inclusive and coverage ends at midnight after that date in the account time zone, generate and download the report only after the next day has begun. Delaying import of a report generated earlier does not establish full-day coverage. This timing does not resolve the candidate's separate date-only timestamp blocker.
 
 1. Download a recent original statement from the bank. Don't open and re-save it in Excel or another editor.
 2. **Web:** on **Statements and Accounts**, choose the account under **Bank account**. In **Upload the bank's source file**, choose the file and select **Upload and prepare preview**.
