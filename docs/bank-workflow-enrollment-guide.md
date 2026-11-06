@@ -391,7 +391,7 @@ To change the settings later, select **Refresh**, choose the account under **Ban
 
 Prove the profile works on a real, current statement before enabling.
 
-For the Centenary candidate, use only the original, unedited XLSX. Since **Date To** is inclusive and coverage ends at midnight after that date in the account time zone, wait until the next day has begun before importing. This next-morning timing does not resolve the candidate's separate date-only timestamp blocker.
+For the Centenary candidate, use only the original, unedited XLSX. Since **Date To** is inclusive and coverage ends at midnight after that date in the account time zone, generate and download the report only after the next day has begun. Delaying import of a report generated earlier does not establish full-day coverage. This timing does not resolve the candidate's separate date-only timestamp blocker.
 
 1. Download a recent original statement from the bank. Don't open and re-save it in Excel or another editor.
 2. **Web:** on **Statements and Accounts**, choose the account under **Bank account**. In **Upload the bank's source file**, choose the file and select **Upload and prepare preview**.

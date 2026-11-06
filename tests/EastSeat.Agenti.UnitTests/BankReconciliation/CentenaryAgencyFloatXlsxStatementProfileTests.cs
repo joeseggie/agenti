@@ -152,6 +152,8 @@ public class CentenaryAgencyFloatXlsxStatementProfileTests
     [InlineData("macro", "macros or external links")]
     [InlineData("external-link", "macros or external links")]
     [InlineData("external-relationship", "macros or external links")]
+    [InlineData("macro-relationship", "macros or external links")]
+    [InlineData("external-link-relationship", "macros or external links")]
     [InlineData("relationship-traversal", "relationships are invalid")]
     public async Task Read_RejectsUnsafeOrAmbiguousPackages(string change, string message)
     {
@@ -185,6 +187,16 @@ public class CentenaryAgencyFloatXlsxStatementProfileTests
                 Replace(parts, RelationshipsPart, "</Relationships>",
                     $"<Relationship Id=\"rId9\" Type=\"{DocumentRelationships}/externalLinkPath\" " +
                     "Target=\"https://example.invalid/book.xlsx\" TargetMode=\"External\"/></Relationships>");
+                break;
+            case "macro-relationship":
+                Replace(parts, RelationshipsPart, "</Relationships>",
+                    $"<Relationship Id=\"rId9\" Type=\"{DocumentRelationships}/vbaProject\" " +
+                    "Target=\"project.bin\"/></Relationships>");
+                break;
+            case "external-link-relationship":
+                Replace(parts, RelationshipsPart, "</Relationships>",
+                    $"<Relationship Id=\"rId9\" Type=\"{DocumentRelationships}/externalLink\" " +
+                    "Target=\"custom-link.xml\"/></Relationships>");
                 break;
             case "relationship-traversal":
                 Replace(parts, RelationshipsPart, "Target=\"worksheets/sheet1.xml\"", "Target=\"../worksheets/sheet1.xml\"");
@@ -221,6 +233,23 @@ public class CentenaryAgencyFloatXlsxStatementProfileTests
             XlsxWorksheetReader.ReadSingleWorksheetAsync(new MemoryStream(Zip(Parts(Standard()))), CancellationToken.None, limits));
 
         Assert.Contains(message, error.Message);
+    }
+
+    [Fact]
+    public async Task Read_EnforcesAggregateResolvedCellTextLimit()
+    {
+        var parts = Parts(Standard());
+        var repeatedValue = string.Join("", Enumerable.Range(1, 20)
+            .Select(column => $"""<c r="{ColumnName(column)}100" t="s"><v>0</v></c>"""));
+        Replace(parts, "xl/sharedStrings.xml", "Account Number : ", new string('x', 10_000));
+        Replace(parts, SheetPart, "</sheetData>", $"<row r=\"100\">{repeatedValue}</row></sheetData>");
+
+        var error = await Assert.ThrowsAsync<StatementParsingException>(() =>
+            XlsxWorksheetReader.ReadSingleWorksheetAsync(
+                new MemoryStream(Zip(parts)), CancellationToken.None,
+                new XlsxReadLimits(MaximumTotalTextCharacters: 50_000)));
+
+        Assert.Contains("too much text", error.Message);
     }
 
     [Fact]

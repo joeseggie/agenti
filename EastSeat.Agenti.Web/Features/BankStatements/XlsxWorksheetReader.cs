@@ -11,7 +11,8 @@ public sealed record XlsxReadLimits(
     long MaximumPartBytes = 16 * 1024 * 1024,
     long MaximumTotalPartBytes = 32 * 1024 * 1024,
     int MaximumCells = 200_000,
-    int MaximumSharedStrings = 200_000)
+    int MaximumSharedStrings = 200_000,
+    long MaximumTotalTextCharacters = 16 * 1024 * 1024)
 {
     public static XlsxReadLimits Default { get; } = new();
 }
@@ -74,6 +75,7 @@ public static class XlsxWorksheetReader
             using var archive = new ZipArchive(package, ZipArchiveMode.Read);
             var parts = IndexParts(archive, limits);
             var budget = new ReadBudget(limits.MaximumTotalPartBytes);
+            var textBudget = new TextBudget(limits.MaximumTotalTextCharacters);
             var (sheetName, sheetRelationshipId) = ReadWorkbook(parts, limits, budget);
             var relationships = ReadRelationships(parts, limits, budget);
             if (!relationships.TryGetValue(sheetRelationshipId, out var sheetRelationship) ||
@@ -86,7 +88,7 @@ public static class XlsxWorksheetReader
             var strings = sharedStringTargets.Count == 0
                 ? []
                 : ReadSharedStrings(parts, ResolvePart(sharedStringTargets[0].Target), limits, budget, cancellationToken);
-            var cells = ReadCells(parts, ResolvePart(sheetRelationship.Target), strings, limits, budget, cancellationToken);
+            var cells = ReadCells(parts, ResolvePart(sheetRelationship.Target), strings, limits, budget, textBudget, cancellationToken);
             return new XlsxWorksheet(sheetName, cells);
         }
         catch (Exception exception) when (exception is InvalidDataException or XmlException or IOException or
@@ -169,7 +171,9 @@ public static class XlsxWorksheetReader
             var target = reader.GetAttribute("Target");
             if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(type) || string.IsNullOrWhiteSpace(target))
                 throw Fail("The workbook relationships are invalid.");
-            if (string.Equals(reader.GetAttribute("TargetMode"), "External", StringComparison.OrdinalIgnoreCase))
+            if (type.EndsWith("/vbaProject", StringComparison.Ordinal) ||
+                type.EndsWith("/externalLink", StringComparison.Ordinal) ||
+                string.Equals(reader.GetAttribute("TargetMode"), "External", StringComparison.OrdinalIgnoreCase))
                 throw Fail("The workbook contains macros or external links. Upload the original bank export unedited.");
             if (!relationships.TryAdd(id, (type, target)))
                 throw Fail("The workbook relationships are invalid.");
@@ -199,7 +203,7 @@ public static class XlsxWorksheetReader
 
     private static Dictionary<(int Row, int Column), XlsxCell> ReadCells(
         Dictionary<string, ZipArchiveEntry> parts, string partName, IReadOnlyList<string> strings,
-        XlsxReadLimits limits, ReadBudget budget, CancellationToken cancellationToken)
+        XlsxReadLimits limits, ReadBudget budget, TextBudget textBudget, CancellationToken cancellationToken)
     {
         using var reader = OpenPart(parts, partName, limits, budget);
         RequireRoot(reader, "worksheet");
@@ -213,14 +217,14 @@ public static class XlsxWorksheetReader
                 throw Fail("The worksheet repeats its cell table.");
             sheetDataSeen = true;
             if (!reader.IsEmptyElement)
-                ReadSheetData(reader, strings, cells, limits, cancellationToken);
+                ReadSheetData(reader, strings, cells, limits, textBudget, cancellationToken);
         }
         return sheetDataSeen ? cells : throw Fail("The worksheet has no cell table.");
     }
 
     private static void ReadSheetData(
         XmlReader reader, IReadOnlyList<string> strings, Dictionary<(int Row, int Column), XlsxCell> cells,
-        XlsxReadLimits limits, CancellationToken cancellationToken)
+        XlsxReadLimits limits, TextBudget textBudget, CancellationToken cancellationToken)
     {
         var depth = reader.Depth;
         var previousRow = 0;
@@ -257,6 +261,7 @@ public static class XlsxWorksheetReader
                 var cell = ReadCell(reader, row, ref previousColumn, strings);
                 if (cell == null)
                     continue;
+                textBudget.Consume(cell.Value);
                 if (cells.Count >= limits.MaximumCells)
                     throw Fail("The worksheet contains too many cells.");
                 cells.Add((cell.Row, cell.Column), cell);
@@ -442,6 +447,18 @@ public static class XlsxWorksheetReader
             _used += bytes;
             if (_used > limit)
                 throw Fail("The workbook expands beyond the supported size.");
+        }
+    }
+
+    private sealed class TextBudget(long limit)
+    {
+        private long _used;
+
+        public void Consume(string value)
+        {
+            if (value.Length > limit - _used)
+                throw Fail("The workbook contains too much text.");
+            _used += value.Length;
         }
     }
 

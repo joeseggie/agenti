@@ -10,16 +10,16 @@ Before release, choose and verify one of these paths:
 
 1. **Preferred:** ask Centenary for an export that includes transaction times and confirm what those times mean (occurrence vs posting). Add samples from that export and test them against finance-approved expected values.
 2. **Engine change:** approve a scoped reconciliation change to anchor a date-only row to an exactly matched register leg on that business date and allow only unambiguous exact-midnight boundaries. Unmatched date-only rows must continue to block approval. This requires design review and tests across session cutoffs, overnight bridges, matching and reconciliation basis hashes.
-3. **Evidence-based corrections:** until either path is released, an authorized reviewer may use **Correct extraction** to add exact times supported by receipts or other original bank evidence. Corrections are audited; they are manual and must preserve bank ledger order. Never infer times from reference patterns.
+3. **Post-verification corrections:** after either release path is implemented and the profile is verified, an authorized reviewer may use **Correct extraction** to add exact times supported by receipts or other original bank evidence. Corrections are audited; they are manual and must preserve bank ledger order. They are not an interim way to proceed before verification. Never infer times from reference patterns.
 
 G1 also requires more redacted Centenary examples: an empty day, overlapping and multi-day periods, reversals and fees, and a mid-day export. Finance must confirm the Ledger basis, account identity and row mapping. Keep original statements and unredacted data outside the public repository.
 
 ## Prepare each export
 
-- Download the original **Account Transaction Report** from Centenary for the desired account and period.
+- Generate and download the original **Account Transaction Report** from Centenary for the desired account and period only after that period's end-of-period boundary has passed. Delaying import of a report generated earlier does not establish full-period coverage.
 - Use one business day per file for the daily close process. Do not edit cells, rename sheets, remove rows, convert amounts, or open and re-save the workbook in Excel or another editor. Re-saving can change text cells or workbook parts and causes strict validation to reject the file.
 - Keep the bank-provided `.xlsx` intact. Do not upload a screenshot, CSV conversion, or copied/pasted worksheet as this profile only accepts the original XLSX format.
-- Wait until the statement's end-of-period boundary has passed before importing. A statement whose **Date To** is day D covers through midnight at the start of D+1 in the account time zone, so Agenti rejects it as future coverage until that boundary. In practice, import after midnight on the following day.
+- A statement whose **Date To** is day D covers through midnight at the start of D+1 in the account time zone. Generate and download it only after that boundary; a report generated during day D may omit later transactions even if imported after midnight.
 - Confirm with finance that the requested bank statement is complete and its opening, closing and movement totals agree with the bank portal. A ready-to-review preview does not certify the closing; the profile must be verified and the transaction-time limitation resolved first.
 
 ## Profile mapping
