@@ -165,7 +165,10 @@ export function CashCountEditor({ initial }: { initial: CashCountForm }) {
       <Field
         label="Explanation / discrepancy notes"
         value={explanation}
-        onChangeText={setExplanation}
+        onChangeText={(text) => {
+          setExplanation(text);
+          setNotice(null);
+        }}
         multiline
         editable={!pending && !form.isReadOnly}
       />

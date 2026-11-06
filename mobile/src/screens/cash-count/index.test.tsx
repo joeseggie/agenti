@@ -73,6 +73,11 @@ test('failed cash count save preserves the draft and a deliberate retry persists
       walletEntries: [expect.objectContaining({ walletId: 1, countedAmount: 250.5 })],
     }),
   );
+  await fireEvent.changeText(
+    screen.getByLabelText('Explanation / discrepancy notes'),
+    'Revised explanation, not saved yet',
+  );
+  expect(screen.queryByText('Draft saved')).toBeNull();
 });
 
 test('failed submission keeps the saved count ID for retry and navigates only after success', async () => {
