@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using EastSeat.Agenti.Web.Features.Dashboard;
+using EastSeat.Agenti.Shared.Services;
 
 namespace EastSeat.Agenti.Web.Features.Api;
 
@@ -12,6 +13,7 @@ public static class DashboardEndpoints
     {
         group.MapGet("/", async (
             ClaimsPrincipal principal,
+            IBankingAccessService access,
             IDashboardService dashboardService) =>
         {
             var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier)
@@ -20,7 +22,8 @@ public static class DashboardEndpoints
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();
 
-            var dashboard = await dashboardService.GetDashboardAsync(userId);
+            var actor = await ApiAccess.ActorAsync(principal, access);
+            var dashboard = await dashboardService.GetDashboardAsync(userId, actor.BranchId, ApiAccess.AgentFilter(actor));
             return Results.Ok(ApiResponse<DashboardViewModel>.Ok(dashboard));
         })
         .RequireAuthorization()

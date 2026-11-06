@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using EastSeat.Agenti.Shared.Services;
+using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.CashCounts;
 using EastSeat.Agenti.Web.Features.CashSessions;
 
@@ -11,20 +13,28 @@ public static class CashSessionEndpoints
 {
     public static RouteGroupBuilder MapCashSessionsApi(this RouteGroupBuilder group)
     {
-        group.MapGet("/", async (long? branchId, ICashSessionService cashSessionService) =>
+        group.MapGet("/", async (long? branchId, ClaimsPrincipal principal,
+            IBankingAccessService access, ICashSessionService cashSessionService) =>
         {
-            var sessions = await cashSessionService.GetCashSessionsAsync(branchId);
+            var actor = await ApiAccess.ActorAsync(principal, access);
+            ApiAccess.RequireBranch(actor, branchId ?? actor.BranchId);
+            var sessions = await cashSessionService.GetCashSessionsAsync(actor.BranchId, ApiAccess.AgentFilter(actor));
             return Results.Ok(ApiResponse<List<CashSessionListItemDto>>.Ok(sessions));
         })
         .RequireAuthorization()
         .WithName("GetCashSessions")
-        .WithSummary("Get all cash sessions");
+        .WithSummary("Get cash sessions in the user's branch, limited to own counts for agents");
 
         group.MapGet("/{sessionId:long}", async (
             long sessionId,
+            ClaimsPrincipal principal,
+            IBankingAccessService access,
+            ApplicationDbContext db,
             ICashSessionService cashSessionService) =>
         {
-            var session = await cashSessionService.GetCashSessionDetailAsync(sessionId);
+            var actor = await ApiAccess.ActorAsync(principal, access);
+            await ApiAccess.RequireSessionAsync(actor, db, sessionId);
+            var session = await cashSessionService.GetCashSessionDetailAsync(sessionId, ApiAccess.AgentFilter(actor));
             return session is null
                 ? Results.NotFound(ApiResponse<CashSessionDetailDto>.Fail("Cash session not found."))
                 : Results.Ok(ApiResponse<CashSessionDetailDto>.Ok(session));
@@ -35,8 +45,12 @@ public static class CashSessionEndpoints
 
         group.MapPost("/{sessionId:long}/close", async (
             long sessionId,
+            ClaimsPrincipal principal,
+            IBankingAccessService access,
+            ApplicationDbContext db,
             ICashSessionService cashSessionService) =>
         {
+            await ApiAccess.RequireSessionAsync(await ApiAccess.ActorAsync(principal, access), db, sessionId);
             var (success, error) = await cashSessionService.CloseSessionAsync(sessionId);
             return success
                 ? Results.Ok(ApiResponse<string>.Ok("Session closed successfully."))
@@ -50,6 +64,8 @@ public static class CashSessionEndpoints
             long sessionId,
             long agentId,
             ClaimsPrincipal principal,
+            IBankingAccessService access,
+            ApplicationDbContext db,
             ICashCountService cashCountService) =>
         {
             var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier)
@@ -57,6 +73,9 @@ public static class CashSessionEndpoints
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();
 
+            var actor = await ApiAccess.ActorAsync(principal, access);
+            await ApiAccess.RequireSessionAsync(actor, db, sessionId);
+            await ApiAccess.RequireAgentAsync(actor, db, agentId);
             var result = await cashCountService.AdminCloseAgentSessionAsync(userId, sessionId, agentId);
             return result.Success
                 ? Results.Ok(ApiResponse<CashCountSaveResult>.Ok(result))

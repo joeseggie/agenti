@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "Agenti",
+    "slug": "agenti-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "agenti",
+    "platforms": ["ios"],
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.eastseat.agenti.mobile",
+      "config": { "usesNonExemptEncryption": false }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
+          "backgroundColor": "#ffffff",
+          "dark": { "backgroundColor": "#111827" }
+        }
+      ]
+    ],
+    "experiments": { "typedRoutes": true }
+  }
+}

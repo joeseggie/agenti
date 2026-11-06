@@ -20,13 +20,15 @@ public class DashboardService : IDashboardService
     }
 
     /// <inheritdoc />
-    public async Task<DashboardViewModel> GetDashboardAsync(string userId)
+    public async Task<DashboardViewModel> GetDashboardAsync(string userId, long? branchId = null, long? agentId = null)
     {
         await using var context = await _dbContextFactory.CreateDbContextAsync();
 
         var wallets = await context.Wallets
             .Include(w => w.WalletType)
             .Where(w => w.IsActive)
+            .Where(w => (!branchId.HasValue || w.Agent!.BranchId == branchId) &&
+                        (!agentId.HasValue || w.AgentId == agentId))
             .OrderBy(w => w.WalletType!.Type)
             .ThenBy(w => w.Name)
             .Select(w => new WalletBalanceSummaryDto
@@ -44,6 +46,8 @@ public class DashboardService : IDashboardService
         // Get agent wallet summaries (each agent's total wallet balance)
         var agentSummaries = await context.Agents
             .Where(a => a.IsActive)
+            .Where(a => (!branchId.HasValue || a.BranchId == branchId) &&
+                        (!agentId.HasValue || a.Id == agentId))
             .Include(a => a.User)
             .Include(a => a.Wallets.Where(w => w.IsActive))
             .OrderBy(a => a.User!.FirstName)
@@ -59,17 +63,22 @@ public class DashboardService : IDashboardService
             .ToListAsync();
 
         // Get vault balance for the branch
-        var vaultBalance = await context.Vaults
+        var vaultBalance = agentId.HasValue ? 0m : await context.Vaults
+            .Where(v => !branchId.HasValue || v.BranchId == branchId)
             .Select(v => v.CurrentBalance)
             .FirstOrDefaultAsync();
 
         // Get the current session for today
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var businessToday = _clock.Today;
-        var currentSession = await context.CashSessions.Include(s => s.CashCounts)
+        var sessions = context.CashSessions
+            .Where(s => !branchId.HasValue || s.BranchId == branchId);
+        var currentSession = await sessions
+            .Include(s => s.CashCounts.Where(c => !agentId.HasValue || c.AgentId == agentId))
             .Where(s => s.SessionDate == businessToday && s.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
             .OrderByDescending(s => s.OpenedAt).FirstOrDefaultAsync();
-        currentSession ??= await context.CashSessions
+        currentSession ??= await sessions
+            .Include(s => s.CashCounts.Where(c => !agentId.HasValue || c.AgentId == agentId))
             .Where(s => s.SessionDate == today && s.WorkflowVersion == SessionWorkflowVersion.Legacy)
             .OrderByDescending(s => s.OpenedAt)
             .FirstOrDefaultAsync();

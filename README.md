@@ -6,6 +6,7 @@ Agenti is a banking agency ERP system built with **ASP.NET Core Blazor Server** 
 
 - **Framework**: ASP.NET Core Blazor Server (.NET 10)
 - **Mobile**: .NET MAUI Android (`EastSeat.Agenti.Android`)
+- **iOS companion**: React Native + Expo TypeScript (`mobile`, independent of the .NET solution)
 - **Database**: PostgreSQL 16
 - **ORM**: Entity Framework Core 10 + Npgsql
 - **Authentication**: ASP.NET Identity (web) + JWT Bearer (API)
@@ -50,6 +51,10 @@ Located under `EastSeat.Agenti.Web/Features/`:
 - `WalletTypes`
 
 ## Local Development Setup
+
+For iPhone development on Windows, use [`mobile/README.md`](mobile/README.md).
+The Expo client reuses the existing HTTPS API and is built through EAS for
+internal device distribution; it does not replace the Android app.
 
 ### Prerequisites
 
@@ -123,6 +128,8 @@ GitHub Actions workflow (`.github/workflows/ci-cd.yml`) runs:
 ## Documentation
 
 - Setup and contributor reference: [`CLAUDE.md`](CLAUDE.md)
+- iOS setup: [`mobile/README.md`](mobile/README.md)
+- iOS architecture, API contracts and internal distribution: [`docs/IOS_MOBILE_APP.md`](docs/IOS_MOBILE_APP.md)
 - AI coding architecture rules: [`AGENTS.md`](AGENTS.md)
 - Development setup guide: [`docs/DEVELOPMENT_GUIDE.md`](docs/DEVELOPMENT_GUIDE.md)
 - CI/CD details: [`docs/CI_CD_PIPELINE.md`](docs/CI_CD_PIPELINE.md)
