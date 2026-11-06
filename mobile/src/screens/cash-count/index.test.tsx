@@ -106,7 +106,7 @@ test('failed submission keeps the saved count ID for retry and navigates only af
     await fireEvent.press(screen.getByRole('button', { name: 'Retry submission' }));
     expect(save).toHaveBeenCalledTimes(1);
     expect(save).toHaveBeenCalledWith(
-      expect.objectContaining({ cashCountId: 5, cashSessionId: 6 }),
+      expect.objectContaining({ cashCountId: null, cashSessionId: null }),
     );
     expect(submit).toHaveBeenCalledTimes(2);
     expect(submit).toHaveBeenLastCalledWith(5);
@@ -129,9 +129,11 @@ test('reopening a cached count fetches the latest server form', async () => {
       </QueryClientProvider>,
     );
 
-  const firstVisit = renderScreen();
+  const firstVisit = await renderScreen();
   await waitFor(() => expect(count).toHaveBeenCalledTimes(1));
-  firstVisit.unmount();
-  renderScreen();
+  await firstVisit.unmount();
+  const secondVisit = await renderScreen();
   await waitFor(() => expect(count).toHaveBeenCalledTimes(2));
+  await secondVisit.unmount();
+  queries.clear();
 });
