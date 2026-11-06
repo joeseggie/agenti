@@ -1,9 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useApi } from '@/auth/session-provider';
 import { ApiError, createApiClient } from '@/api/client';
 import { createEndpoints } from '@/api/endpoints';
-import { CashCountEditor } from './index';
+import { CashCountEditor, CashCountScreen } from './index';
 import { CashCountForm } from '@/api/contracts';
 import { Alert } from 'react-native';
 import { router } from 'expo-router';
@@ -85,14 +85,14 @@ test('failed submission keeps the saved count ID for retry and navigates only af
   const save = jest
     .spyOn(api, 'saveCount')
     .mockResolvedValue({ success: true, cashCountId: 5, cashSessionId: 6 });
-  jest
+  const submit = jest
     .spyOn(api, 'submitCount')
     .mockRejectedValueOnce(new ApiError('Submission unavailable.'))
     .mockResolvedValueOnce({ success: true, cashCountId: 5, cashSessionId: 6 });
   jest.mocked(useApi).mockReturnValue(api);
   const navigate = jest.spyOn(router, 'replace').mockImplementation(() => undefined);
   const confirm = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
-    buttons?.find((button) => button.text === 'Submit')?.onPress?.();
+    buttons?.find((button) => button.text === 'Submit' || button.text === 'Retry')?.onPress?.();
   });
   try {
     await render(
@@ -103,13 +103,35 @@ test('failed submission keeps the saved count ID for retry and navigates only af
     await fireEvent.press(screen.getByRole('button', { name: 'Save and submit' }));
     expect(await screen.findByText('Submission unavailable.')).toBeTruthy();
     expect(navigate).not.toHaveBeenCalled();
-    await fireEvent.press(screen.getByRole('button', { name: 'Save and submit' }));
-    expect(save).toHaveBeenLastCalledWith(
+    await fireEvent.press(screen.getByRole('button', { name: 'Retry submission' }));
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith(
       expect.objectContaining({ cashCountId: 5, cashSessionId: 6 }),
     );
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(submit).toHaveBeenLastCalledWith(5);
     expect(navigate).toHaveBeenCalledWith('/counts');
   } finally {
     navigate.mockRestore();
     confirm.mockRestore();
   }
+});
+
+test('reopening a cached count fetches the latest server form', async () => {
+  const api = createApi();
+  const count = jest.spyOn(api, 'count').mockResolvedValue(initial);
+  jest.mocked(useApi).mockReturnValue(api);
+  const queries = new QueryClient();
+  const renderScreen = () =>
+    render(
+      <QueryClientProvider client={queries}>
+        <CashCountScreen id={5} isOpening />
+      </QueryClientProvider>,
+    );
+
+  const firstVisit = renderScreen();
+  await waitFor(() => expect(count).toHaveBeenCalledTimes(1));
+  firstVisit.unmount();
+  renderScreen();
+  await waitFor(() => expect(count).toHaveBeenCalledTimes(2));
 });

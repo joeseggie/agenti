@@ -1,10 +1,11 @@
 import { CashCountForm } from '@/api/contracts';
 
-export function parseAmount(text: string): number {
+export function parseAmount(text: string, allowNegative = false): number {
   const normalized = text.trim();
-  if (!/^\d{1,12}(?:\.\d{1,2})?$/.test(normalized)) {
+  const pattern = allowNegative ? /^-?\d{1,12}(?:\.\d{1,2})?$/ : /^\d{1,12}(?:\.\d{1,2})?$/;
+  if (!pattern.test(normalized)) {
     throw new Error(
-      'Enter a non-negative amount with at most 12 whole digits and 2 decimal places.',
+      `Enter a ${allowNegative ? 'valid' : 'non-negative'} amount with at most 12 whole digits and 2 decimal places.`,
     );
   }
   return Number(normalized);
@@ -72,7 +73,7 @@ export function prepareCount(
           0,
         );
       } else {
-        countedAmount = parseAmount(draft.amount);
+        countedAmount = parseAmount(draft.amount, wallet.walletTypeName !== 'Cash');
       }
       const observed = draft.observedAt.trim();
       if (

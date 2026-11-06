@@ -263,11 +263,11 @@ public class CashCountService(
         if (walletIds.Distinct().Count() != walletIds.Count ||
             await dbContext.Wallets.CountAsync(w => walletIds.Contains(w.Id) && w.AgentId == agentId && w.IsActive) != walletIds.Count)
             return CashCountSaveResult.Error("Cash counts must use your own active wallets without duplicates.");
+        if (await bankWorkflow.HandlesFormAsync(branchId, form))
+            return await RunBankWorkflowAsync(() => bankWorkflow.SaveAsync(userId, form));
         if (form.WalletEntries.Any(e => e.CountedAmount < 0 || decimal.Round(e.CountedAmount, 2) != e.CountedAmount))
             return CashCountSaveResult.Error("Counted amounts must be non-negative with at most two decimal places.");
 
-        if (await bankWorkflow.HandlesFormAsync(branchId, form))
-            return await RunBankWorkflowAsync(() => bankWorkflow.SaveAsync(userId, form));
         var countDate = form.CountDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 

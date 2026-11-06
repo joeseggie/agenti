@@ -57,6 +57,21 @@ test.each(['', '-1', '1e3', 'NaN', '10.123', '1000000000000', '1,000'])(
   },
 );
 
+test('allows negative observations for non-cash wallets only', () => {
+  const drafts = createDrafts(form);
+  drafts[2]!.amount = '-10.25';
+  expect(prepareCount(form, drafts, '').walletEntries[1]?.countedAmount).toBe(-10.25);
+  expect(() => parseAmount('-10.25')).toThrow();
+
+  const cashForm: CashCountForm = {
+    ...form,
+    walletEntries: [{ ...form.walletEntries[1]!, walletTypeName: 'Cash' }],
+  };
+  const cashDrafts = createDrafts(cashForm);
+  cashDrafts[2]!.amount = '-10.25';
+  expect(() => prepareCount(cashForm, cashDrafts, '')).toThrow();
+});
+
 test('preserves invalid drafts and rejects fractional quantities or timestamps without timezones', () => {
   const drafts = createDrafts(form);
   drafts[1]!.notes['50000'] = '1.5';

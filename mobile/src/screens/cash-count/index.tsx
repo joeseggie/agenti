@@ -18,7 +18,7 @@ export function CashCountScreen({ id, isOpening }: { id: number | null; isOpenin
   const query = useQuery({
     queryKey: ['cash-count', id, isOpening],
     queryFn: ({ signal }) => (id ? api.count(id, signal) : api.initializeCount(isOpening, signal)),
-    staleTime: Infinity,
+    refetchOnMount: 'always',
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
   });
@@ -34,6 +34,7 @@ export function CashCountEditor({ initial }: { initial: CashCountForm }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [submissionRetryId, setSubmissionRetryId] = useState<number | null>(null);
   const saving = useRef(false);
 
   function update(id: number, change: Partial<WalletDraft>) {
@@ -45,13 +46,21 @@ export function CashCountEditor({ initial }: { initial: CashCountForm }) {
   }
 
   async function save(submit: boolean) {
-    if (saving.current || form.isReadOnly) return;
+    if (saving.current || form.isReadOnly || (submissionRetryId !== null && !submit)) return;
     saving.current = true;
     setPending(true);
     setError(null);
     setNotice(null);
     Keyboard.dismiss();
     try {
+      if (submit && submissionRetryId !== null) {
+        await api.submitCount(submissionRetryId);
+        setSubmissionRetryId(null);
+        await queries.invalidateQueries();
+        router.replace('/counts');
+        return;
+      }
+
       const prepared = prepareCount(form, drafts, explanation);
       const saved = await api.saveCount(prepared);
       const persisted = {
@@ -60,9 +69,12 @@ export function CashCountEditor({ initial }: { initial: CashCountForm }) {
         cashSessionId: saved.cashSessionId,
       };
       setForm(persisted);
+      await queries.invalidateQueries({ queryKey: ['cash-count'] });
       // Persist the returned ID before submission so failed submission can safely retry the same count.
       if (submit) {
+        setSubmissionRetryId(saved.cashCountId);
         await api.submitCount(saved.cashCountId);
+        setSubmissionRetryId(null);
         await queries.invalidateQueries();
         router.replace('/counts');
       } else {
@@ -121,7 +133,7 @@ export function CashCountEditor({ initial }: { initial: CashCountForm }) {
                         label={`${wallet.walletName}: ${value} ${kind}`}
                         value={draft[kind][value] ?? '0'}
                         keyboardType="number-pad"
-                        editable={!pending && !form.isReadOnly}
+                        editable={!pending && !form.isReadOnly && submissionRetryId === null}
                         selectTextOnFocus
                         onChangeText={(text) =>
                           update(wallet.walletId, { [kind]: { ...draft[kind], [value]: text } })
@@ -134,8 +146,10 @@ export function CashCountEditor({ initial }: { initial: CashCountForm }) {
               <Field
                 label={`${wallet.walletName} amount`}
                 value={draft.amount}
-                keyboardType="decimal-pad"
-                editable={!pending && !form.isReadOnly}
+                keyboardType={
+                  wallet.walletTypeName === 'Cash' ? 'decimal-pad' : 'numbers-and-punctuation'
+                }
+                editable={!pending && !form.isReadOnly && submissionRetryId === null}
                 selectTextOnFocus
                 onChangeText={(text) => update(wallet.walletId, { amount: text })}
               />
@@ -146,7 +160,7 @@ export function CashCountEditor({ initial }: { initial: CashCountForm }) {
               autoCorrect={false}
               autoCapitalize="none"
               placeholder="Required for bank reconciliation counts"
-              editable={!pending && !form.isReadOnly}
+              editable={!pending && !form.isReadOnly && submissionRetryId === null}
               onChangeText={(text) => update(wallet.walletId, { observedAt: text })}
             />
             {!form.isReadOnly && (
@@ -170,7 +184,7 @@ export function CashCountEditor({ initial }: { initial: CashCountForm }) {
           setNotice(null);
         }}
         multiline
-        editable={!pending && !form.isReadOnly}
+        editable={!pending && !form.isReadOnly && submissionRetryId === null}
       />
       {error && <ErrorNotice error={error} />}
       {notice && <Message title="Draft saved">{notice}</Message>}
@@ -180,22 +194,24 @@ export function CashCountEditor({ initial }: { initial: CashCountForm }) {
             <Button
               label={pending ? 'Saving...' : 'Save draft'}
               variant="outlined"
-              disabled={pending}
+              disabled={pending || submissionRetryId !== null}
               onPress={() => {
                 void save(false);
               }}
             />
             <Button
-              label="Save and submit"
+              label={submissionRetryId !== null ? 'Retry submission' : 'Save and submit'}
               disabled={pending}
               onPress={() =>
                 Alert.alert(
-                  'Submit this count?',
-                  'The server will apply your branch workflow. Submission may settle float or require approval.',
+                  submissionRetryId !== null ? 'Retry submission?' : 'Submit this count?',
+                  submissionRetryId !== null
+                    ? 'Retry submission for the saved count before making further changes.'
+                    : 'The server will apply your branch workflow. Submission may settle float or require approval.',
                   [
                     { text: 'Cancel', style: 'cancel' },
                     {
-                      text: 'Submit',
+                      text: submissionRetryId !== null ? 'Retry' : 'Submit',
                       onPress: () => {
                         void save(true);
                       },
