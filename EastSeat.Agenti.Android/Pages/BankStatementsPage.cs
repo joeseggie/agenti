@@ -60,8 +60,10 @@ public sealed class BankStatementsPage(
         Field(draft, "identifier", "Bank account identifier", form.AccountIdentifier, value => form.AccountIdentifier = value);
         Field(draft, "timezone", "Bank timezone identifier", form.TimeZoneId, value => form.TimeZoneId = value);
         SelectEnum("Balance basis", form.BalanceBasis, value => form.BalanceBasis = value);
-        if (setup.Profiles.Count == 0) Text("No verified production import profiles are installed. Original files can still be retained privately.");
-        else Select("Verified import profile", setup.Profiles, p => $"{p.DisplayName} v{p.Version}", p => p.Key == form.ImportProfileKey, p => form.ImportProfileKey = p.Key);
+        if (!setup.Profiles.Any(p => p.IsVerified)) Text("No verified production import profiles are installed. Original files can still be retained privately.");
+        if (setup.Profiles.Count > 0)
+            Select("Import profile", setup.Profiles, p => $"{p.DisplayName} v{p.Version}{(p.IsVerified ? "" : " (not verified)")}",
+                p => p.Key == form.ImportProfileKey, p => form.ImportProfileKey = p.Key);
         Action("Save account configuration", async () =>
         {
             await ReadFormAsync();

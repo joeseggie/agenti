@@ -173,6 +173,7 @@ builder.Services.AddScoped<IBankEvidenceService, BankEvidenceService>();
 builder.Services.AddScoped<ICustomerTransactionService, CustomerTransactionService>();
 builder.Services.Configure<BankEvidenceOptions>(builder.Configuration.GetSection("Banking:Evidence"));
 builder.Services.Configure<BankStatementOptions>(builder.Configuration.GetSection("Banking:Statements"));
+builder.Services.AddSingleton<IStatementImportProfile, CentenaryAgencyFloatXlsxStatementProfile>();
 builder.Services.AddSingleton<StatementProfileCatalog>();
 builder.Services.AddScoped<IBankAccountService, BankAccountService>();
 builder.Services.AddScoped<IBankStatementService, BankStatementService>();

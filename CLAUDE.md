@@ -492,6 +492,7 @@ The `docs/` directory contains detailed documentation:
 - `VAULT_FEATURE_SUMMARY.md` - Vault feature details
 - `agenti-banking-business-workflow.md` - Customer banking and bank-statement reconciliation user workflow (with `.excalidraw`, `.svg` and `.png` diagrams)
 - `bank-workflow-enrollment-guide.md` - Step-by-step verified bank workflow enrollment guide (with `.excalidraw`, `.svg` and `.png` diagrams)
+- `centenary-agency-float-statement-profile.md` - Centenary agency-float XLSX profile setup, mapping, release gates and date-only limitation
 
 ## Common Development Tasks
 
