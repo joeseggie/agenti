@@ -24,7 +24,7 @@ Node 26.13.0, Expo 58.0.19, and the npm lockfile are the supported baseline.
 2. The existing response includes `accessToken`, `tokenType: "Bearer"`,
    `expiresIn` (seconds), `userId`, `email`, `fullName`, `role`, `agentId`, and
    `branchId` inside the standard response envelope.
-3. The client saves **only** access token, absolute expiry, and API URL using
+3. Session persistence saves **only** access token, absolute expiry, and API URL using
    `expo-secure-store`, with `WHEN_UNLOCKED_THIS_DEVICE_ONLY`. Passwords and
    personal profile data are not persisted. No token is stored in AsyncStorage,
    configuration, logs, or URLs.
@@ -32,11 +32,16 @@ Node 26.13.0, Expo 58.0.19, and the npm lockfile are the supported baseline.
    `GET /api/auth/me` succeed. A network failure offers retry or clearing the saved
    session; it never displays cached protected content as an authenticated
    fallback. A different API URL invalidates the old session before sending it.
-5. Expiry is checked on a timer and when the app becomes active. Protected `401`
+5. Expiry is checked on a timer and when the app becomes active. Foreground resume
+   also revalidates `/auth/me` before resuming query refreshes. Assignment changes
+   update the profile and clear private query data; unchanged assignments preserve
+   active drafts. Failed verification blocks protected content until retry.
+   Protected `401`
    responses clear storage and cache and return to sign-in; `403` reports denied
    access without discarding a valid token. Late responses cannot invalidate a
    newer login. SecureStore failures are visible and do not silently succeed.
-6. Sign-out clears this device's session and cached data. There is **no refresh
+6. Sign-out clears this device's session and cached data, but does not erase
+   unresolved vault-request markers (see below). There is **no refresh
    token or server logout/revocation endpoint**. A copied JWT remains usable until
    expiry unless its account is disabled/deleted or its role changes. The server
    checks those conditions on every bearer-token validation.
@@ -63,8 +68,10 @@ Admin/Supervisor; approval/rejection is Admin only. The existing service enforce
 dual approval, expiry, required notes and financial posting rules.
 
 These API scope restrictions are intentional for both mobile clients. Existing
-Blazor service calls retain their previous unfiltered behavior; the optional
-service query filters are supplied by authenticated API endpoints.
+Blazor read queries retain their previous behavior; optional query filters are
+supplied by authenticated API endpoints. Cash-count approval/rejection enforces
+the current reviewer's branch in the shared service, including legacy counts and
+the alternate `/api/banking/counts` routes.
 
 ## API contracts used by the first release
 
@@ -132,9 +139,23 @@ the draft and restores editing so the user can correct it. An ambiguous failure
 locks editing and retries submission using the saved ID without saving again.
 Both legacy and bank-reconciliation submission replays return the existing result
 for pending or approved counts without repeating financial postings or audit
-entries. Vault request timeouts are ambiguous too: the app requires checking recent
-activity before enabling another request, because the existing adjustment API has
-no idempotency key.
+entries. Legacy submissions lock and re-read the count in PostgreSQL before
+transitioning it. Closing submission, vault posting, wallet updates, approval
+audit and session closure share that transaction, so overlapping retries cannot
+post twice; failed posting rolls back before retry.
+
+Before creating a vault adjustment, the app records a SecureStore pending marker
+scoped to API URL, user and branch. It contains no amounts or audit notes.
+Unresolved markers survive navigation, sign-out and process restarts. A confirmed
+success or definitive HTTP 4xx rejection clears the marker; network/server errors
+and malformed or incompatible successful responses leave it in place. Storage
+failures block new requests rather than defaulting to an unguarded state.
+
+An unresolved request requires a successful activity refresh and explicit user
+confirmation before clearing its marker. An active in-process request cannot be
+acknowledged prematurely. Check web history when a request is not among the latest
+50 transactions. This is a conservative device-side guard, not a server-side
+idempotency key or an offline queue.
 
 ## Configuration and infrastructure
 

@@ -26,6 +26,7 @@ export class SessionController {
   private state: SessionState = { status: 'restoring', user: null, error: null };
   private readonly listeners = new Set<() => void>();
   private generation = 0;
+  private revalidationAttempt = 0;
   // Serializing storage prevents an old sign-out from deleting a new sign-in.
   private storageTail: Promise<void> = Promise.resolve();
 
@@ -178,6 +179,44 @@ export class SessionController {
   async checkExpiry() {
     if (this.stored && this.stored.expiresAt <= this.now()) {
       await this.signOut('Your session has expired. Please sign in again.');
+    }
+  }
+
+  async revalidate() {
+    if (this.state.status !== 'signedIn' || !this.stored) return;
+    await this.checkExpiry();
+    if (this.state.status !== 'signedIn' || !this.stored) return;
+    const generation = this.generation;
+    const attempt = ++this.revalidationAttempt;
+    const previous = this.state.user;
+    try {
+      const user = await this.client.request('/auth/me', sessionUserSchema);
+      if (generation !== this.generation || attempt !== this.revalidationAttempt) return;
+      await this.checkExpiry();
+      if (generation !== this.generation || attempt !== this.revalidationAttempt || !this.stored)
+        return;
+      if (
+        user.userId !== previous.userId ||
+        user.role !== previous.role ||
+        user.agentId !== previous.agentId ||
+        user.branchId !== previous.branchId
+      ) {
+        this.clearPrivateData();
+      }
+      this.update({ status: 'signedIn', user, expiresAt: this.stored.expiresAt, error: null });
+    } catch (error) {
+      if (generation !== this.generation || attempt !== this.revalidationAttempt) return;
+      this.stored = null;
+      this.clearPrivateData();
+      this.update({
+        status: 'restoreError',
+        user: null,
+        retry: 'restore',
+        error:
+          error instanceof ApiError
+            ? error.message
+            : 'Cannot verify your account. Retry before continuing.',
+      });
     }
   }
 }

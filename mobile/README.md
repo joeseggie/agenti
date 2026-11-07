@@ -52,7 +52,8 @@ npx --yes expo-doctor@1.21.4
 ```
 
 `npm run format` applies formatting. Tests cover networking, SecureStore session
-lifecycle, count input conversion, sign-in retry, and preserving failed saves.
+lifecycle and foreground assignment refresh, count input conversion, sign-in
+retry, preserving failed saves, and durable vault-request protection.
 They use mocked native controls; they do not establish physical-device behavior.
 GitHub Actions runs the reproducible checks and an iOS JavaScript export without
 Apple credentials. An export is **not** a signed iOS app.

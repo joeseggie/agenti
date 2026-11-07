@@ -3,6 +3,7 @@ import { Alert, Text, View } from 'react-native';
 import { Button, Column, Host } from '@expo/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '@/api/client';
+import { vaultRequestGuard, VaultRequestScope } from '@/api/vault-request-guard';
 import { useApi, useSession } from '@/auth/session-provider';
 import { Detail, ErrorNotice, Message, QueryState, Screen } from '@/components/content';
 import { Field } from '@/components/field';
@@ -22,7 +23,7 @@ const transactionTypes = [
 const transactionStatuses = ['Unknown', 'Pending', 'Completed', 'Rejected', 'Expired'];
 
 export function VaultScreen() {
-  const { user } = useSession();
+  const { user, controller } = useSession();
   if (!user?.branchId || user.role === 'Agent')
     return (
       <Screen>
@@ -31,12 +32,26 @@ export function VaultScreen() {
         </Message>
       </Screen>
     );
-  return <BranchVault branchId={user.branchId} canApprove={user.role === 'Admin'} />;
+  return (
+    <BranchVault
+      key={`${user.userId}:${user.branchId}`}
+      scope={{ apiUrl: controller.apiUrl, userId: user.userId, branchId: user.branchId }}
+      canApprove={user.role === 'Admin'}
+    />
+  );
 }
 
-function BranchVault({ branchId, canApprove }: { branchId: number; canApprove: boolean }) {
+function BranchVault({ scope, canApprove }: { scope: VaultRequestScope; canApprove: boolean }) {
+  const { branchId } = scope;
   const api = useApi();
+  const { controller } = useSession();
   const queries = useQueryClient();
+  const pendingKey = ['vault-pending', scope.apiUrl, scope.userId, branchId];
+  const savedRequest = useQuery({
+    queryKey: pendingKey,
+    queryFn: () => vaultRequestGuard.isPending(scope),
+    refetchOnMount: 'always',
+  });
   const query = useQuery({
     queryKey: ['vault', branchId],
     queryFn: async ({ signal }) => {
@@ -50,10 +65,13 @@ function BranchVault({ branchId, canApprove }: { branchId: number; canApprove: b
   const [amount, setAmount] = useState('');
   const [notes, setNotes] = useState('');
   const [pending, setPending] = useState(false);
-  const [uncertain, setUncertain] = useState(false);
+  const [activityChecked, setActivityChecked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const submitting = useRef(false);
+  const uncertain = savedRequest.data === true;
+  const creationBlocked =
+    pending || savedRequest.isFetching || savedRequest.isError || savedRequest.data !== false;
 
   async function run(operation: () => Promise<unknown>, message: string, creating = false) {
     if (submitting.current) return;
@@ -61,8 +79,25 @@ function BranchVault({ branchId, canApprove }: { branchId: number; canApprove: b
     setPending(true);
     setError(null);
     setNotice(null);
+    if (creating) setActivityChecked(false);
     try {
-      await operation();
+      if (creating) {
+        await vaultRequestGuard.execute(scope, async () => {
+          const current = controller.getSnapshot();
+          if (
+            current.status !== 'signedIn' ||
+            current.user.userId !== scope.userId ||
+            current.user.branchId !== branchId
+          )
+            throw new ApiError(
+              'Your account assignment changed. Reopen the vault before requesting an adjustment.',
+              401,
+            );
+          return operation();
+        });
+      } else {
+        await operation();
+      }
       if (creating) {
         setAmount('');
         setNotes('');
@@ -74,10 +109,29 @@ function BranchVault({ branchId, canApprove }: { branchId: number; canApprove: b
       setError(
         cause instanceof Error ? cause.message : 'The vault operation could not be completed.',
       );
-      if (creating && cause instanceof ApiError && (cause.status === 0 || cause.status >= 500))
-        setUncertain(true);
     } finally {
+      if (creating) await queries.invalidateQueries({ queryKey: pendingKey });
       submitting.current = false;
+      setPending(false);
+    }
+  }
+
+  async function refreshActivity() {
+    setActivityChecked(false);
+    const result = await query.refetch();
+    if (result.isSuccess) setActivityChecked(true);
+  }
+
+  async function acknowledgeRequest() {
+    if (!activityChecked || query.isFetching || query.isError) return;
+    setPending(true);
+    setError(null);
+    try {
+      await vaultRequestGuard.acknowledge(scope);
+      await queries.invalidateQueries({ queryKey: pendingKey });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Cannot clear the saved request.');
+    } finally {
       setPending(false);
     }
   }
@@ -125,6 +179,14 @@ function BranchVault({ branchId, canApprove }: { branchId: number; canApprove: b
           <>
             <Detail label={vault.branchName} value={formatMoney(vault.currentBalance)} />
             {error && <ErrorNotice error={error} />}
+            {savedRequest.error && (
+              <ErrorNotice
+                error={savedRequest.error.message}
+                onRetry={() => {
+                  void savedRequest.refetch();
+                }}
+              />
+            )}
             {notice && <Message title="Request processed">{notice}</Message>}
             <Message title="Request a manual adjustment">
               Requests require at least 10 characters of notes and expire after 12 hours. The server
@@ -135,27 +197,29 @@ function BranchVault({ branchId, canApprove }: { branchId: number; canApprove: b
               value={amount}
               onChangeText={setAmount}
               keyboardType="decimal-pad"
-              editable={!pending}
+              editable={!creationBlocked}
             />
             <Field
               label="Audit notes"
               value={notes}
               onChangeText={setNotes}
               multiline
-              editable={!pending}
+              editable={!creationBlocked}
             />
             {uncertain && (
               <Message title="Check activity before retrying">
                 <Text style={type.body}>
-                  The request may have reached the server. Refresh and inspect activity to avoid
-                  creating a duplicate.
+                  A previous request may have reached the server. This check is retained across app
+                  restarts. Refresh and inspect activity; use the web history if the request is not
+                  in the latest 50 transactions.
                 </Text>
                 <Host matchContents>
                   <Button
                     label="Refresh activity"
                     variant="outlined"
+                    disabled={pending || query.isFetching}
                     onPress={() => {
-                      void query.refetch();
+                      void refreshActivity();
                     }}
                   />
                 </Host>
@@ -163,7 +227,10 @@ function BranchVault({ branchId, canApprove }: { branchId: number; canApprove: b
                   <Button
                     label="I checked activity; allow another request"
                     variant="outlined"
-                    onPress={() => setUncertain(false)}
+                    disabled={pending || !activityChecked || query.isFetching || query.isError}
+                    onPress={() => {
+                      void acknowledgeRequest();
+                    }}
                   />
                 </Host>
               </Message>
@@ -172,13 +239,13 @@ function BranchVault({ branchId, canApprove }: { branchId: number; canApprove: b
               <Column spacing={spacing.sm}>
                 <Button
                   label="Request deposit"
-                  disabled={pending || uncertain}
+                  disabled={creationBlocked}
                   onPress={() => request(true)}
                 />
                 <Button
                   label="Request withdrawal"
                   variant="outlined"
-                  disabled={pending || uncertain}
+                  disabled={creationBlocked}
                   onPress={() => request(false)}
                 />
               </Column>

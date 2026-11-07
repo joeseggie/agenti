@@ -45,9 +45,15 @@ export function SessionProvider({ apiUrl, children }: PropsWithChildren<{ apiUrl
     void session.restore();
   }, [session]);
   useEffect(() => {
+    focusManager.setFocused(AppState.currentState === 'active' && state.status === 'signedIn');
     const listener = AppState.addEventListener('change', (next) => {
-      if (next === 'active') void session.checkExpiry();
-      focusManager.setFocused(next === 'active');
+      focusManager.setFocused(false);
+      if (next === 'active') {
+        void session.revalidate().then(() => {
+          if (AppState.currentState === 'active')
+            focusManager.setFocused(session.getSnapshot().status === 'signedIn');
+        });
+      }
     });
     if (state.status !== 'signedIn') return () => listener.remove();
     const timeout = setTimeout(

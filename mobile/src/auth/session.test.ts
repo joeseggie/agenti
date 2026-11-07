@@ -177,3 +177,81 @@ test('a late unauthorized response from an old session cannot clear a newer logi
   expect(session.getSnapshot().status).toBe('signedIn');
   expect(storage.remove).toHaveBeenCalledTimes(1);
 });
+
+test('foreground revalidation updates assignments and clears private data only when scope changes', async () => {
+  const { session, fetcher, clear } = setup();
+  fetcher.mockResolvedValueOnce(response({ success: true, data: login }));
+  await session.signIn('test', 'synthetic');
+  clear.mockClear();
+  fetcher.mockResolvedValueOnce(
+    response({ success: true, data: { ...user, fullName: 'Updated display name' } }),
+  );
+  await session.revalidate();
+  expect(clear).not.toHaveBeenCalled();
+  expect(session.getSnapshot()).toMatchObject({
+    status: 'signedIn',
+    user: { fullName: 'Updated display name' },
+  });
+
+  fetcher.mockResolvedValueOnce(
+    response({ success: true, data: { ...user, branchId: 7, agentId: 9 } }),
+  );
+  await session.revalidate();
+  expect(fetcher).toHaveBeenLastCalledWith(
+    `${session.apiUrl}/auth/me`,
+    expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: `Bearer ${login.accessToken}`,
+      }),
+    }),
+  );
+  expect(clear).toHaveBeenCalledTimes(1);
+  expect(session.getSnapshot()).toMatchObject({
+    status: 'signedIn',
+    user: { branchId: 7, agentId: 9 },
+  });
+});
+
+test('failed foreground verification blocks cached data without discarding the saved token', async () => {
+  const { session, storage, fetcher, clear } = setup();
+  fetcher.mockResolvedValueOnce(response({ success: true, data: login }));
+  await session.signIn('test', 'synthetic');
+  clear.mockClear();
+  fetcher.mockRejectedValueOnce(new Error('offline'));
+  await session.revalidate();
+  expect(clear).toHaveBeenCalledTimes(1);
+  expect(storage.remove).not.toHaveBeenCalled();
+  expect(session.getSnapshot()).toMatchObject({
+    status: 'restoreError',
+    user: null,
+    retry: 'restore',
+  });
+});
+
+test('foreground revalidation never revives a signed-out or newer session', async () => {
+  const { session, fetcher } = setup();
+  fetcher.mockResolvedValueOnce(response({ success: true, data: login }));
+  await session.signIn('test', 'synthetic');
+  const old = Promise.withResolvers<Awaited<ReturnType<ApiFetch>>>();
+  fetcher.mockReturnValueOnce(old.promise);
+  const pending = session.revalidate();
+  await Promise.resolve();
+  await session.signOut();
+  fetcher.mockResolvedValueOnce(
+    response({
+      success: true,
+      data: {
+        ...login,
+        userId: 'another-user',
+        accessToken: 'another-synthetic-token',
+      },
+    }),
+  );
+  await session.signIn('another', 'synthetic');
+  old.resolve(response({ success: true, data: { ...user, branchId: 99 } }));
+  await pending;
+  expect(session.getSnapshot()).toMatchObject({
+    status: 'signedIn',
+    user: { userId: 'another-user', branchId: user.branchId },
+  });
+});
