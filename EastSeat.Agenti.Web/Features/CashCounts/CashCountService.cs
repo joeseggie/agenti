@@ -259,8 +259,15 @@ public class CashCountService(
 
         var agentId = agent.Id;
         var branchId = agent.BranchId.Value;
+        var walletIds = form.WalletEntries.Select(e => e.WalletId).ToList();
+        if (walletIds.Distinct().Count() != walletIds.Count ||
+            await dbContext.Wallets.CountAsync(w => walletIds.Contains(w.Id) && w.AgentId == agentId && w.IsActive) != walletIds.Count)
+            return CashCountSaveResult.Error("Cash counts must use your own active wallets without duplicates.");
         if (await bankWorkflow.HandlesFormAsync(branchId, form))
             return await RunBankWorkflowAsync(() => bankWorkflow.SaveAsync(userId, form));
+        if (form.WalletEntries.Any(e => e.CountedAmount < 0 || decimal.Round(e.CountedAmount, 2) != e.CountedAmount))
+            return CashCountSaveResult.Error("Counted amounts must be non-negative with at most two decimal places.");
+
         var countDate = form.CountDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
@@ -1052,6 +1059,11 @@ public class CashCountService(
             IsOpening = cashCount.IsOpening,
             CountDate = cashCount.CountDate,
             Explanation = cashCount.Explanation,
+            IsReadOnly = cashCount.Status == CashCountStatus.Approved ||
+                cashCount.CashSession!.Status == CashSessionStatus.Closed ||
+                (cashCount.IsOpening && await dbContext.CashCounts.AnyAsync(c =>
+                    c.CashSessionId == cashCount.CashSessionId && c.AgentId == agent.Id && !c.IsOpening &&
+                    (c.Status == CashCountStatus.Approved || c.Status == CashCountStatus.PendingApproval))),
             WalletEntries = walletEntries,
             PreviousClosingTotal = previousClosing?.TotalAmount,
             PreviousClosingDate = previousClosing?.CountDate

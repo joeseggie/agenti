@@ -82,6 +82,7 @@ var authBuilder = builder.Services.AddAuthentication(options =>
 authBuilder.AddIdentityCookies();
 authBuilder.AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
 {
+    options.EventsType = typeof(ApiJwtBearerEvents);
     var jwtKey = builder.Configuration["Jwt:Key"];
     options.TokenValidationParameters = new TokenValidationParameters
     {
@@ -146,6 +147,7 @@ builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSe
 
 // Add claims transformation for BranchId
 builder.Services.AddScoped<IClaimsTransformation, BranchIdClaimsTransformer>();
+builder.Services.AddScoped<ApiJwtBearerEvents>();
 
 // Add application services
 builder.Services.AddScoped<IDashboardService, DashboardService>();
@@ -385,7 +387,8 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 }).AllowAnonymous();
 
 // Map REST API endpoints (for Android app)
-var apiGroup = app.MapGroup("/api").RequireAuthorization("BankingApi");
+var apiGroup = app.MapGroup("/api").RequireAuthorization("BankingApi")
+    .AddEndpointFilter<BankingApiExceptionFilter>();
 apiGroup.MapGroup("/banking").WithTags("Banking").MapBankingApi();
 app.MapBankingEvidence();
 

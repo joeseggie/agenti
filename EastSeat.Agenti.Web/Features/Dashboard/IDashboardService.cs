@@ -10,5 +10,5 @@ public interface IDashboardService
     /// </summary>
     /// <param name="userId">The authenticated user's ID.</param>
     /// <returns>Dashboard view model with wallet balances and session status.</returns>
-    Task<DashboardViewModel> GetDashboardAsync(string userId);
+    Task<DashboardViewModel> GetDashboardAsync(string userId, long? branchId = null, long? agentId = null);
 }

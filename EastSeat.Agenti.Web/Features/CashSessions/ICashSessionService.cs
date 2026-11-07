@@ -8,12 +8,12 @@ public interface ICashSessionService
     /// <summary>
     /// Gets all cash sessions with summary information (branch-level).
     /// </summary>
-    Task<List<CashSessionListItemDto>> GetCashSessionsAsync(long? branchId = null);
+    Task<List<CashSessionListItemDto>> GetCashSessionsAsync(long? branchId = null, long? agentId = null);
 
     /// <summary>
     /// Gets cash session details by ID including all agents' opening and closing counts.
     /// </summary>
-    Task<CashSessionDetailDto?> GetCashSessionDetailAsync(long sessionId);
+    Task<CashSessionDetailDto?> GetCashSessionDetailAsync(long sessionId, long? agentId = null);
 
     /// <summary>
     /// Closes a cash session. Requires all agents' closing counts to be approved.

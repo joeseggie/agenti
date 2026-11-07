@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using EastSeat.Agenti.Shared.Services;
+using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Vaults;
 
 namespace EastSeat.Agenti.Web.Features.Api;
@@ -12,9 +14,12 @@ public static class VaultEndpoints
     {
         group.MapGet("/{branchId:long}", async (
             long branchId,
+            ClaimsPrincipal principal,
+            IBankingAccessService access,
             IVaultService vaultService,
             CancellationToken cancellationToken) =>
         {
+            ApiAccess.RequireBranch(await ApiAccess.ActorAsync(principal, access), branchId);
             var vault = await vaultService.GetVaultAsync(branchId, cancellationToken);
             return vault is null
                 ? Results.NotFound(ApiResponse<VaultDto>.Fail("Vault not found."))
@@ -26,11 +31,16 @@ public static class VaultEndpoints
 
         group.MapGet("/{branchId:long}/transactions", async (
             long branchId,
+            ClaimsPrincipal principal,
+            IBankingAccessService access,
             IVaultService vaultService,
             CancellationToken cancellationToken,
             int take = 50,
             bool includeExpired = false) =>
         {
+            ApiAccess.RequireBranch(await ApiAccess.ActorAsync(principal, access), branchId);
+            if (take is < 1 or > 200)
+                return Results.BadRequest(ApiResponse<object>.Fail("Take must be between 1 and 200."));
             var transactions = await vaultService.GetRecentTransactionsAsync(
                 branchId, take, includeExpired, cancellationToken);
             return Results.Ok(ApiResponse<List<VaultTransactionListItemDto>>.Ok(transactions));
@@ -43,9 +53,11 @@ public static class VaultEndpoints
             long branchId,
             ManualAdjustmentFormModel model,
             ClaimsPrincipal principal,
+            IBankingAccessService access,
             IVaultService vaultService,
             CancellationToken cancellationToken) =>
         {
+            ApiAccess.RequireBranch(await ApiAccess.ActorAsync(principal, access), branchId);
             var userId = GetUserId(principal);
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();
@@ -63,9 +75,12 @@ public static class VaultEndpoints
         group.MapPost("/adjustment/{transactionId:long}/approve", async (
             long transactionId,
             ClaimsPrincipal principal,
+            IBankingAccessService access,
+            ApplicationDbContext db,
             IVaultService vaultService,
             CancellationToken cancellationToken) =>
         {
+            await ApiAccess.RequireVaultTransactionAsync(await ApiAccess.ActorAsync(principal, access), db, transactionId);
             var userId = GetUserId(principal);
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();
@@ -82,9 +97,12 @@ public static class VaultEndpoints
         group.MapPost("/adjustment/{transactionId:long}/reject", async (
             long transactionId,
             ClaimsPrincipal principal,
+            IBankingAccessService access,
+            ApplicationDbContext db,
             IVaultService vaultService,
             CancellationToken cancellationToken) =>
         {
+            await ApiAccess.RequireVaultTransactionAsync(await ApiAccess.ActorAsync(principal, access), db, transactionId);
             var userId = GetUserId(principal);
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();

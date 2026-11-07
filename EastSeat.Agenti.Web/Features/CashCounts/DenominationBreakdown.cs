@@ -41,12 +41,12 @@ public record DenominationBreakdown
     /// <summary>
     /// Calculates the total value of all notes.
     /// </summary>
-    public decimal NotesTotal => Notes.Sum(n => int.Parse(n.Key) * n.Value);
+    public decimal NotesTotal => Notes.Sum(n => (decimal)int.Parse(n.Key) * n.Value);
 
     /// <summary>
     /// Calculates the total value of all coins.
     /// </summary>
-    public decimal CoinsTotal => Coins.Sum(c => int.Parse(c.Key) * c.Value);
+    public decimal CoinsTotal => Coins.Sum(c => (decimal)int.Parse(c.Key) * c.Value);
 
     /// <summary>
     /// Calculates the grand total of notes and coins.

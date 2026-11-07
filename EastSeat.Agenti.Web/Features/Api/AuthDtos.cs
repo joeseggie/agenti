@@ -25,6 +25,9 @@ public class LoginResponse
     public long? BranchId { get; set; }
 }
 
+public record SessionUserResponse(
+    string UserId, string Email, string FullName, string Role, long? AgentId, long? BranchId);
+
 /// <summary>
 /// Generic API response envelope.
 /// </summary>

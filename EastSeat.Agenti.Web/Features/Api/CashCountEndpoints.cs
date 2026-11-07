@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using EastSeat.Agenti.Shared.Services;
+using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.CashCounts;
 
 namespace EastSeat.Agenti.Web.Features.Api;
@@ -12,8 +14,11 @@ public static class CashCountEndpoints
     {
         group.MapGet("/current", async (
             ClaimsPrincipal principal,
+            IBankingAccessService access,
             ICashCountService cashCountService) =>
         {
+            var actor = await ApiAccess.ActorAsync(principal, access);
+            ApiAccess.AgentFilter(actor);
             var userId = GetUserId(principal);
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();
@@ -28,8 +33,10 @@ public static class CashCountEndpoints
         group.MapGet("/initialize", async (
             bool isOpening,
             ClaimsPrincipal principal,
+            IBankingAccessService access,
             ICashCountService cashCountService) =>
         {
+            ApiAccess.OwnAgentId(await ApiAccess.ActorAsync(principal, access));
             var userId = GetUserId(principal);
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();
@@ -44,8 +51,16 @@ public static class CashCountEndpoints
         group.MapPost("/", async (
             CashCountFormModel form,
             ClaimsPrincipal principal,
+            IBankingAccessService access,
+            ApplicationDbContext db,
             ICashCountService cashCountService) =>
         {
+            var actor = await ApiAccess.ActorAsync(principal, access);
+            ApiAccess.OwnAgentId(actor);
+            if (form.CashCountId.HasValue)
+                await ApiAccess.RequireCountAsync(actor, db, form.CashCountId.Value, ownCount: true);
+            if (form.CashSessionId.HasValue)
+                await ApiAccess.RequireSessionAsync(actor, db, form.CashSessionId.Value, requireParticipation: false);
             var userId = GetUserId(principal);
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();
@@ -62,8 +77,11 @@ public static class CashCountEndpoints
         group.MapPost("/{cashCountId:long}/submit", async (
             long cashCountId,
             ClaimsPrincipal principal,
+            IBankingAccessService access,
+            ApplicationDbContext db,
             ICashCountService cashCountService) =>
         {
+            await ApiAccess.RequireCountAsync(await ApiAccess.ActorAsync(principal, access), db, cashCountId, ownCount: true);
             var userId = GetUserId(principal);
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();
@@ -80,8 +98,11 @@ public static class CashCountEndpoints
         group.MapGet("/{cashCountId:long}", async (
             long cashCountId,
             ClaimsPrincipal principal,
+            IBankingAccessService access,
+            ApplicationDbContext db,
             ICashCountService cashCountService) =>
         {
+            await ApiAccess.RequireCountAsync(await ApiAccess.ActorAsync(principal, access), db, cashCountId, ownCount: true);
             var userId = GetUserId(principal);
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();
@@ -97,9 +118,13 @@ public static class CashCountEndpoints
 
         group.MapGet("/pending", async (
             long branchId,
+            ClaimsPrincipal principal,
+            IBankingAccessService access,
             ICashCountService cashCountService) =>
         {
-            var pending = await cashCountService.GetPendingApprovalsAsync(branchId);
+            var actor = await ApiAccess.ActorAsync(principal, access);
+            ApiAccess.RequireBranch(actor, branchId);
+            var pending = await cashCountService.GetPendingApprovalsAsync(actor.BranchId);
             return Results.Ok(ApiResponse<List<PendingApprovalDto>>.Ok(pending));
         })
         .RequireAuthorization("CashCountApproveApi")
@@ -109,8 +134,11 @@ public static class CashCountEndpoints
         group.MapPost("/{cashCountId:long}/approve", async (
             long cashCountId,
             ClaimsPrincipal principal,
+            IBankingAccessService access,
+            ApplicationDbContext db,
             ICashCountService cashCountService) =>
         {
+            await ApiAccess.RequireCountAsync(await ApiAccess.ActorAsync(principal, access), db, cashCountId);
             var userId = GetUserId(principal);
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();
@@ -128,8 +156,11 @@ public static class CashCountEndpoints
             long cashCountId,
             CashCountApprovalModel model,
             ClaimsPrincipal principal,
+            IBankingAccessService access,
+            ApplicationDbContext db,
             ICashCountService cashCountService) =>
         {
+            await ApiAccess.RequireCountAsync(await ApiAccess.ActorAsync(principal, access), db, cashCountId);
             var userId = GetUserId(principal);
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();

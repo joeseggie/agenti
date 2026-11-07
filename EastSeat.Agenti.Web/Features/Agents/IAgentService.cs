@@ -8,7 +8,7 @@ public interface IAgentService
     /// <summary>
     /// Gets all agents with summary information.
     /// </summary>
-    Task<List<AgentListItemDto>> GetAgentsAsync();
+    Task<List<AgentListItemDto>> GetAgentsAsync(long? branchId = null, long? agentId = null);
 
     /// <summary>
     /// Gets agent details by ID including wallets.
