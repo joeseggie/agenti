@@ -35,6 +35,8 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
         if (!account.CoverageFromDate.HasValue || !account.CoverageToDate.HasValue ||
             account.CoverageFromDate > account.CoverageToDate)
             throw new StatementParsingException("Select a valid statement start and end date.");
+        if (account.BalanceBasis == BankBalanceBasis.Unverified)
+            throw new StatementParsingException("Confirm the bank account's balance basis before importing statements.");
 
         TimeZoneInfo zone;
         try
@@ -51,7 +53,16 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
         }
 
         using var reader = new StreamReader(source, new UTF8Encoding(false, true), detectEncodingFromByteOrderMarks: true, leaveOpen: true);
-        var text = await reader.ReadToEndAsync(cancellationToken);
+        string text;
+        try
+        {
+            text = await reader.ReadToEndAsync(cancellationToken);
+        }
+        catch (DecoderFallbackException)
+        {
+            throw new StatementParsingException(
+                "The CSV is not valid UTF-8 text. In Excel, save it as \"CSV UTF-8 (Comma delimited)\" and upload again.");
+        }
         var records = CsvRecords.Read(text, _maximumRows, cancellationToken);
         if (records.Count == 0)
             throw new StatementParsingException("The CSV is empty. The first row must contain the exact Agenti template headers.");

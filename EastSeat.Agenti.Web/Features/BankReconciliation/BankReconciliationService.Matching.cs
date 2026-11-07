@@ -19,13 +19,14 @@ public sealed partial class BankReconciliationService
                 b.Classification == BankTransactionClassification.Unclassified).ToList();
             var availableLegs = facts.Legs.Where(l => !l.PendingApproval && l.Kind != BankLegKind.ExpectedSettlement &&
                 !usedLegs.Contains(Key(l))).ToList();
+            var accountTimeZone = TimeZoneInfo.FindSystemTimeZoneById(facts.Account.TimeZoneId);
             foreach (var bank in availableBanks)
             {
-                var candidates = availableLegs.Where(l => !usedLegs.Contains(Key(l)) && ExactCandidate(bank, l)).ToList();
+                var candidates = availableLegs.Where(l => !usedLegs.Contains(Key(l)) && ExactCandidate(bank, l, accountTimeZone)).ToList();
                 if (candidates.Count != 1)
                     continue;
                 var leg = candidates[0];
-                if (availableBanks.Count(b => !usedBanks.Contains(b.Id) && ExactCandidate(b, leg)) != 1)
+                if (availableBanks.Count(b => !usedBanks.Contains(b.Id) && ExactCandidate(b, leg, accountTimeZone)) != 1)
                     continue;
                 AddMatch(review, bank, leg, userId, "Unique exact account, direction, amount and identity match.");
                 usedBanks.Add(bank.Id);
@@ -118,7 +119,7 @@ public sealed partial class BankReconciliationService
         return BankReconciliationStatus.InProgress;
     }
 
-    private bool ExactCandidate(BankTransaction bank, BankLegDto leg)
+    private static bool ExactCandidate(BankTransaction bank, BankLegDto leg, TimeZoneInfo accountTimeZone)
     {
         if (!ValidFinancialMatch(bank, leg))
             return false;
@@ -128,7 +129,7 @@ public sealed partial class BankReconciliationService
         if (!string.IsNullOrWhiteSpace(leg.Reference) && hasBankReference)
             return string.Equals(leg.Reference, row.TransactionNumber, StringComparison.Ordinal) ||
                    string.Equals(leg.Reference, row.Reference, StringComparison.Ordinal);
-        return clock.GetBusinessDate(leg.OccurredAt) == row.LedgerDate;
+        return AccountDate(leg.OccurredAt, accountTimeZone) == row.LedgerDate;
     }
 
     private void AddMatch(BankReconciliationReview review, BankTransaction bank, BankLegDto leg, string userId, string reason)

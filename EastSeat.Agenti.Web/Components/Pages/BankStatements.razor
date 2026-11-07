@@ -79,7 +79,10 @@
             <MudGrid Class="my-2">
                 <MudItem xs="12" sm="4"><MudDatePicker Label="Start date" @bind-Date="_fromDate" Editable="true" DateFormat="yyyy-MM-dd" Disabled="Busy" /></MudItem>
                 <MudItem xs="12" sm="4"><MudDatePicker Label="End date" @bind-Date="_toDate" Editable="true" DateFormat="yyyy-MM-dd" Disabled="Busy" /></MudItem>
-                @if (!_imports.Any(i => i.Status == StatementImportStatus.Committed && i.CoverageVerified))
+                @if (!_imports.Any(i => i.Status == StatementImportStatus.Committed && i.CoverageVerified) ||
+                     (_fromDate.HasValue && _toDate.HasValue && _imports.Any(i => i.OpeningBaselineReason != null &&
+                         i.RequestedFromDate == DateOnly.FromDateTime(_fromDate.Value) &&
+                         i.RequestedToDate == DateOnly.FromDateTime(_toDate.Value))))
                 {
                     <MudItem xs="12" sm="4"><MudNumericField T="decimal?" Label="Initial opening balance (first empty period only)" @bind-Value="_openingBaseline" /></MudItem>
                 }

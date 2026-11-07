@@ -206,6 +206,62 @@ public class BankStatementTests
     }
 
     [Fact]
+    public async Task UniversalCommit_IgnoresStagedImportWhoseStartIsCoveredByCommittedRange()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.Status = CashSessionStatus.Closed;
+        await fixture.Db.SaveChangesAsync();
+        var (service, evidence, _) = UniversalSetup(fixture);
+        var emptyCsv = "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n";
+        var wideFile = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "wide.csv", true, Content(emptyCsv));
+        var wide = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, wideFile.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 2),
+                100m, "Verified opening balance from bank advice."));
+        Assert.True(await service.ProcessNextAsync());
+        var firstFile = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "first.csv", true, Content(emptyCsv.Replace("\n", "\r\n", StringComparison.Ordinal)));
+        var first = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, firstFile.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1),
+                100m, "Verified opening balance from bank advice."));
+        Assert.True(await service.ProcessNextAsync());
+        var firstPreview = await service.GetPreviewAsync(fixture.Admin.Id, first.Id);
+        await service.CommitAsync(fixture.Admin.Id, first.Id,
+            new CommitStatementForm { ExpectedVersion = firstPreview.Import.Version });
+
+        var next = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, firstFile.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 2), new DateOnly(2026, 11, 2), null));
+        Assert.True(await service.ProcessNextAsync());
+        var nextPreview = await service.GetPreviewAsync(fixture.Admin.Id, next.Id);
+        var committed = await service.CommitAsync(fixture.Admin.Id, next.Id,
+            new CommitStatementForm { ExpectedVersion = nextPreview.Import.Version });
+
+        Assert.Equal(StatementImportStatus.Committed, committed.Status);
+        Assert.Equal(StatementImportStatus.ReadyForReview,
+            (await service.GetPreviewAsync(fixture.Admin.Id, wide.Id)).Import.Status);
+    }
+
+    [Fact]
+    public async Task CreatingUniversalAccount_BoundsDerivedBankIdentifierLength()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Db.BankAccounts.Remove(fixture.Account);
+        await fixture.Db.SaveChangesAsync();
+        var clock = Clock();
+        var accounts = new BankAccountService(fixture.Db, new BankingAccessService(fixture.Db, clock), clock,
+            new StatementProfileCatalog([new UniversalBankCsvStatementProfile()]));
+
+        var created = await accounts.CreateAsync(fixture.Admin.Id, new BankAccountForm
+        {
+            WalletId = fixture.BankWallet.Id, BankName = new string('b', 150),
+            AccountIdentifier = "001234567890", BalanceBasis = BankBalanceBasis.Ledger
+        });
+
+        var stored = await fixture.Db.BankAccounts.AsNoTracking().SingleAsync(a => a.Id == created.Id);
+        Assert.Equal(new string('B', 100), stored.BankIdentifier);
+    }
+
+    [Fact]
     public async Task UniversalCommit_RevalidatesContinuityAgainstNewlyCommittedPredecessor()
     {
         using var fixture = new BankingTestContext();

@@ -94,8 +94,11 @@ public sealed partial class BankReconciliationService(
             .ToListAsync(cancellationToken);
         var from = review.FromDate;
         var to = review.ToDate;
+        var instants = new List<DateTimeOffset>();
         foreach (var bridge in bridges.Where(b => b.PreviousObservedAt.HasValue))
         {
+            instants.Add(bridge.PreviousObservedAt!.Value);
+            instants.Add(bridge.ObservedAt);
             var date = clock.GetBusinessDate(bridge.PreviousObservedAt!.Value);
             if (date < from) from = date;
         }
@@ -103,11 +106,17 @@ public sealed partial class BankReconciliationService(
         {
             foreach (var wallet in CountSnapshotCodec.Deserialize(snapshot.WalletsJson))
             {
+                instants.Add(wallet.ObservedAt);
                 var date = clock.GetBusinessDate(wallet.ObservedAt);
                 if (date < from) from = date;
                 if (date > to) to = date;
             }
         }
+        var accountTimeZone = TimeZoneInfo.FindSystemTimeZoneById(account.TimeZoneId);
+        var accountFromKampala = clock.GetBusinessDate(AccountDayStart(from, accountTimeZone));
+        var accountToKampala = clock.GetBusinessDate(AccountDayStart(to.AddDays(1), accountTimeZone).AddTicks(-1));
+        var legFrom = accountFromKampala < from ? accountFromKampala : from;
+        var legTo = accountToKampala > to ? accountToKampala : to;
         var matches = await db.BankReconciliationMatches.AsNoTracking()
             .Where(m => m.IsActive && m.BankTransaction!.BankAccountId == account.Id).ToListAsync(cancellationToken);
         var exceptions = await db.BankReconciliationExceptions.AsNoTracking()
@@ -124,7 +133,7 @@ public sealed partial class BankReconciliationService(
         var movements = await db.CustomerMovements.AsNoTracking()
             .Where(m => m.CustomerTransaction!.BankAccountId == account.Id && m.BankEffect != 0 &&
                 !db.CustomerMovements.Any(next => next.SupersedesMovementId == m.Id) &&
-                (sessionIds.Contains(m.CashSessionId) || (m.OccurrenceDate >= from && m.OccurrenceDate <= to) ||
+                (sessionIds.Contains(m.CashSessionId) || (m.OccurrenceDate >= legFrom && m.OccurrenceDate <= legTo) ||
                  (m.BankReference != null && references.Contains(m.BankReference)) || linkedCustomerIds.Contains(m.Id)))
             .Select(m => new BankLegDto(BankLegKind.CustomerMovement, m.Id, m.CashSessionId, m.CustomerTransactionId,
                 m.BankEffect, m.CustomerTransaction!.Currency, m.BankReference,
@@ -135,7 +144,7 @@ public sealed partial class BankReconciliationService(
             .Select(m => m.BankRunId!.Value).ToList();
         linkedRunIds.AddRange(exceptions.Where(e => e.BankRunId.HasValue).Select(e => e.BankRunId!.Value));
         var bankRuns = await db.BankRuns.AsNoTracking().Where(r => r.AgentId == agentId && r.ToWalletId == account.WalletId &&
-                (sessionIds.Contains(r.CashSessionId) || (r.CashSession!.SessionDate >= from && r.CashSession.SessionDate <= to) ||
+                (sessionIds.Contains(r.CashSessionId) || (r.CashSession!.SessionDate >= legFrom && r.CashSession.SessionDate <= legTo) ||
                  (r.ReceiptNumber != null && references.Contains(r.ReceiptNumber)) || linkedRunIds.Contains(r.Id)))
             .Select(r => new BankLegDto(BankLegKind.BankRun, r.Id, r.CashSessionId, null, r.Amount,
                 r.Currency, r.ReceiptNumber, null, r.OccurredAt ?? r.CreatedAt, false, false))
@@ -145,7 +154,7 @@ public sealed partial class BankReconciliationService(
         linkedAdjustmentIds.AddRange(exceptions.Where(e => e.WalletAdjustmentId.HasValue).Select(e => e.WalletAdjustmentId!.Value));
         var adjustments = await db.WalletAdjustments.AsNoTracking().Where(a => a.AgentId == agentId && a.WalletId == account.WalletId &&
                 a.Status != WalletAdjustmentStatus.Rejected &&
-                (sessionIds.Contains(a.CashSessionId) || (a.CashSession!.SessionDate >= from && a.CashSession.SessionDate <= to) ||
+                (sessionIds.Contains(a.CashSessionId) || (a.CashSession!.SessionDate >= legFrom && a.CashSession.SessionDate <= legTo) ||
                  (a.BankReference != null && references.Contains(a.BankReference)) || linkedAdjustmentIds.Contains(a.Id)))
             .Select(a => new BankLegDto(BankLegKind.WalletAdjustment, a.Id, a.CashSessionId, null, -a.Amount,
                 a.Currency, a.BankReference, null, a.OccurredAt ?? a.CreatedAt, false, a.Status == WalletAdjustmentStatus.Pending))
@@ -178,7 +187,10 @@ public sealed partial class BankReconciliationService(
                 CreatedAt = i.CreatedAt, CommittedAt = i.CommittedAt
             })
             .ToListAsync(cancellationToken);
-        var activeCoverageIds = coverageMetadata.Where(i => i.CoverageToDate >= from)
+        var minInstant = instants.Count > 0 ? instants.Min() : (DateTimeOffset?)null;
+        var maxInstant = instants.Count > 0 ? instants.Max() : (DateTimeOffset?)null;
+        var activeCoverageIds = coverageMetadata.Where(i => i.CoverageToDate >= from ||
+                (minInstant.HasValue && i.CoverageTo > minInstant && i.CoverageFrom <= maxInstant))
             .Select(i => i.Id).ToList();
         var activeCoverage = await db.BankStatementImports.AsNoTracking().Include(i => i.Rows)
             .Where(i => activeCoverageIds.Contains(i.Id)).ToListAsync(cancellationToken);
@@ -186,6 +198,14 @@ public sealed partial class BankReconciliationService(
         var coverage = coverageMetadata.Select(i => activeById.GetValueOrDefault(i.Id) ?? i).ToList();
         await ValidateCurrentCoverageAsync(account.Id, activeCoverage, cancellationToken);
         return new ReviewFacts(account, sessions, counts, snapshots, bridges, banks, legs, matches, customers, exceptions, corrections, coverage);
+    }
+
+    private static DateTimeOffset AccountDayStart(DateOnly date, TimeZoneInfo accountTimeZone)
+    {
+        var local = date.ToDateTime(TimeOnly.MinValue);
+        while (accountTimeZone.IsInvalidTime(local))
+            local = local.AddMinutes(30);
+        return new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(local, accountTimeZone), TimeSpan.Zero);
     }
 
     private async Task ValidateCurrentCoverageAsync(long accountId, List<BankStatementImport> coverage, CancellationToken cancellationToken)

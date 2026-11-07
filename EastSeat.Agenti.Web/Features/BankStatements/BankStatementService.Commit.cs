@@ -336,8 +336,8 @@ public sealed partial class BankStatementService
                  i.Status == StatementImportStatus.ReadyForReview) && i.RequestedFromDate < from &&
                 !db.BankStatementImports.Any(committed => committed.BankAccountId == i.BankAccountId &&
                     committed.Status == StatementImportStatus.Committed &&
-                    committed.RequestedFromDate == i.RequestedFromDate &&
-                    committed.RequestedToDate == i.RequestedToDate && committed.Id > i.Id), cancellationToken))
+                    committed.CoverageFromDate <= i.RequestedFromDate &&
+                    committed.CoverageToDate >= i.RequestedFromDate), cancellationToken))
             throw new BankingRuleException("Commit the earlier staged statement period before this one.");
     }
 

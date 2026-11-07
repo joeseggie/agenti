@@ -188,6 +188,37 @@ public class UniversalBankCsvStatementProfileTests
         Assert.Contains("local date/time is invalid or ambiguous", error.Message);
     }
 
+    [Fact]
+    public async Task Parse_RejectsUnverifiedBalanceBasis()
+    {
+        var csv = "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+                  "2026-11-01,,REF,Fee,,1.00,10.00";
+
+        var error = await Assert.ThrowsAsync<StatementParsingException>(() =>
+            ParseAsync(csv, "Africa/Kampala", null, BankBalanceBasis.Unverified));
+
+        Assert.Contains("balance basis", error.Message);
+    }
+
+    [Fact]
+    public async Task Parse_RejectsInvalidUtf8WithSaveAsGuidance()
+    {
+        var bytes = Encoding.UTF8.GetBytes(
+                "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+                "2026-11-01,,REF,Agent")
+            .Concat(new byte[] { 0x92 })
+            .Concat(Encoding.UTF8.GetBytes("s fee,,1.00,10.00"))
+            .ToArray();
+        var account = new StatementAccountContext(
+            "001234567890", "UGX", "Africa/Kampala", BankBalanceBasis.Ledger, From, To, null);
+
+        var error = await Assert.ThrowsAsync<StatementParsingException>(() =>
+            new UniversalBankCsvStatementProfile().ParseAsync(new MemoryStream(bytes),
+                UniversalBankCsvStatementProfile.CsvContentType, account, CancellationToken.None));
+
+        Assert.Contains("not valid UTF-8", error.Message);
+    }
+
     private static Task<ParsedStatement> ParseAsync(
         string csv, string zone, decimal? baseline, BankBalanceBasis basis = BankBalanceBasis.Ledger)
     {

@@ -54,7 +54,7 @@ public sealed class BankAccountService(
             {
                 BranchId = actor.BranchId, WalletId = wallet.Id, BankName = form.BankName.Trim(),
                 BankIdentifier = profile?.BankIdentifier == "*"
-                    ? form.BankName.Trim().ToUpperInvariant()
+                    ? BoundedBankIdentifier(form.BankName)
                     : profile?.BankIdentifier,
                 AccountIdentifier = form.AccountIdentifier.Trim(), Currency = wallet.Currency,
                 TimeZoneId = form.TimeZoneId, BalanceBasis = form.BalanceBasis,
@@ -203,6 +203,12 @@ public sealed class BankAccountService(
         {
             throw new BankingRuleException("The selected time zone is invalid.");
         }
+    }
+
+    private static string BoundedBankIdentifier(string bankName)
+    {
+        var id = bankName.Trim().ToUpperInvariant();
+        return id.Length > 100 ? id[..100].TrimEnd() : id;
     }
 
     private static BankAccountDto Map(BankAccount account) => new(

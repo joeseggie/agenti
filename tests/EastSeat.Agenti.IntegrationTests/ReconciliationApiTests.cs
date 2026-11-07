@@ -23,10 +23,10 @@ public sealed class ReconciliationApiTests(DatabaseFixture fixture) : Integratio
         client.DefaultRequestHeaders.Add("Cookie", $"{cookie.Name}={cookie.Value}");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.User));
 
-        using var response = await client.GetAsync("/api/banking/admin/accounts");
+        using var response = await client.PostAsync("/api/banking/wallet-adjustments/1/approve", null);
         using var ordinary = await client.GetAsync("/api/banking/current");
 
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Equal(HttpStatusCode.OK, ordinary.StatusCode);
     }
 
