@@ -108,7 +108,10 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         {
             Name = "synthetic-statement.csv", MimeType = "text/csv", Buffer = JsonSerializer.SerializeToUtf8Bytes(source)
         });
-        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Upload and prepare preview", Exact = true }).ClickAsync();
+        var upload = adminPage.GetByRole(AriaRole.Button, new() { Name = "Upload and validate", Exact = true });
+        await Expect(adminPage.GetByText("synthetic-statement.csv", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(upload).ToBeEnabledAsync(new() { Timeout = 30_000 });
+        await upload.ClickAsync();
         var refresh = adminPage.GetByRole(AriaRole.Button, new() { Name = "Refresh preview", Exact = true });
         await Expect(refresh).ToBeVisibleAsync();
         var commit = adminPage.GetByRole(AriaRole.Button, new() { Name = "Commit reviewed bank entries", Exact = true });
