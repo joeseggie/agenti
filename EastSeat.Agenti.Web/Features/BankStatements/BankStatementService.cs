@@ -23,8 +23,18 @@ public sealed partial class BankStatementService(
             .OrderByDescending(i => i.Id).Select(ImportProjection).ToListAsync(cancellationToken);
     }
 
-    public async Task<BankStatementImportDto> StartAsync(
-        string userId, long accountId, long evidenceId, bool reprocess = false, CancellationToken cancellationToken = default)
+    public Task<BankStatementImportDto> StartAsync(
+        string userId, long accountId, long evidenceId, bool reprocess = false, CancellationToken cancellationToken = default) =>
+        StartCoreAsync(userId, accountId, evidenceId, null, reprocess, cancellationToken);
+
+    public Task<BankStatementImportDto> StartAsync(
+        string userId, long accountId, long evidenceId, StatementImportRequest request,
+        bool reprocess = false, CancellationToken cancellationToken = default) =>
+        StartCoreAsync(userId, accountId, evidenceId, request, reprocess, cancellationToken);
+
+    private async Task<BankStatementImportDto> StartCoreAsync(
+        string userId, long accountId, long evidenceId, StatementImportRequest? request,
+        bool reprocess, CancellationToken cancellationToken)
     {
         await access.RequireAccountAsync(userId, accountId, adminOnly: true, cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
@@ -34,9 +44,15 @@ public sealed partial class BankStatementService(
                     f.BankAccountId == accountId && f.IsStatement)
                 .Select(f => new { f.Id, f.ContentHash, f.ContentType }).SingleOrDefaultAsync(cancellationToken)
                 ?? throw new BankingRuleException("Select statement evidence belonging to this account.");
-            var existing = await db.BankStatementImports.AsNoTracking()
+            var fileImports = await db.BankStatementImports.AsNoTracking()
                 .Where(i => i.BankAccountId == accountId && i.EvidenceFile!.ContentHash == file.ContentHash)
-                .OrderByDescending(i => i.Id).FirstOrDefaultAsync(cancellationToken);
+                .OrderByDescending(i => i.Id).ToListAsync(cancellationToken);
+            var existing = request == null
+                ? fileImports.FirstOrDefault()
+                : fileImports.FirstOrDefault(i => i.RequestedFromDate == request.FromDate &&
+                    i.RequestedToDate == request.ToDate &&
+                    i.OpeningBaselineReason == (request.OpeningBaselineReason?.Trim()) &&
+                    (!request.OpeningBaseline.HasValue || i.OpeningBaseline == request.OpeningBaseline));
             if (existing != null && !reprocess)
             {
                 var existingDto = await ImportDtoAsync(existing.Id, cancellationToken);
@@ -46,22 +62,111 @@ public sealed partial class BankStatementService(
             if (existing?.Status is StatementImportStatus.Uploaded or StatementImportStatus.Processing)
                 throw new BankingRuleException("This source file is already queued or being processed.");
             var account = await db.BankAccounts.SingleAsync(a => a.Id == accountId, cancellationToken);
-            var profile = profiles.Find(account.ImportProfileKey);
-            var usable = account.ImportProfileVerified && profile?.IsVerified == true &&
-                         profile.BankIdentifier == account.BankIdentifier &&
+            var profile = profiles.Find(account.ImportProfileKey) ??
+                          profiles.Find(UniversalBankCsvStatementProfile.ProfileKey);
+            var previousRevision = request == null ? null :
+                await db.BankStatementImports.AsNoTracking()
+                    .Where(i => i.BankAccountId == accountId && i.RequestedFromDate == request.FromDate &&
+                        i.RequestedToDate == request.ToDate)
+                    .OrderByDescending(i => i.Id).FirstOrDefaultAsync(cancellationToken);
+            if (request?.OpeningBaseline.HasValue != true &&
+                !string.IsNullOrWhiteSpace(request?.OpeningBaselineReason))
+                throw new BankingRuleException("A baseline source and reason can only be saved with an opening baseline.");
+            var fromDate = request?.FromDate ?? existing?.RequestedFromDate;
+            var toDate = request?.ToDate ?? existing?.RequestedToDate;
+            var baseline = request?.OpeningBaseline ??
+                (existing?.OpeningBaselineReason != null ? existing.OpeningBaseline :
+                    previousRevision?.OpeningBaselineReason != null ? previousRevision.OpeningBaseline : null);
+            var baselineReason = request?.OpeningBaselineReason ??
+                (request?.OpeningBaseline.HasValue != true
+                    ? existing?.OpeningBaselineReason ?? previousRevision?.OpeningBaselineReason
+                    : null);
+            var sameAuditedBaseline = request != null && request.OpeningBaseline.HasValue &&
+                ((existing != null && existing.OpeningBaselineReason == request.OpeningBaselineReason?.Trim() &&
+                  existing.OpeningBaseline == request.OpeningBaseline) ||
+                 (previousRevision != null && previousRevision.OpeningBaselineReason == request.OpeningBaselineReason?.Trim() &&
+                  previousRevision.OpeningBaseline == request.OpeningBaseline));
+            var recordBaseline = request?.OpeningBaseline.HasValue == true && !sameAuditedBaseline;
+            if (profile?.Key == UniversalBankCsvStatementProfile.ProfileKey &&
+                (!fromDate.HasValue || !toDate.HasValue || fromDate > toDate || toDate >= clock.Today))
+                throw new BankingRuleException("Select a valid statement date range ending before today; the current business day is not complete.");
+            if (request?.OpeningBaseline is decimal requestedBaseline &&
+                (requestedBaseline < -9_999_999_999_999_999.99m ||
+                 requestedBaseline > 9_999_999_999_999_999.99m ||
+                 decimal.Round(requestedBaseline, 2) != requestedBaseline))
+                throw new BankingRuleException("The opening baseline must be within ±9,999,999,999,999,999.99 with no more than two decimal places.");
+            if (baseline.HasValue && (string.IsNullOrWhiteSpace(baselineReason) || baselineReason.Trim().Length > 1000))
+                throw new BankingRuleException("An opening baseline requires an audited source and reason of at most 1,000 characters.");
+            if (!baseline.HasValue && !string.IsNullOrWhiteSpace(baselineReason))
+                throw new BankingRuleException("A baseline source and reason can only be saved with an opening baseline.");
+            if (fromDate.HasValue && toDate.HasValue)
+            {
+                if (await db.CashSessions.AnyAsync(s => s.BranchId == account.BranchId &&
+                        s.SessionDate >= fromDate && s.SessionDate <= toDate && s.Status != CashSessionStatus.Closed,
+                        cancellationToken))
+                    throw new BankingRuleException("Close every cash session in the selected date range before reconciling its bank statement.");
+                var previousImports = await db.BankStatementImports.AsNoTracking()
+                    .Where(i => i.BankAccountId == accountId && i.Status == StatementImportStatus.Committed &&
+                                i.CoverageVerified && i.CoverageToDate < fromDate)
+                    .ToListAsync(cancellationToken);
+                var previous = previousImports.OrderByDescending(i => i.CoverageToDate)
+                    .ThenByDescending(i => i.CommittedAt).ThenByDescending(i => i.Id).FirstOrDefault();
+                var revisingCoverage = await db.BankStatementImports.AsNoTracking().AnyAsync(i =>
+                    i.BankAccountId == accountId && i.Status == StatementImportStatus.Committed &&
+                    i.CoverageFromDate == fromDate && i.CoverageToDate == toDate, cancellationToken);
+                revisingCoverage |= existing != null && existing.RequestedFromDate == fromDate &&
+                    existing.RequestedToDate == toDate && existing.Status == StatementImportStatus.Committed;
+                if (previous != null)
+                {
+                    if (fromDate.Value != previous.CoverageToDate!.Value.AddDays(1))
+                        throw new BankingRuleException($"Reconcile the missing dates from {previous.CoverageToDate.Value.AddDays(1):yyyy-MM-dd} through {fromDate.Value.AddDays(-1):yyyy-MM-dd} first.");
+                    if (baseline.HasValue && previous.ClosingBalance.HasValue && baseline.Value != previous.ClosingBalance.Value)
+                        throw new BankingRuleException("The supplied opening balance does not match the previous committed closing balance.");
+                    baseline = previous.ClosingBalance;
+                    baselineReason = null;
+                    recordBaseline = false;
+                }
+                else if (!revisingCoverage && await db.BankStatementImports.AnyAsync(i => i.BankAccountId == accountId &&
+                             i.Status == StatementImportStatus.Committed && i.CoverageVerified &&
+                             i.CoverageFromDate > toDate, cancellationToken))
+                    throw new BankingRuleException("Reconcile statement dates in order; an earlier period is already committed after this date range.");
+            }
+            var isUniversal = profile?.Key == UniversalBankCsvStatementProfile.ProfileKey;
+            var usable = (isUniversal || account.ImportProfileVerified) && profile?.IsVerified == true &&
+                         (profile.BankIdentifier == "*" || profile.BankIdentifier == account.BankIdentifier) &&
                          profile.SupportedContentTypes.Contains(file.ContentType);
+            var reusableEvidence = fileImports.FirstOrDefault();
+            var nextEvidenceRevision = fileImports.Select(i => i.Revision).DefaultIfEmpty(-1).Max() + 1;
+            var nextPeriodRevision = (previousRevision?.Revision ?? -1) + 1;
             var import = new BankStatementImport
             {
-                BankAccountId = accountId, EvidenceFileId = existing?.EvidenceFileId ?? evidenceId,
-                Revision = existing == null ? 0 : existing.Revision + 1, PreviousImportId = existing?.Id,
+                BankAccountId = accountId, EvidenceFileId = reusableEvidence?.EvidenceFileId ?? evidenceId,
+                Revision = Math.Max(nextEvidenceRevision, nextPeriodRevision),
+                PreviousImportId = previousRevision?.Id,
                 ProfileKey = profile?.Key ?? string.Empty, ProfileVersion = profile?.Version ?? 0,
+                SchemaHash = profile?.SchemaHash,
+                RequestedFromDate = fromDate, RequestedToDate = toDate, OpeningBaseline = baseline,
+                OpeningBaselineReason = baselineReason?.Trim(),
                 Status = usable ? StatementImportStatus.Uploaded : StatementImportStatus.Failed,
-                ErrorMessage = usable ? null : "No verified profile supports this bank and file format. Verify representative bank samples before parsing or activation.",
+                ErrorMessage = usable ? null : "No installed statement parser supports this bank account and file format.",
                 UploadedByUserId = userId, CreatedAt = clock.UtcNow
             };
             account.Version++;
             db.BankStatementImports.Add(import);
             await db.SaveChangesAsync(cancellationToken);
+            if (recordBaseline && baselineReason != null)
+            {
+                db.BankReconciliationDecisions.Add(new BankReconciliationDecision
+                {
+                    BankAccountId = accountId,
+                    Kind = ReconciliationDecisionKind.BaselineRecorded,
+                    DetailsJson = JsonSerializer.Serialize(new { import.Id, OpeningBaseline = baseline }),
+                    Reason = baselineReason.Trim(),
+                    PerformedByUserId = userId,
+                    PerformedAt = clock.UtcNow
+                });
+                await db.SaveChangesAsync(cancellationToken);
+            }
             var result = await ImportDtoAsync(import.Id, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return result;
@@ -175,14 +280,18 @@ public sealed partial class BankStatementService(
                 .SingleAsync(i => i.Id == importId, cancellationToken);
             var profile = RequireProfile(import);
             var account = import.BankAccount!;
-            if (profile.BankIdentifier != account.BankIdentifier || profile.BalanceBasis != account.BalanceBasis ||
-                !account.ImportProfileVerified || !profile.SupportedContentTypes.Contains(import.EvidenceFile!.ContentType))
-                throw new StatementParsingException("The verified profile no longer agrees with the account or source file.");
+            var isUniversal = profile.Key == UniversalBankCsvStatementProfile.ProfileKey;
+            if ((profile.BankIdentifier != "*" && profile.BankIdentifier != account.BankIdentifier) ||
+                (!isUniversal && profile.BalanceBasis != account.BalanceBasis) ||
+                (!isUniversal && !account.ImportProfileVerified) ||
+                !profile.SupportedContentTypes.Contains(import.EvidenceFile!.ContentType))
+                throw new StatementParsingException("The statement parser no longer agrees with the account or source file.");
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(settings.ProcessingTimeoutSeconds));
             await using var content = new MemoryStream(import.EvidenceFile.Content, writable: false);
             var parsed = await profile.ParseAsync(content, import.EvidenceFile.ContentType,
-                new StatementAccountContext(account.AccountIdentifier, account.Currency, account.TimeZoneId, account.BalanceBasis),
+                new StatementAccountContext(account.AccountIdentifier, account.Currency, account.TimeZoneId, account.BalanceBasis,
+                    import.RequestedFromDate, import.RequestedToDate, import.OpeningBaseline),
                 timeout.Token);
             if (parsed.Entries.Count > settings.MaximumRows)
                 throw new StatementParsingException("The statement exceeds the configured row limit. Export a smaller interval.");
@@ -199,7 +308,7 @@ public sealed partial class BankStatementService(
             {
                 var entry = parsed.Entries[index];
                 StatementValidation.ValidateEntry(entry);
-                var row = NewRow(import.Id, index + 1, entry);
+                var row = NewRow(import.Id, index + 1, entry, isUniversal);
                 var identity = Identity(profile, row);
                 if (identity != null && !identities.Add(identity))
                     throw new StatementParsingException("The source repeats a supposedly unique bank identifier. The bank profile needs review; no financial rows were committed.");
@@ -215,8 +324,12 @@ public sealed partial class BankStatementService(
             current.BalanceBasis = parsed.BalanceBasis;
             current.CoverageFrom = parsed.CoverageFrom.ToUniversalTime();
             current.CoverageTo = parsed.CoverageTo.ToUniversalTime();
-            current.CoverageFromDate = clock.GetBusinessDate(parsed.CoverageFrom);
-            current.CoverageToDate = clock.GetBusinessDate(parsed.CoverageTo.AddTicks(-1));
+            current.CoverageFromDate = isUniversal
+                ? import.RequestedFromDate
+                : clock.GetBusinessDate(parsed.CoverageFrom);
+            current.CoverageToDate = isUniversal
+                ? import.RequestedToDate
+                : clock.GetBusinessDate(parsed.CoverageTo.AddTicks(-1));
             current.OpeningBalance = parsed.OpeningBalance;
             current.ClosingBalance = parsed.ClosingBalance;
             current.CoverageDeclaredComplete = parsed.CompleteCoverage;
@@ -244,7 +357,7 @@ public sealed partial class BankStatementService(
             if (failed.LeaseId == leaseId && failed.Status == StatementImportStatus.Processing)
             {
                 failed.Status = StatementImportStatus.Failed;
-                failed.ErrorMessage = exception is StatementParsingException parseError ? parseError.Message :
+                failed.ErrorMessage = exception is StatementParsingException parseError ? BoundErrorMessage(parseError.Message) :
                     exception is OperationCanceledException ? "Statement processing exceeded its configured time limit." :
                     "Statement processing failed. The original source is retained; no financial import was committed.";
                 failed.LeaseId = null;
@@ -258,8 +371,10 @@ public sealed partial class BankStatementService(
 
     private static readonly Expression<Func<BankStatementImport, BankStatementImportDto>> ImportProjection = i =>
         new BankStatementImportDto(i.Id, i.BankAccountId, i.EvidenceFileId, i.EvidenceFile!.FileName, i.Status,
-            i.ProfileKey, i.ProfileVersion, i.Version, i.Revision, i.CoverageFrom, i.CoverageTo,
-            i.OpeningBalance, i.ClosingBalance, i.CoverageVerified, i.ErrorMessage, i.CreatedAt);
+            i.ProfileKey, i.ProfileVersion, i.Version, i.Revision, i.SchemaHash, i.RequestedFromDate, i.RequestedToDate,
+            i.CoverageFrom, i.CoverageTo,
+            i.OpeningBalance, i.OpeningBaseline, i.OpeningBaselineReason, i.ClosingBalance,
+            i.CoverageVerified, i.ErrorMessage, i.CreatedAt);
 
     private Task<BankStatementImportDto> ImportDtoAsync(long id, CancellationToken cancellationToken) =>
         db.BankStatementImports.AsNoTracking().Where(i => i.Id == id)
@@ -306,7 +421,8 @@ public sealed partial class BankStatementService(
         return intervals.Select(i => (i.From, i.To)).ToList();
     }
 
-    private BankStatementRow NewRow(long importId, int sequence, ParsedStatementEntry entry) => new()
+    private BankStatementRow NewRow(
+        long importId, int sequence, ParsedStatementEntry entry, bool preserveTransactionDate = false) => new()
     {
         ImportId = importId, Sequence = sequence, SourceLocation = entry.SourceLocation, RawData = entry.RawData,
         TransactionNumber = entry.TransactionNumber?.Trim(), Reference = entry.Reference?.Trim(),
@@ -314,7 +430,12 @@ public sealed partial class BankStatementService(
         Currency = entry.Currency, SignedAmount = entry.SignedAmount, RunningBalance = entry.RunningBalance,
         OccurredAt = entry.OccurredAt.ToUniversalTime(), PostedAt = entry.PostedAt?.ToUniversalTime(),
         OccurrenceDate = clock.GetBusinessDate(entry.OccurredAt),
-        LedgerDate = clock.GetBusinessDate(entry.PostedAt ?? entry.OccurredAt),
+        LedgerDate = preserveTransactionDate && entry.ValueDate.HasValue
+            ? entry.ValueDate.Value
+            : clock.GetBusinessDate(entry.PostedAt ?? entry.OccurredAt),
         ValueDate = entry.ValueDate, HasPreciseTimestamp = entry.HasPreciseTimestamp
     };
+
+    private static string BoundErrorMessage(string message) =>
+        message.Length <= 2000 ? message : message[..1997] + "...";
 }

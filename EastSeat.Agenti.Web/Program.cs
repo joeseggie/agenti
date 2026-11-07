@@ -173,7 +173,7 @@ builder.Services.AddScoped<IBankEvidenceService, BankEvidenceService>();
 builder.Services.AddScoped<ICustomerTransactionService, CustomerTransactionService>();
 builder.Services.Configure<BankEvidenceOptions>(builder.Configuration.GetSection("Banking:Evidence"));
 builder.Services.Configure<BankStatementOptions>(builder.Configuration.GetSection("Banking:Statements"));
-builder.Services.AddSingleton<IStatementImportProfile, CentenaryAgencyFloatXlsxStatementProfile>();
+builder.Services.AddSingleton<IStatementImportProfile, UniversalBankCsvStatementProfile>();
 builder.Services.AddSingleton<StatementProfileCatalog>();
 builder.Services.AddScoped<IBankAccountService, BankAccountService>();
 builder.Services.AddScoped<IBankStatementService, BankStatementService>();
@@ -210,10 +210,11 @@ builder.Services.AddAuthorizationBuilder()
     .AddPolicy("BankReconciliation", policy =>
         policy.RequireRole(UserRole.Admin.ToString())
               .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme))
+    .AddPolicy("BankReconciliationReview", policy =>
+        policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString())
+              .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme))
     .AddPolicy("BankingApi", policy =>
-        policy.RequireAuthenticatedUser().AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme))
-    .AddPolicy("BankReconciliationApi", policy =>
-        policy.RequireRole(UserRole.Admin.ToString()).AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme));
+        policy.RequireAuthenticatedUser().AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme));
 
 var apiAuthorization = builder.Services.AddAuthorizationBuilder();
 foreach (var policyName in new[] { "VaultView", "VaultAccess", "VaultAdjust", "CashCountApprove" })

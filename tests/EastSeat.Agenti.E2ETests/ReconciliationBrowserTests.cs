@@ -97,6 +97,8 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         var adminPage = await administrator.NewPageAsync();
         await adminPage.GotoAsync(root + "/bank-statements");
         await Expect(adminPage.Locator("input[type=file]")).ToBeEnabledAsync(new() { Timeout = 30_000 });
+        await FillDateAsync(adminPage, "Start date", "2026-11-02");
+        await FillDateAsync(adminPage, "End date", "2026-11-02");
         var source = new ParsedStatement("SYNTHETIC-ACCOUNT", "UGX", BankBalanceBasis.Ledger,
             new DateTimeOffset(2026, 11, 2, 0, 0, 0, TimeSpan.FromHours(3)),
             new DateTimeOffset(2026, 11, 3, 0, 0, 0, TimeSpan.FromHours(3)),
@@ -108,7 +110,10 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         {
             Name = "synthetic-statement.csv", MimeType = "text/csv", Buffer = JsonSerializer.SerializeToUtf8Bytes(source)
         });
-        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Upload and prepare preview", Exact = true }).ClickAsync();
+        var upload = adminPage.GetByRole(AriaRole.Button, new() { Name = "Upload and validate", Exact = true });
+        await Expect(adminPage.GetByText("synthetic-statement.csv", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(upload).ToBeEnabledAsync(new() { Timeout = 30_000 });
+        await upload.ClickAsync();
         var refresh = adminPage.GetByRole(AriaRole.Button, new() { Name = "Refresh preview", Exact = true });
         await Expect(refresh).ToBeVisibleAsync();
         var commit = adminPage.GetByRole(AriaRole.Button, new() { Name = "Commit reviewed bank entries", Exact = true });
@@ -136,6 +141,15 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         Assert.Equal(CashCountStatus.Approved, (await final.CashCounts.FindAsync(saved.CashCountId))!.Status);
         Assert.Equal(1, await final.SessionFloatSettlements.CountAsync(s => s.Stage == FloatSettlementStage.Closing));
         Assert.Equal(1, await final.BankReconciliationResults.CountAsync());
+    }
+
+    private static async Task FillDateAsync(IPage page, string label, string isoDate)
+    {
+        var picker = page.GetByLabel(label, new() { Exact = true });
+        await picker.FillAsync(isoDate);
+        // MudBlazor parses typed dates when the field loses focus.
+        await picker.PressAsync("Tab");
+        await Expect(picker).ToHaveValueAsync(isoDate);
     }
 
     private static async Task AddCookieAsync(IBrowserContext browser, BankingApplicationFactory app, ApplicationUser user, string root)

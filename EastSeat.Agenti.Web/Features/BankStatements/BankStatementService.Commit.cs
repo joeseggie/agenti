@@ -28,11 +28,18 @@ public sealed partial class BankStatementService
                 throw new BankingConflictException("The import is not at the expected review revision. Refresh before correcting it.");
             var original = StatementValidation.EffectiveRows(import.Rows).SingleOrDefault(r => r.Id == rowId)
                 ?? throw new BankingRuleException("Select the current version of a row in this import.");
+            var valueDate = form.ValueDate;
+            if (import.ProfileKey == UniversalBankCsvStatementProfile.ProfileKey)
+            {
+                var accountTimeZone = TimeZoneInfo.FindSystemTimeZoneById(import.BankAccount!.TimeZoneId);
+                valueDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(form.OccurredAt, accountTimeZone).DateTime);
+            }
             var entry = new ParsedStatementEntry(original.SourceLocation, original.RawData,
                 form.TransactionNumber, form.Reference, form.CustomerIdentifier, form.Narration, form.Currency,
-                form.SignedAmount, form.RunningBalance, form.OccurredAt, form.PostedAt, form.ValueDate, form.HasPreciseTimestamp);
+                form.SignedAmount, form.RunningBalance, form.OccurredAt, form.PostedAt, valueDate, form.HasPreciseTimestamp);
             StatementValidation.ValidateEntry(entry);
-            var correction = NewRow(importId, original.Sequence, entry);
+            var correction = NewRow(importId, original.Sequence, entry,
+                import.ProfileKey == UniversalBankCsvStatementProfile.ProfileKey);
             correction.Revision = original.Revision + 1;
             correction.SupersedesRowId = original.Id;
             correction.CorrectionReason = form.Reason.Trim();
@@ -97,12 +104,14 @@ public sealed partial class BankStatementService
                 throw new BankingConflictException("The statement preview changed. Refresh and review it before committing.");
             var profile = RequireProfile(import);
             var account = import.BankAccount!;
-            if (account.BankIdentifier != profile.BankIdentifier || !account.ImportProfileVerified)
-                throw new BankingRuleException("The statement profile is no longer verified for this account.");
+            if ((profile.BankIdentifier != "*" && account.BankIdentifier != profile.BankIdentifier) ||
+                (profile.Key != UniversalBankCsvStatementProfile.ProfileKey && !account.ImportProfileVerified))
+                throw new BankingRuleException("The statement parser is no longer configured for this account.");
             var rows = StatementValidation.EffectiveRows(import.Rows);
             var errors = StatementValidation.Check(import, rows, account.AccountIdentifier, account.Currency, account.BalanceBasis);
             if (errors.Count != 0)
                 throw new BankingRuleException(string.Join(" ", errors.Take(5)));
+            await ValidateCoverageSequenceAtCommitAsync(import, cancellationToken);
             if (form.Resolutions.Any(r => !rows.Any(row => row.Id == r.RowId)))
                 throw new BankingRuleException("An identity decision refers to a row outside the current preview.");
             var candidates = await LoadCandidatesAsync(accountId, rows, profile, cancellationToken);
@@ -280,6 +289,57 @@ public sealed partial class BankStatementService
             DetailsJson = JsonSerializer.Serialize(new { ImportId = importId, RowId = rowId, Details = details }),
             Reason = reason.Trim(), PerformedByUserId = userId, PerformedAt = clock.UtcNow
         });
+
+    private async Task ValidateCoverageSequenceAtCommitAsync(
+        BankStatementImport import, CancellationToken cancellationToken)
+    {
+        if (!import.CoverageFromDate.HasValue || !import.CoverageToDate.HasValue)
+            throw new BankingRuleException("The statement preview has no valid transaction-date coverage.");
+
+        var from = import.CoverageFromDate.Value;
+        var to = import.CoverageToDate.Value;
+        var revisesCoverage = await db.BankStatementImports.AnyAsync(i =>
+            i.BankAccountId == import.BankAccountId && i.Id != import.Id &&
+            i.Status == StatementImportStatus.Committed &&
+            i.CoverageFromDate == from && i.CoverageToDate == to, cancellationToken);
+        var overlapsExistingCoverage = await db.BankStatementImports.AnyAsync(i =>
+            i.BankAccountId == import.BankAccountId && i.Id != import.Id &&
+            i.Status == StatementImportStatus.Committed &&
+            i.CoverageFromDate <= to && i.CoverageToDate >= from, cancellationToken);
+        if (overlapsExistingCoverage && !revisesCoverage)
+            throw new BankingRuleException("The selected statement period overlaps committed coverage; submit a revision for the exact existing period.");
+        var predecessors = await db.BankStatementImports.Where(i =>
+                i.BankAccountId == import.BankAccountId && i.Id != import.Id &&
+                i.Status == StatementImportStatus.Committed && i.CoverageToDate < from)
+            .ToListAsync(cancellationToken);
+        var predecessor = predecessors.OrderByDescending(i => i.CoverageToDate)
+            .ThenByDescending(i => i.CommittedAt).ThenByDescending(i => i.Id).FirstOrDefault();
+
+        if (predecessor != null)
+        {
+            if (!predecessor.CoverageVerified || predecessor.CoverageToDate!.Value.AddDays(1) != from)
+                throw new BankingRuleException("The immediately preceding statement coverage must be verified before committing this period.");
+            if (!predecessor.ClosingBalance.HasValue || predecessor.ClosingBalance != import.OpeningBalance)
+                throw new BankingRuleException("The statement opening balance no longer matches the latest committed closing balance.");
+        }
+        else if (!revisesCoverage && await db.BankStatementImports.AnyAsync(i =>
+                     i.BankAccountId == import.BankAccountId && i.Id != import.Id &&
+                     i.Status == StatementImportStatus.Committed && i.CoverageVerified &&
+                     i.CoverageFromDate > to, cancellationToken))
+        {
+            throw new BankingRuleException("Reconcile statement dates in order; an earlier period is already committed after this date range.");
+        }
+
+        if (!revisesCoverage && await db.BankStatementImports.AnyAsync(i =>
+                i.BankAccountId == import.BankAccountId && i.Id != import.Id &&
+                (i.Status == StatementImportStatus.Uploaded || i.Status == StatementImportStatus.Processing ||
+                 i.Status == StatementImportStatus.ReadyForReview) && i.RequestedFromDate < from &&
+                !db.BankStatementImports.Any(committed => committed.BankAccountId == i.BankAccountId &&
+                    committed.Status == StatementImportStatus.Committed &&
+                    committed.CoverageFromDate <= i.RequestedFromDate &&
+                    committed.CoverageToDate >= i.RequestedFromDate), cancellationToken))
+            throw new BankingRuleException("Commit the earlier staged statement period before this one.");
+    }
 
     private static void RequireReason(string reason)
     {

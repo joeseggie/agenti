@@ -26,13 +26,6 @@
     <FlyoutItem Title="Customer banking" IsVisible="{Binding HasAgent}">
         <ShellContent Route="customerbanking" ContentTemplate="{DataTemplate pages:CustomerBankingPage}" />
     </FlyoutItem>
-    <FlyoutItem Title="Bank statements" IsVisible="{Binding IsAdmin}">
-        <ShellContent Route="bankstatements" ContentTemplate="{DataTemplate pages:BankStatementsPage}" />
-    </FlyoutItem>
-    <FlyoutItem Title="Bank reconciliation" IsVisible="{Binding IsAdmin}">
-        <ShellContent Route="bankreviews" ContentTemplate="{DataTemplate pages:BankReviewPage}" />
-    </FlyoutItem>
-
     <!-- Profile navigation -->
     <FlyoutItem Title="Profile" Icon="profile.png">
         <ShellContent Route="profile" ContentTemplate="{DataTemplate pages:ProfilePage}" />

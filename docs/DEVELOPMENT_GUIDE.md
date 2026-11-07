@@ -235,10 +235,12 @@ Add to `appsettings.json`:
 
 The banking workflow separates closing submission (one provisional internal settlement)
 from later administrator financial approval. Legacy sessions retain their original
-rules. New enrollment is blocked unless the account has a verified bank-specific
-statement profile. **No production CSV, Excel, or PDF profile is supplied yet**:
-redacted bank samples and their golden fixtures are still required. Test profiles
-are synthetic and exist only in the test assemblies.
+rules. Statement intake is a Web Admin workflow that uses one shipped, versioned
+universal CSV contract (`agenti-bank-statement-v1`); there is no per-bank parser
+verification or sample-fixture gate, and Admins cannot upload or edit a schema. A
+date-only CSV supports a transaction-date daily control and does not certify exact
+session cutoffs. A synthetic JSON profile exists only in the test assemblies so the
+browser journey can exercise the upload flow.
 
 Use the .NET 10 SDK. PostgreSQL integration and browser tests start their own
 PostgreSQL 16 Testcontainers with generated credentials and random ports. They
@@ -255,13 +257,15 @@ dotnet test tests\EastSeat.Agenti.E2ETests\EastSeat.Agenti.E2ETests.csproj --no-
 ```
 
 The browser journey captures a receipt, submits a locked closing, opens a later
-session, uploads a synthetic source, matches it, and approves the old closing
-without changing current balances.
+session, uploads a synthetic statement for the statement date, matches it, and
+approves the old closing without changing current balances.
 
-The native journey additionally exercises encrypted draft recovery after process
-termination and the Android file picker. Create a **separate disposable AVD**
-whose name starts with `agenti-reconciliation-`; never use a physical device or
-an existing personal AVD. Start it, then use its exact emulator serial:
+The native journey exercises encrypted draft recovery after process termination,
+receipt capture and the agent's closing submission. Statement upload and
+reconciliation are Web Admin workflows and are not part of the Android app.
+Create a **separate disposable AVD** whose name starts with
+`agenti-reconciliation-`; never use a physical device or an existing personal AVD.
+Start it, then use its exact emulator serial:
 
 ```powershell
 dotnet build EastSeat.Agenti.Android\EastSeat.Agenti.Android.csproj -f net10.0-android -p:ApplicationId=com.eastseat.agenti.reconciliationtest -p:BankingTestApiUrl=https://127.0.0.1:58731/ -p:EmbedAssembliesIntoApk=true
@@ -279,10 +283,12 @@ override is compiled into Debug builds only and rejects non-loopback hosts.
 Native tests are explicitly skipped without the test APK setting. Rebuild the
 normal application without these test properties before distribution.
 
-Before production enrollment: verify real bank layouts and balance semantics,
-approve evidence retention/access/backup arrangements, rehearse migrations on a
-dedicated copy, and distribute the compatible Android client. Pausing enrollment
-must not downgrade existing modern sessions or replay their settlements.
+Before production enrollment: confirm with Finance the bank balance basis
+(ledger or available) and the source of the first opening baseline for each
+account, approve evidence retention/access/backup arrangements, rehearse
+migrations on a dedicated copy, and distribute the compatible Android client.
+Pausing enrollment must not downgrade existing modern sessions or replay their
+settlements.
 
 ### PostgreSQL Connection Issues
 - Check if container is running: `docker ps`

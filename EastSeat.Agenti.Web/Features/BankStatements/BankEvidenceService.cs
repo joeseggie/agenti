@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using EastSeat.Agenti.Shared.Domain.Entities;
+using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.EntityFrameworkCore;
@@ -90,7 +91,16 @@ public sealed class BankEvidenceService(
             .Select(f => new { f.BankAccountId, f.IsStatement })
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw new BankingRuleException("Evidence file not found.");
-        await access.RequireAccountAsync(userId, metadata.BankAccountId, metadata.IsStatement, cancellationToken);
+        if (metadata.IsStatement)
+        {
+            var actor = await access.GetActorAsync(userId, cancellationToken);
+            if (actor.Role is not (UserRole.Admin or UserRole.Supervisor) ||
+                !await db.BankAccounts.AnyAsync(a => a.Id == metadata.BankAccountId &&
+                    a.BranchId == actor.BranchId && a.IsActive, cancellationToken))
+                throw new UnauthorizedAccessException("Only a branch administrator or supervisor may view bank statements.");
+        }
+        else
+            await access.RequireAccountAsync(userId, metadata.BankAccountId, cancellationToken: cancellationToken);
         var file = await db.BankEvidenceFiles.AsNoTracking().SingleAsync(f => f.Id == evidenceId, cancellationToken);
         return new BankEvidenceContentDto(Map(file), file.Content);
     }
@@ -99,12 +109,10 @@ public sealed class BankEvidenceService(
     {
         var extension = Path.GetExtension(fileName).ToLowerInvariant();
         var data = bytes.AsSpan();
-        if (extension == ".pdf" && data.StartsWith("%PDF-"u8))
+        if (!isStatement && extension == ".pdf" && data.StartsWith("%PDF-"u8))
             return "application/pdf";
         if (isStatement && extension == ".csv")
             return "text/csv";
-        if (isStatement && extension == ".xlsx" && data.StartsWith(new byte[] { 0x50, 0x4b, 0x03, 0x04 }))
-            return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         if (!isStatement && extension == ".png" &&
             data.StartsWith(new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a }))
             return "image/png";
@@ -112,7 +120,7 @@ public sealed class BankEvidenceService(
             data.StartsWith(new byte[] { 0xff, 0xd8, 0xff }))
             return "image/jpeg";
         throw new BankingRuleException(isStatement
-            ? "Upload a CSV, XLSX, or PDF statement. Its bank layout must also pass import validation."
+            ? "Upload a CSV using the Agenti universal bank statement template."
             : "Upload a JPEG, PNG, or PDF receipt with a valid file header.");
     }
 

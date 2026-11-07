@@ -2,6 +2,7 @@ using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Features.BankStatements;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
 namespace EastSeat.Agenti.Web.Features.BankReconciliation;
@@ -12,6 +13,8 @@ public sealed partial class BankReconciliationService
         BankReconciliationReview review, CancellationToken cancellationToken)
     {
         var facts = await LoadFactsAsync(review, cancellationToken);
+        var chain = new CoverageChain(facts.Coverage);
+        var flags = await LoadOverlappingFlagsAsync(review, cancellationToken);
         AddExpectedSettlements(facts);
         var result = new BankReconciliationReviewDto
         {
@@ -26,7 +29,34 @@ public sealed partial class BankReconciliationService
             CorrectionRequests = facts.Corrections.Select(MapCorrection).ToList()
         };
         foreach (var session in facts.Sessions)
-            result.Sessions.Add(await EvaluateSessionAsync(session, facts, cancellationToken));
+        {
+            var sessionResult = await EvaluateSessionAsync(session, facts, chain, cancellationToken);
+            var openFlags = flags.Where(f => f.Response == null && f.FromDate <= session.SessionDate &&
+                f.ToDate >= session.SessionDate).Select(f => f.Flag.Id).Order().ToList();
+            if (openFlags.Count > 0)
+            {
+                sessionResult.CanApprove = false;
+                sessionResult.Status = BankReconciliationStatus.NeedsCorrection;
+                sessionResult.BlockingReasons.Add("An overlapping bank review has an unresolved supervisor flag.");
+                sessionResult.BasisHash = BankingRequestIdentity.Hash(new { sessionResult.BasisHash, OpenFlags = openFlags });
+            }
+            result.Sessions.Add(sessionResult);
+        }
+        result.DailyControls = BuildDailyControls(review, facts, chain);
+        result.DailyControlStatus = result.DailyControls.Any(d =>
+                d.Status is DailyBankControlStatus.MissingCoverage or DailyBankControlStatus.NeedsReview)
+            ? BankReconciliationStatus.NeedsCorrection
+            : result.DailyControls.Any(d => d.Status == DailyBankControlStatus.WithExceptions)
+                ? BankReconciliationStatus.WithExceptions
+                : BankReconciliationStatus.Reconciled;
+        foreach (var flag in flags.Where(f => f.Flag.ReviewId == review.Id))
+        {
+            result.Flags.Add(new BankReviewFlagDto(flag.Flag.Id, flag.Flag.PerformedByUserId, flag.Flag.PerformedAt,
+                flag.Flag.Reason, flag.Response?.PerformedByUserId, flag.Response?.PerformedAt,
+                flag.Response?.Reason, flag.Response == null));
+        }
+        if (flags.Any(f => f.Response == null))
+            result.DailyControlStatus = BankReconciliationStatus.NeedsReview;
         foreach (var bank in facts.Banks.Where(b => b.AcceptedRow!.LedgerDate >= review.FromDate &&
                      b.AcceptedRow.LedgerDate <= review.ToDate && b.AcceptedRow.SignedAmount != 0))
         {
@@ -41,8 +71,176 @@ public sealed partial class BankReconciliationService
         return result;
     }
 
+    private async Task<List<ReviewFlagState>> LoadOverlappingFlagsAsync(
+        BankReconciliationReview review, CancellationToken cancellationToken)
+    {
+        var reviews = await db.BankReconciliationReviews.AsNoTracking()
+            .Where(r => r.BankAccountId == review.BankAccountId &&
+                r.FromDate <= review.ToDate && r.ToDate >= review.FromDate)
+            .Select(r => new { r.Id, r.FromDate, r.ToDate })
+            .ToListAsync(cancellationToken);
+        var reviewIds = reviews.Select(r => r.Id).ToList();
+        var decisions = await db.BankReconciliationDecisions.AsNoTracking().Where(d =>
+                d.ReviewId.HasValue && reviewIds.Contains(d.ReviewId.Value) &&
+                (d.Kind == ReconciliationDecisionKind.SupervisorFlagged ||
+                 d.Kind == ReconciliationDecisionKind.AdminFlagResponse))
+            .OrderBy(d => d.Id).ToListAsync(cancellationToken);
+        var responses = decisions.Where(d => d.Kind == ReconciliationDecisionKind.AdminFlagResponse)
+            .Select(d => (FlagId: FlagIdFrom(d.DetailsJson), Decision: d))
+            .Where(d => d.FlagId.HasValue)
+            .ToDictionary(d => d.FlagId!.Value, d => d.Decision);
+        var ranges = reviews.ToDictionary(r => r.Id);
+        return decisions.Where(d => d.Kind == ReconciliationDecisionKind.SupervisorFlagged &&
+                (d.ReviewId == review.Id || !responses.ContainsKey(d.Id)))
+            .Select(d =>
+            {
+                var range = ranges[d.ReviewId!.Value];
+                responses.TryGetValue(d.Id, out var response);
+                return new ReviewFlagState(d, response, range.FromDate, range.ToDate);
+            }).ToList();
+    }
+
+    private static long? FlagIdFrom(string details)
+    {
+        using var document = JsonDocument.Parse(details);
+        return document.RootElement.TryGetProperty("FlagId", out var value) && value.TryGetInt64(out var id)
+            ? id : null;
+    }
+
+    private sealed class CoverageChain(List<BankStatementImport> coverage)
+    {
+        private readonly Dictionary<long, List<BankStatementRow>> _rows =
+            coverage.ToDictionary(i => i.Id, i => StatementValidation.EffectiveRows(i.Rows));
+        private readonly Dictionary<long, bool> _validity = [];
+        private readonly Dictionary<DateOnly, decimal?> _closings = [];
+
+        public List<BankStatementRow> Rows(BankStatementImport source) => _rows[source.Id];
+
+        public BankStatementImport? LatestCoverage(DateOnly date) => coverage
+            .Where(i => i.CoverageFromDate <= date && i.CoverageToDate >= date)
+            .OrderByDescending(i => i.CommittedAt ?? i.CreatedAt).ThenByDescending(i => i.Id).FirstOrDefault();
+
+        public bool IsValid(BankStatementImport source)
+        {
+            if (_validity.TryGetValue(source.Id, out var valid))
+                return valid;
+            if (source.CoverageVerified != true || !source.CoverageFromDate.HasValue ||
+                !source.CoverageToDate.HasValue || !source.OpeningBalance.HasValue)
+                return _validity[source.Id] = false;
+
+            var start = source.CoverageFromDate.Value;
+            if (start == DateOnly.MinValue)
+                return _validity[source.Id] = true;
+            var previousDate = start.AddDays(-1);
+            var predecessor = LatestCoverage(previousDate);
+            if (predecessor == null)
+                return _validity[source.Id] = !coverage.Any(i => i.CoverageToDate < start);
+
+            var priorClosing = ClosingAt(previousDate);
+            var sourceOpening = BalanceBefore(source, _rows[source.Id], start);
+            return _validity[source.Id] =
+                priorClosing.HasValue && sourceOpening.HasValue && priorClosing.Value == sourceOpening.Value;
+        }
+
+        private decimal? ClosingAt(DateOnly date)
+        {
+            if (_closings.TryGetValue(date, out var cached))
+                return cached;
+            var source = LatestCoverage(date);
+            if (source == null || !IsValid(source))
+                return _closings[date] = null;
+            var rows = _rows[source.Id];
+            if (source.CoverageToDate == date && rows.Count == 0)
+                return _closings[date] = source.ClosingBalance;
+            var opening = BalanceBefore(source, rows, date);
+            if (!opening.HasValue)
+                return _closings[date] = null;
+            var dayRows = rows.Where(r => r.LedgerDate == date).OrderBy(r => r.Sequence).ToList();
+            return _closings[date] = dayRows.Count > 0 ? dayRows[^1].RunningBalance : opening;
+        }
+    }
+
+    private List<DailyBankControlDto> BuildDailyControls(
+        BankReconciliationReview review, ReviewFacts facts, CoverageChain chain)
+    {
+        var controls = new List<DailyBankControlDto>();
+        var accountTimeZone = TimeZoneInfo.FindSystemTimeZoneById(facts.Account.TimeZoneId);
+        var bankById = facts.Banks.ToDictionary(b => b.Id);
+        var legsByKey = facts.Legs.ToDictionary(Key);
+        var validMatches = facts.Matches.Where(m => m.IsActive &&
+                bankById.TryGetValue(m.BankTransactionId, out var bank) &&
+                legsByKey.TryGetValue(Key(m), out var leg) && ValidFinancialMatch(bank, leg))
+            .ToList();
+        var matchedBankIds = validMatches.Select(m => m.BankTransactionId).ToHashSet();
+        var matchedLegKeys = validMatches.Select(Key).ToHashSet();
+
+        for (var date = review.FromDate; date <= review.ToDate; date = date.AddDays(1))
+        {
+            var import = chain.LatestCoverage(date);
+            if (import?.CoverageVerified != true)
+            {
+                controls.Add(new(date, DailyBankControlStatus.MissingCoverage, null, null, 0, 0, 0, 0, 0, 0,
+                    "A committed, verified statement period is required for this date."));
+                continue;
+            }
+
+            var rows = chain.Rows(import);
+            var dayRows = rows.Where(r => r.LedgerDate == date).OrderBy(r => r.Sequence).ToList();
+            var opening = chain.IsValid(import) ? BalanceBefore(import, rows, date) : null;
+            var closing = opening.HasValue ? dayRows.Count > 0 ? dayRows[^1].RunningBalance : opening : null;
+            var bankEntries = facts.Banks.Where(b => b.AcceptedRow!.LedgerDate == date &&
+                b.AcceptedRow.SignedAmount != 0).ToList();
+            var statementMovements = bankEntries.Sum(b => b.AcceptedRow!.SignedAmount);
+            var dayLegs = facts.Legs.Where(l => l.Kind != BankLegKind.ExpectedSettlement &&
+                AccountDate(l.OccurredAt, accountTimeZone) == date).ToList();
+            var registerMovements = dayLegs.Where(l => !matchedLegKeys.Contains(Key(l))).Sum(l => l.SignedAmount) +
+                bankEntries.Where(b => matchedBankIds.Contains(b.Id)).Sum(b => b.AcceptedRow!.SignedAmount);
+            var classifiedMovements = bankEntries.Where(b =>
+                    b.Classification is not (BankTransactionClassification.Unclassified or BankTransactionClassification.Unknown) &&
+                    !matchedBankIds.Contains(b.Id))
+                .Sum(b => b.AcceptedRow!.SignedAmount);
+            var unaccounted = bankEntries.Count(b => !BankAccountedFor(b, facts, matchedBankIds));
+            var unaccountedRegister = dayLegs.Count(l => !RegisterLegAccountedFor(l, facts, matchedLegKeys));
+            var difference = statementMovements - registerMovements - classifiedMovements;
+            var dayExceptions = facts.Exceptions.Where(e => !e.IsResolved &&
+                facts.Sessions.Any(s => s.Id == e.CashSessionId && s.SessionDate == date)).ToList();
+            var hasBlockingException = dayExceptions.Any(e =>
+                e.Kind == BankExceptionKind.UnexplainedMovement || !e.BankExplanationVerified);
+            var status = !opening.HasValue || !closing.HasValue || unaccounted > 0 ||
+                unaccountedRegister > 0 || difference != 0 || hasBlockingException
+                ? DailyBankControlStatus.NeedsReview
+                : dayExceptions.Count > 0 ? DailyBankControlStatus.WithExceptions : DailyBankControlStatus.Reconciled;
+            var note = dayRows.Any(r => !r.HasPreciseTimestamp)
+                ? "Daily transaction-date control only; this does not certify balances at an intraday session cutoff."
+                : "Daily movement control; session cutoff certification is evaluated separately.";
+            controls.Add(new(date, status, opening, closing, statementMovements, registerMovements,
+                classifiedMovements, difference, unaccounted, unaccountedRegister, note));
+        }
+        return controls;
+    }
+
+    private static decimal? BalanceBefore(
+        BankStatementImport import, List<BankStatementRow> rows, DateOnly date)
+    {
+        if (!import.OpeningBalance.HasValue || !import.CoverageFromDate.HasValue || date < import.CoverageFromDate)
+            return null;
+        var balance = import.OpeningBalance.Value;
+        foreach (var day in rows.Where(r => r.LedgerDate >= import.CoverageFromDate && r.LedgerDate < date)
+                     .GroupBy(r => r.LedgerDate).OrderBy(g => g.Key))
+        {
+            var ordered = day.OrderBy(r => r.Sequence).ToList();
+            if (ordered[0].RunningBalance - ordered[0].SignedAmount != balance)
+                return null;
+            balance = ordered[^1].RunningBalance;
+        }
+        var currentRows = rows.Where(r => r.LedgerDate == date).OrderBy(r => r.Sequence).ToList();
+        if (currentRows.Count > 0 && currentRows[0].RunningBalance - currentRows[0].SignedAmount != balance)
+            return null;
+        return balance;
+    }
+
     private async Task<SessionReconciliationDto> EvaluateSessionAsync(
-        CashSession session, ReviewFacts facts, CancellationToken cancellationToken)
+        CashSession session, ReviewFacts facts, CoverageChain chain, CancellationToken cancellationToken)
     {
         var closingCount = facts.Counts.SingleOrDefault(c => c.CashSessionId == session.Id && !c.IsOpening);
         var dto = new SessionReconciliationDto
@@ -77,10 +275,11 @@ public sealed partial class BankReconciliationService
         dto.OpeningObservedAt = bankOpening.ObservedAt;
         dto.ClosingObservedAt = bankClosing.ObservedAt;
         dto.ReportedBankClosingBalance = bankClosing.Amount;
-        if (!Covers(facts.Coverage, bankOpening.ObservedAt, bankClosing.ObservedAt))
+        var accountTimeZone = TimeZoneInfo.FindSystemTimeZoneById(facts.Account.TimeZoneId);
+        if (!Covers(facts.Coverage, bankOpening.ObservedAt, bankClosing.ObservedAt, accountTimeZone, chain.IsValid))
             dto.BlockingReasons.Add("Verified bank-statement coverage is missing or contradictory for the complete opening-to-closing interval.");
-        dto.StatementOpeningBalance = BalanceAt(facts.Coverage, bankOpening.ObservedAt);
-        dto.StatementClosingBalance = BalanceAt(facts.Coverage, bankClosing.ObservedAt);
+        dto.StatementOpeningBalance = BalanceAt(facts.Coverage, bankOpening.ObservedAt, accountTimeZone, chain.IsValid);
+        dto.StatementClosingBalance = BalanceAt(facts.Coverage, bankClosing.ObservedAt, accountTimeZone, chain.IsValid);
         if (!dto.StatementOpeningBalance.HasValue || !dto.StatementClosingBalance.HasValue)
             dto.BlockingReasons.Add("A bank balance cannot be established at a snapshot cutoff; inspect coverage and timestamp precision.");
         if (facts.Corrections.Any(r => r.CashCountId == closingCount.Id && r.IsOpen))
@@ -121,7 +320,8 @@ public sealed partial class BankReconciliationService
                 continue;
             var explanation = facts.Exceptions.FirstOrDefault(e => e.BankTransactionId == bank.Id &&
                 e.Kind == BankExceptionKind.BankFailure && e.BankExplanationVerified && e.Amount == Math.Abs(bank.AcceptedRow.SignedAmount));
-            if (bank.Classification != BankTransactionClassification.Unclassified || explanation != null)
+            if (bank.Classification is not (BankTransactionClassification.Unclassified or BankTransactionClassification.Unknown) ||
+                (bank.Classification == BankTransactionClassification.Unclassified && explanation != null))
             {
                 bankAdjustment += bank.AcceptedRow.SignedAmount;
                 dto.Adjustments.Add(new(explanation == null ? bank.Classification.ToString() : "Verified bank failure",
@@ -192,13 +392,13 @@ public sealed partial class BankReconciliationService
                 dto.Notes.Add("The initial bridge from legacy history has no verified old observation timestamp; historical coverage remains explicitly incomplete.");
                 continue;
             }
-            if (!Covers(facts.Coverage, bridge.PreviousObservedAt.Value, bridge.ObservedAt))
+            if (!Covers(facts.Coverage, bridge.PreviousObservedAt.Value, bridge.ObservedAt, accountTimeZone, chain.IsValid))
                 dto.BlockingReasons.Add("Statement coverage is missing for the interval between the previous closing and this opening.");
             foreach (var bank in facts.Banks.Where(b => InWindow(LedgerAt(b), bridge.PreviousObservedAt.Value, bridge.ObservedAt) &&
                          b.AcceptedRow!.SignedAmount != 0))
                 if (!BankAccountedFor(bank, facts))
                     dto.BlockingReasons.Add($"Overnight bank occurrence {bank.Id} has not been explained.");
-            var previousBankBalance = BalanceAt(facts.Coverage, bridge.PreviousObservedAt.Value);
+            var previousBankBalance = BalanceAt(facts.Coverage, bridge.PreviousObservedAt.Value, accountTimeZone, chain.IsValid);
             if (previousBankBalance.HasValue &&
                 previousBankBalance.Value + KnownPendingDifference(facts, bridge.PreviousObservedAt.Value, session.Id, false) != bridge.PreviousBankBalance)
                 dto.BlockingReasons.Add("The prior closing bank observation does not agree with the bank evidence used for this opening bridge.");
@@ -298,7 +498,9 @@ public sealed partial class BankReconciliationService
     private static bool ValidFinancialMatch(BankTransaction bank, BankLegDto leg) =>
         !leg.PendingApproval && bank.AcceptedRow!.Currency == leg.Currency && bank.AcceptedRow.SignedAmount == leg.SignedAmount;
 
-    private static bool Covers(IEnumerable<BankStatementImport> imports, DateTimeOffset from, DateTimeOffset to)
+    private static bool Covers(
+        IEnumerable<BankStatementImport> imports, DateTimeOffset from, DateTimeOffset to, TimeZoneInfo accountTimeZone,
+        Func<BankStatementImport, bool> isChainValid)
     {
         var sources = imports.ToList();
         var boundaries = sources.SelectMany(i => new[] { i.CoverageFrom, i.CoverageTo })
@@ -308,11 +510,11 @@ public sealed partial class BankReconciliationService
         foreach (var boundary in boundaries)
         {
             var source = LatestSource(sources, boundary);
-            if (source?.CoverageVerified != true) return false;
+            if (source?.CoverageVerified != true || !isChainValid(source)) return false;
             if (previous != null && previous.Id != source.Id)
             {
-                var previousBalance = SourceBalance(previous, boundary, inclusive: false);
-                var nextBalance = SourceBalance(source, boundary, inclusive: false);
+                var previousBalance = SourceBalance(previous, boundary, inclusive: false, accountTimeZone: accountTimeZone);
+                var nextBalance = SourceBalance(source, boundary, inclusive: false, accountTimeZone: accountTimeZone);
                 if (!previousBalance.HasValue || previousBalance != nextBalance) return false;
             }
             previous = source;
@@ -320,34 +522,55 @@ public sealed partial class BankReconciliationService
         return true;
     }
 
-    private static decimal? BalanceAt(IEnumerable<BankStatementImport> imports, DateTimeOffset at)
+    private static decimal? BalanceAt(
+        IEnumerable<BankStatementImport> imports, DateTimeOffset at, TimeZoneInfo accountTimeZone,
+        Func<BankStatementImport, bool> isChainValid)
     {
         var source = LatestSource(imports, at);
-        return source?.CoverageVerified == true ? SourceBalance(source, at, inclusive: true) : null;
+        return source?.CoverageVerified == true && isChainValid(source)
+            ? SourceBalance(source, at, inclusive: true, accountTimeZone: accountTimeZone)
+            : null;
     }
+
+    private static DateOnly AccountDate(DateTimeOffset at, TimeZoneInfo accountTimeZone) =>
+        DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(at, accountTimeZone).DateTime);
 
     private static BankStatementImport? LatestSource(IEnumerable<BankStatementImport> imports, DateTimeOffset at) =>
         imports.Where(i => i.CoverageFrom <= at && i.CoverageTo > at)
             .OrderByDescending(i => i.CommittedAt ?? i.CreatedAt).ThenByDescending(i => i.Id).FirstOrDefault();
 
-    private static decimal? SourceBalance(BankStatementImport source, DateTimeOffset at, bool inclusive)
+    private static decimal? SourceBalance(
+        BankStatementImport source, DateTimeOffset at, bool inclusive, TimeZoneInfo accountTimeZone)
     {
         if (source.OpeningBalance == null)
             return null;
         var rows = StatementValidation.EffectiveRows(source.Rows);
-        if (rows.Any(r => !r.HasPreciseTimestamp && r.LedgerDate == DateOnly.FromDateTime(at.ToOffset(TimeSpan.FromHours(3)).DateTime)))
+        var cutoffDate = AccountDate(at, accountTimeZone);
+        if (rows.Any(r => !r.HasPreciseTimestamp && r.LedgerDate == cutoffDate))
             return null;
         return source.OpeningBalance.Value + rows.Where(r => inclusive
             ? StatementValidation.LedgerTime(r) <= at : StatementValidation.LedgerTime(r) < at).Sum(r => r.SignedAmount);
     }
 
-    private static bool BankAccountedFor(BankTransaction bank, ReviewFacts facts) =>
+    private static bool BankAccountedFor(
+        BankTransaction bank, ReviewFacts facts, HashSet<long>? matchedBankIds = null) =>
         bank.AcceptedRow!.SignedAmount == 0 ||
-        bank.Classification != BankTransactionClassification.Unclassified ||
-        facts.Matches.Any(m => m.BankTransactionId == bank.Id &&
-            facts.Legs.Any(l => Key(l) == Key(m) && ValidFinancialMatch(bank, l))) ||
-        facts.Exceptions.Any(e => e.BankTransactionId == bank.Id && e.Kind == BankExceptionKind.BankFailure &&
-            e.BankExplanationVerified && e.Amount == Math.Abs(bank.AcceptedRow.SignedAmount));
+        bank.Classification != BankTransactionClassification.Unknown &&
+        (bank.Classification != BankTransactionClassification.Unclassified ||
+         (matchedBankIds?.Contains(bank.Id) ?? facts.Matches.Any(m => m.BankTransactionId == bank.Id &&
+             facts.Legs.Any(l => Key(l) == Key(m) && ValidFinancialMatch(bank, l)))) ||
+         facts.Exceptions.Any(e => e.BankTransactionId == bank.Id && e.Kind == BankExceptionKind.BankFailure &&
+             e.BankExplanationVerified && e.Amount == Math.Abs(bank.AcceptedRow.SignedAmount)));
+
+    private sealed record ReviewFlagState(
+        BankReconciliationDecision Flag, BankReconciliationDecision? Response, DateOnly FromDate, DateOnly ToDate);
+
+    private static bool RegisterLegAccountedFor(
+        BankLegDto leg, ReviewFacts facts, HashSet<(BankLegKind Kind, long Id)>? matchedLegKeys = null) =>
+        (matchedLegKeys?.Contains(Key(leg)) ?? facts.Matches.Any(m => m.IsActive && Key(m) == Key(leg) &&
+            facts.Banks.Any(b => b.Id == m.BankTransactionId && ValidFinancialMatch(b, leg)))) ||
+        facts.Exceptions.Any(e => e.BankExplanationVerified && e.Kind != BankExceptionKind.UnexplainedMovement &&
+            e.Amount >= Math.Abs(leg.SignedAmount) && RefersTo(e, leg));
 
     private static bool RefersTo(BankReconciliationException exception, BankLegDto leg) => leg.Kind switch
     {

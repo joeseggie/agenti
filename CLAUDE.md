@@ -127,6 +127,8 @@ Features/{FeatureName}/
 
 - `Agents` - Agent (teller) management
 - `Api` - REST API endpoints for the Android mobile app (JWT-authenticated minimal APIs)
+- `BankStatements` - Admin web intake using the shipped universal CSV schema, private evidence and import revisions
+- `BankReconciliation` - Daily transaction-date controls, matching, classifications and audited review decisions
 - `CashCounts` - Opening/closing cash count recording
 - `CashSessions` - Daily cash session lifecycle
 - `Dashboard` - Summary metrics and real-time status
@@ -491,8 +493,10 @@ The `docs/` directory contains detailed documentation:
 - `IMPLEMENTATION_SUMMARY.md` - Implementation overview
 - `VAULT_FEATURE_SUMMARY.md` - Vault feature details
 - `agenti-banking-business-workflow.md` - Customer banking and bank-statement reconciliation user workflow (with `.excalidraw`, `.svg` and `.png` diagrams)
-- `bank-workflow-enrollment-guide.md` - Step-by-step verified bank workflow enrollment guide (with `.excalidraw`, `.svg` and `.png` diagrams)
-- `centenary-agency-float-statement-profile.md` - Centenary agency-float XLSX profile setup, mapping, release gates and date-only limitation
+- `bank-workflow-enrollment-guide.md` - Account enrollment and Admin universal-CSV daily-control guide
+- `centenary-agency-float-statement-profile.md` - Superseded Centenary XLSX parser notes and XLSX-to-universal-CSV mapping
+
+Bank statement import, matching/classification and Admin responses are Web Admin workflows; Supervisors have web read/flag access. Android statement-import pages and their admin API routes are not part of the current application. Daily transaction-date control does not certify exact session cutoffs when statement timestamps are absent. Do not add bank-specific parser profiles or invent statement times.
 
 ## Common Development Tasks
 

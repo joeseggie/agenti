@@ -249,7 +249,6 @@ public sealed class BankOperationsPage(
             if (!count.IsOpening && count.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
             {
                 Text("Administrator bank reconciliation is required. There is no direct approval shortcut.");
-                if (IsAdmin) Action("Open bank reconciliation", () => Shell.Current.GoToAsync("//bankreviews"));
                 continue;
             }
             Action($"Approve count {count.CashCountId}", async () =>

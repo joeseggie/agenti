@@ -1,0 +1,57 @@
+{
+  "key": "agenti-universal-bank-statement",
+  "version": 1,
+  "headerRow": 1,
+  "headerOrder": [
+    "TransactionDate",
+    "TransactionTime",
+    "Reference",
+    "Description",
+    "Debit",
+    "Credit",
+    "RunningBalance"
+  ],
+  "columns": {
+    "TransactionDate": {
+      "type": "date",
+      "format": "yyyy-MM-dd",
+      "required": true
+    },
+    "TransactionTime": {
+      "type": "time",
+      "format": "HH:mm:ss",
+      "required": false
+    },
+    "Reference": {
+      "type": "string",
+      "required": false
+    },
+    "Description": {
+      "type": "string",
+      "required": true
+    },
+    "Debit": {
+      "type": "decimal",
+      "scale": 2,
+      "allowThousandsSeparator": true,
+      "required": false
+    },
+    "Credit": {
+      "type": "decimal",
+      "scale": 2,
+      "allowThousandsSeparator": true,
+      "required": false
+    },
+    "RunningBalance": {
+      "type": "decimal",
+      "scale": 2,
+      "allowThousandsSeparator": true,
+      "required": true
+    }
+  },
+  "rowRules": [
+    "Exactly one of Debit and Credit must contain a positive amount.",
+    "Transaction rows must be ordered by transaction date and time.",
+    "RunningBalance must equal the previous balance plus the signed movement."
+  ]
+}

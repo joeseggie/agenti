@@ -34,6 +34,7 @@ internal static class StatementValidation
         }
         var balance = import.OpeningBalance.Value;
         DateTimeOffset? previousTime = null;
+        DateOnly? previousDate = null;
         foreach (var row in rows)
         {
             var time = LedgerTime(row);
@@ -41,9 +42,15 @@ internal static class StatementValidation
                 errors.Add($"Row {row.Sequence} uses a different currency.");
             if (time < import.CoverageFrom || time >= import.CoverageTo)
                 errors.Add($"Row {row.Sequence} falls outside the declared statement coverage.");
-            if (previousTime.HasValue && time < previousTime.Value)
+            if (previousDate.HasValue && row.LedgerDate < previousDate.Value)
                 errors.Add($"Row {row.Sequence} is out of ledger order.");
-            previousTime = time;
+            if (row.HasPreciseTimestamp)
+            {
+                if (previousTime.HasValue && time < previousTime.Value)
+                    errors.Add($"Row {row.Sequence} is out of ledger order.");
+                previousTime = time;
+            }
+            previousDate = row.LedgerDate;
             balance += row.SignedAmount;
             if (balance != row.RunningBalance)
                 errors.Add($"The running balance does not reconcile at row {row.Sequence}.");

@@ -17,8 +17,13 @@ public class BankStatementImport
     public DateTimeOffset? CoverageTo { get; set; }
     public DateOnly? CoverageFromDate { get; set; }
     public DateOnly? CoverageToDate { get; set; }
+    public DateOnly? RequestedFromDate { get; set; }
+    public DateOnly? RequestedToDate { get; set; }
     public decimal? OpeningBalance { get; set; }
     public decimal? ClosingBalance { get; set; }
+    public decimal? OpeningBaseline { get; set; }
+    public string? OpeningBaselineReason { get; set; }
+    public string? SchemaHash { get; set; }
     public bool CoverageVerified { get; set; }
     public bool CoverageDeclaredComplete { get; set; }
     public BankBalanceBasis BalanceBasis { get; set; }

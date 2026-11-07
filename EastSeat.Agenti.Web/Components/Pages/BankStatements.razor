@@ -9,6 +9,7 @@
 @inject IBankAccountService Accounts
 @inject IBankStatementService Statements
 @inject IBankEvidenceService Evidence
+@inject IBusinessClock Clock
 @inject Microsoft.Extensions.Options.IOptions<BankEvidenceOptions> EvidenceOptions
 
 <PageTitle>Bank Statements - Agenti</PageTitle>
@@ -20,10 +21,6 @@
     </MudStack>
     @if (Error != null) { <MudAlert Severity="Severity.Error" Class="my-3">@Error</MudAlert> }
     @if (Busy) { <MudProgressLinear Indeterminate="true" Class="my-3" /> }
-    @if (_setup != null && !_setup.Profiles.Any(p => p.IsVerified))
-    {
-        <MudAlert Severity="Severity.Warning" Class="my-3">No bank-specific importer is verified yet. Representative redacted CSV, Excel and selectable-text PDF samples must be verified before activation. Files can be retained as private evidence; they will not be treated as successfully parsed statements.</MudAlert>
-    }
     <MudExpansionPanels Class="my-3">
         <MudExpansionPanel Text="Register a bank account">
             @if (_setup != null)
@@ -40,12 +37,6 @@
                     <MudTextField T="string" Label="Statement time zone" @bind-Value="_newAccount.TimeZoneId" />
                     <MudSelect T="BankBalanceBasis" Label="Confirmed balance basis" @bind-Value="_newAccount.BalanceBasis">
                         @foreach (var basis in Enum.GetValues<BankBalanceBasis>()) { <MudSelectItem T="BankBalanceBasis" Value="@basis">@basis</MudSelectItem> }
-                    </MudSelect>
-                    <MudSelect T="string" Label="Statement profile" @bind-Value="_newAccount.ImportProfileKey" Clearable="true">
-                        @foreach (var profile in _setup.Profiles)
-                        {
-                            <MudSelectItem T="string" Value="@profile.Key">@profile.DisplayName@(profile.IsVerified ? "" : " (not verified)")</MudSelectItem>
-                        }
                     </MudSelect>
                     <MudButton OnClick="CreateAccountAsync" Disabled="Busy" Color="Color.Primary" Variant="Variant.Filled">Save account binding</MudButton>
                 </MudStack>
@@ -67,7 +58,7 @@
         <MudPaper Class="pa-4 my-3" Outlined="true">
             <MudText>@_selected.BankName / @_selected.Currency / @_selected.BalanceBasis</MudText>
             <MudText>New-session enrollment: @(_selected.WorkflowEnabled ? "Enabled" : "Paused")</MudText>
-            <MudButton OnClick="ToggleWorkflowAsync" Disabled="@(Busy || (!_selected.WorkflowEnabled && !_selected.ProfileVerified))" Color="Color.Warning">
+            <MudButton OnClick="ToggleWorkflowAsync" Disabled="Busy" Color="Color.Warning">
                 @(_selected.WorkflowEnabled ? "Pause new enrollment" : "Enable new-session workflow")
             </MudButton>
             <MudExpansionPanels Class="mt-3">
@@ -78,19 +69,32 @@
                     <MudSelect T="BankBalanceBasis" Label="Balance basis" @bind-Value="_editAccount.BalanceBasis">
                         @foreach (var basis in Enum.GetValues<BankBalanceBasis>()) { <MudSelectItem T="BankBalanceBasis" Value="@basis">@basis</MudSelectItem> }
                     </MudSelect>
-                    <MudSelect T="string" Label="Statement profile" @bind-Value="_editAccount.ImportProfileKey" Clearable="true">
-                        @foreach (var profile in _setup!.Profiles) { <MudSelectItem T="string" Value="@profile.Key">@profile.DisplayName@(profile.IsVerified ? "" : " (not verified)")</MudSelectItem> }
-                    </MudSelect>
                     <MudButton OnClick="ConfigureAsync" Disabled="Busy">Save configuration</MudButton>
                 </MudExpansionPanel>
             </MudExpansionPanels>
         </MudPaper>
         <MudPaper Class="pa-4 my-3" Outlined="true">
-            <MudText Typo="Typo.h6">Upload the bank's source file</MudText>
-            <MudText Typo="Typo.body2">CSV, XLSX or selectable-text PDF. Review parsing and coverage before committing any bank entries.</MudText>
-            <InputFile OnChange="SelectFile" accept=".csv,.xlsx,.pdf" disabled="@Busy" />
+            <MudText Typo="Typo.h6">Upload a bank statement CSV</MudText>
+            <MudText Typo="Typo.body2">Download the <a href="/templates/agenti-bank-statement-v1.csv" download>blank CSV template</a> and <a href="/templates/agenti-bank-statement-v1-guide.txt" target="_blank">column guide</a>. Convert the bank export outside Agenti, then upload one CSV for the selected date range. The app checks daily balances and movements; date-only rows do not certify exact session cutoff balances.</MudText>
+            <MudGrid Class="my-2">
+                <MudItem xs="12" sm="4"><MudDatePicker Label="Start date" @bind-Date="_fromDate" Editable="true" DateFormat="yyyy-MM-dd" Disabled="Busy" /></MudItem>
+                <MudItem xs="12" sm="4"><MudDatePicker Label="End date" @bind-Date="_toDate" Editable="true" DateFormat="yyyy-MM-dd" Disabled="Busy" /></MudItem>
+                @if (!_imports.Any(i => i.Status == StatementImportStatus.Committed && i.CoverageVerified) ||
+                     (_fromDate.HasValue && _toDate.HasValue && _imports.Any(i => i.OpeningBaselineReason != null &&
+                         i.RequestedFromDate == DateOnly.FromDateTime(_fromDate.Value) &&
+                         i.RequestedToDate == DateOnly.FromDateTime(_toDate.Value))))
+                {
+                    <MudItem xs="12" sm="4"><MudNumericField T="decimal?" Label="Initial opening balance (first empty period only)" @bind-Value="_openingBaseline" /></MudItem>
+                }
+            </MudGrid>
+            @if (_openingBaseline.HasValue)
+            {
+                <MudTextField T="string" Label="Baseline source and reason (audited)" @bind-Value="_openingBaselineReason" Lines="2" />
+            }
+            <MudText Typo="Typo.caption">Headers must match exactly: TransactionDate, TransactionTime, Reference, Description, Debit, Credit, RunningBalance. Time may be blank; never add a time the bank did not provide.</MudText>
+            <InputFile OnChange="SelectFile" accept=".csv" disabled="@Busy" />
             @if (_file != null) { <MudText>@_file.Name</MudText> }
-            <MudButton OnClick="UploadAsync" Disabled="@(Busy || _file == null)" Color="Color.Primary" Variant="Variant.Filled" Class="mt-2">Upload and prepare preview</MudButton>
+            <MudButton OnClick="UploadAsync" Disabled="@(Busy || _file == null)" Color="Color.Primary" Variant="Variant.Filled" Class="mt-2">Upload and validate</MudButton>
         </MudPaper>
         <MudTable T="BankStatementImportDto" Items="_imports" Dense="true" Hover="true">
             <HeaderContent><MudTh>Source</MudTh><MudTh>Status</MudTh><MudTh>Coverage</MudTh><MudTh>Validation</MudTh><MudTh></MudTh></HeaderContent>
@@ -179,6 +183,10 @@
     private List<BankStatementImportDto> _imports = [];
     private BankStatementPreviewDto? _preview;
     private IBrowserFile? _file;
+    private DateTime? _fromDate;
+    private DateTime? _toDate;
+    private decimal? _openingBaseline;
+    private string? _openingBaselineReason;
     private Guid _uploadKey = Guid.NewGuid();
     private readonly Dictionary<long, RowDecision> _decisions = [];
     private long? _editRowId;
@@ -192,7 +200,12 @@
         public string Reason { get; set; } = string.Empty;
     }
 
-    protected override Task OnInitializedAsync() => LoadAsync();
+    protected override Task OnInitializedAsync()
+    {
+        _fromDate = _toDate = Clock.Today.AddDays(-1).ToDateTime(TimeOnly.MinValue);
+        return LoadAsync();
+    }
+
     private Task LoadAsync() => RunAsync(async () =>
     {
         _accounts = await Accounts.GetAccountsAsync(UserId);
@@ -232,17 +245,26 @@
     private void SelectFile(InputFileChangeEventArgs args) { _file = args.File; _uploadKey = Guid.NewGuid(); }
     private Task UploadAsync() => RunAsync(async () =>
     {
-        if (_file == null || _accountId == 0) throw new BankingRuleException("Select an account and source file.");
+        if (_file == null || _accountId == 0 || !_fromDate.HasValue || !_toDate.HasValue)
+            throw new BankingRuleException("Select an account, date range and CSV file.");
         await using var stream = _file.OpenReadStream(EvidenceOptions.Value.MaxFileBytes);
         var file = await Evidence.UploadAsync(UserId, _accountId, _uploadKey, _file.Name, true, stream);
-        var import = await Statements.StartAsync(UserId, _accountId, file.Id);
+        var import = await Statements.StartAsync(UserId, _accountId, file.Id,
+            new StatementImportRequest(DateOnly.FromDateTime(_fromDate.Value), DateOnly.FromDateTime(_toDate.Value),
+                _openingBaseline, _openingBaselineReason));
+        _openingBaseline = null;
+        _openingBaselineReason = null;
         _imports = await Statements.GetImportsAsync(UserId, _accountId);
         SetPreview(await Statements.GetPreviewAsync(UserId, import.Id));
     });
     private Task PreviewAsync(long id) => RunAsync(async () => SetPreview(await Statements.GetPreviewAsync(UserId, id)));
     private Task ReprocessAsync(BankStatementImportDto import) => RunAsync(async () =>
     {
-        var revision = await Statements.StartAsync(UserId, import.BankAccountId, import.EvidenceFileId, true);
+        var revision = import.RequestedFromDate.HasValue && import.RequestedToDate.HasValue
+            ? await Statements.StartAsync(UserId, import.BankAccountId, import.EvidenceFileId,
+                new StatementImportRequest(import.RequestedFromDate.Value, import.RequestedToDate.Value,
+                    import.OpeningBaselineReason == null ? null : import.OpeningBaseline, import.OpeningBaselineReason), true)
+            : await Statements.StartAsync(UserId, import.BankAccountId, import.EvidenceFileId, true);
         _imports = await Statements.GetImportsAsync(UserId, _accountId);
         SetPreview(await Statements.GetPreviewAsync(UserId, revision.Id));
     });

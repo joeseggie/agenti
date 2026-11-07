@@ -66,7 +66,10 @@ public enum BankTransactionClassification
     Fee,
     Commission,
     BankReversal,
-    OtherVerifiedBankMovement
+    OtherVerifiedBankMovement,
+    Interest,
+    Transfer,
+    Unknown
 }
 
 public enum BankReconciliationStatus
@@ -96,5 +99,8 @@ public enum ReconciliationDecisionKind
     ExceptionRecorded,
     ExceptionResolved,
     ReviewInvalidated,
-    ImportCorrected
+    ImportCorrected,
+    BaselineRecorded,
+    SupervisorFlagged,
+    AdminFlagResponse
 }

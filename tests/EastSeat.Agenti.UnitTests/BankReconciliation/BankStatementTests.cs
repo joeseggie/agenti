@@ -2,6 +2,7 @@ using System.Text;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.UnitTests.Helpers;
+using EastSeat.Agenti.Web.Features.BankReconciliation;
 using EastSeat.Agenti.Web.Features.BankStatements;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.EntityFrameworkCore;
@@ -13,7 +14,7 @@ namespace EastSeat.Agenti.UnitTests.BankReconciliation;
 public class BankStatementTests
 {
     [Fact]
-    public async Task MissingVerifiedProfile_KeepsEvidenceWithoutInventingAnImport()
+    public async Task MissingInstalledParser_KeepsEvidenceWithoutInventingAnImport()
     {
         using var fixture = new BankingTestContext();
         var clock = Clock();
@@ -27,7 +28,7 @@ public class BankStatementTests
         var import = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id);
 
         Assert.Equal(StatementImportStatus.Failed, import.Status);
-        Assert.Contains("verified profile", import.ErrorMessage);
+        Assert.Contains("No installed statement parser", import.ErrorMessage);
         Assert.False(await service.ProcessNextAsync());
         Assert.Equal(0, await fixture.Db.BankTransactions.CountAsync());
         Assert.Equal("unparsed source", Encoding.UTF8.GetString((await evidence.DownloadAsync(fixture.Admin.Id, file.Id)).Content));
@@ -69,6 +70,401 @@ public class BankStatementTests
 
         Assert.Equal(3, await fixture.Db.BankTransactions.CountAsync());
         Assert.Equal(5, await fixture.Db.BankStatementOccurrences.CountAsync());
+    }
+
+    [Fact]
+    public async Task UniversalHeaderOnlyFile_CreatesDistinctPeriodsAndReprocessesAuditedBaselines()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.Status = CashSessionStatus.Closed;
+        fixture.Account.TimeZoneId = "Asia/Tokyo";
+        await fixture.Db.SaveChangesAsync();
+        var (service, evidence, clock) = UniversalSetup(fixture);
+        var file = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "empty.csv", true, Content("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n"));
+        var firstRequest = new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1),
+            123.45m, "Verified opening balance from bank advice.");
+
+        var first = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id, firstRequest);
+        Assert.Equal(first.Id, (await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id, firstRequest)).Id);
+        Assert.True(await service.ProcessNextAsync());
+        var firstPreview = await service.GetPreviewAsync(fixture.Admin.Id, first.Id);
+        Assert.Empty(firstPreview.Errors);
+        await service.CommitAsync(fixture.Admin.Id, first.Id, new CommitStatementForm { ExpectedVersion = firstPreview.Import.Version });
+
+        var firstRevision = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id, firstRequest, reprocess: true);
+        Assert.True(await service.ProcessNextAsync());
+        var revisedFirstPreview = await service.GetPreviewAsync(fixture.Admin.Id, firstRevision.Id);
+        Assert.Empty(revisedFirstPreview.Errors);
+        await service.CommitAsync(fixture.Admin.Id, firstRevision.Id,
+            new CommitStatementForm { ExpectedVersion = revisedFirstPreview.Import.Version });
+
+        var secondRequest = new StatementImportRequest(new DateOnly(2026, 11, 2), new DateOnly(2026, 11, 2), null);
+        var second = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id, secondRequest);
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.Equal(123.45m, second.OpeningBaseline);
+        Assert.True(await service.ProcessNextAsync());
+        var secondPreview = await service.GetPreviewAsync(fixture.Admin.Id, second.Id);
+        Assert.Empty(secondPreview.Errors);
+        await service.CommitAsync(fixture.Admin.Id, second.Id,
+            new CommitStatementForm { ExpectedVersion = secondPreview.Import.Version });
+
+        var secondRevision = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id, secondRequest, reprocess: true);
+        Assert.True(await service.ProcessNextAsync());
+        var revisedSecondPreview = await service.GetPreviewAsync(fixture.Admin.Id, secondRevision.Id);
+
+        Assert.Empty(revisedSecondPreview.Errors);
+        Assert.Equal(second.RequestedFromDate, revisedSecondPreview.Import.RequestedFromDate);
+        Assert.Equal(second.RequestedToDate, revisedSecondPreview.Import.RequestedToDate);
+        Assert.Equal(1, await fixture.Db.BankReconciliationDecisions.CountAsync(d =>
+            d.Kind == ReconciliationDecisionKind.BaselineRecorded));
+        Assert.Equal(2, await fixture.Db.BankStatementImports.CountAsync(i => i.BankAccountId == fixture.Account.Id &&
+            i.RequestedFromDate == new DateOnly(2026, 11, 1)));
+        Assert.Equal(2, await fixture.Db.BankStatementImports.CountAsync(i => i.BankAccountId == fixture.Account.Id &&
+            i.RequestedFromDate == new DateOnly(2026, 11, 2)));
+        Assert.Equal(clock.Today, new DateOnly(2026, 11, 3));
+    }
+
+    [Fact]
+    public async Task UniversalStart_RejectsInvalidBaselinePrecisionAndIncompleteCurrentDay()
+    {
+        using var fixture = new BankingTestContext();
+        var (service, evidence, clock) = UniversalSetup(fixture);
+        var file = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "empty.csv", true, Content("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n"));
+
+        var invalidBaseline = await Assert.ThrowsAsync<BankingRuleException>(() => service.StartAsync(
+            fixture.Admin.Id, fixture.Account.Id, file.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1),
+                100.005m, "Verified opening balance from bank advice.")));
+        var currentDay = await Assert.ThrowsAsync<BankingRuleException>(() => service.StartAsync(
+            fixture.Admin.Id, fixture.Account.Id, file.Id,
+            new StatementImportRequest(clock.Today, clock.Today, null)));
+
+        Assert.Contains("two decimal places", invalidBaseline.Message);
+        Assert.Contains("current business day is not complete", currentDay.Message);
+        Assert.Empty(await fixture.Db.BankStatementImports.ToListAsync());
+        var oversizedBaseline = await Assert.ThrowsAsync<BankingRuleException>(() => service.StartAsync(
+            fixture.Admin.Id, fixture.Account.Id, file.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1),
+                10_000_000_000_000_000m, "Verified opening balance from bank advice.")));
+        Assert.Contains("9,999,999,999,999,999.99", oversizedBaseline.Message);
+        var negativeBaseline = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1),
+                -123.45m, "Verified opening overdraft from bank advice."));
+        Assert.Equal(-123.45m, negativeBaseline.OpeningBaseline);
+    }
+
+    [Fact]
+    public async Task UniversalContinuation_UsesLatestCommittedRevisionAndIgnoresSupersededStagedImport()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.Status = CashSessionStatus.Closed;
+        await fixture.Db.SaveChangesAsync();
+        var (service, evidence, _) = UniversalSetup(fixture);
+        var emptyCsv = "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n";
+        var stagedFile = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "staged.csv", true, Content(emptyCsv));
+        var staged = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, stagedFile.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1),
+                100m, "Verified opening balance from bank advice."));
+        Assert.True(await service.ProcessNextAsync());
+
+        var staleFile = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "stale.csv", true, Content(emptyCsv.Replace("\n", "\r\n", StringComparison.Ordinal)));
+        var stale = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, staleFile.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1),
+                100m, "Verified opening balance from bank advice."));
+        Assert.True(await service.ProcessNextAsync());
+        var stagedPreview = await service.GetPreviewAsync(fixture.Admin.Id, staged.Id);
+        await service.CommitAsync(fixture.Admin.Id, staged.Id,
+            new CommitStatementForm { ExpectedVersion = stagedPreview.Import.Version });
+
+        var correctionFile = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "corrected.csv", true, Content(emptyCsv + "2026-11-01,,REVISION-1,Deposit,,100.00,200.00\n"));
+        var correction = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, correctionFile.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1), null));
+        Assert.True(await service.ProcessNextAsync());
+        var correctionPreview = await service.GetPreviewAsync(fixture.Admin.Id, correction.Id);
+        await service.CommitAsync(fixture.Admin.Id, correction.Id, new CommitStatementForm
+        {
+            ExpectedVersion = correctionPreview.Import.Version,
+            Resolutions = [new(correctionPreview.Rows.Single().Id, StatementRowResolutionKind.NewOccurrence, null,
+                "The corrected complete statement supplies this transaction date.")]
+        });
+
+        var next = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, stagedFile.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 2), new DateOnly(2026, 11, 2), null));
+        Assert.Equal(200m, next.OpeningBaseline);
+        Assert.True(await service.ProcessNextAsync());
+        var nextPreview = await service.GetPreviewAsync(fixture.Admin.Id, next.Id);
+        await service.CommitAsync(fixture.Admin.Id, next.Id,
+            new CommitStatementForm { ExpectedVersion = nextPreview.Import.Version });
+
+        Assert.Equal(StatementImportStatus.ReadyForReview,
+            (await service.GetPreviewAsync(fixture.Admin.Id, stale.Id)).Import.Status);
+    }
+
+    [Fact]
+    public async Task UniversalCommit_IgnoresStagedImportWhoseStartIsCoveredByCommittedRange()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.Status = CashSessionStatus.Closed;
+        await fixture.Db.SaveChangesAsync();
+        var (service, evidence, _) = UniversalSetup(fixture);
+        var emptyCsv = "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n";
+        var wideFile = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "wide.csv", true, Content(emptyCsv));
+        var wide = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, wideFile.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 2),
+                100m, "Verified opening balance from bank advice."));
+        Assert.True(await service.ProcessNextAsync());
+        var firstFile = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "first.csv", true, Content(emptyCsv.Replace("\n", "\r\n", StringComparison.Ordinal)));
+        var first = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, firstFile.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1),
+                100m, "Verified opening balance from bank advice."));
+        Assert.True(await service.ProcessNextAsync());
+        var firstPreview = await service.GetPreviewAsync(fixture.Admin.Id, first.Id);
+        await service.CommitAsync(fixture.Admin.Id, first.Id,
+            new CommitStatementForm { ExpectedVersion = firstPreview.Import.Version });
+
+        var next = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, firstFile.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 2), new DateOnly(2026, 11, 2), null));
+        Assert.True(await service.ProcessNextAsync());
+        var nextPreview = await service.GetPreviewAsync(fixture.Admin.Id, next.Id);
+        var committed = await service.CommitAsync(fixture.Admin.Id, next.Id,
+            new CommitStatementForm { ExpectedVersion = nextPreview.Import.Version });
+
+        Assert.Equal(StatementImportStatus.Committed, committed.Status);
+        Assert.Equal(StatementImportStatus.ReadyForReview,
+            (await service.GetPreviewAsync(fixture.Admin.Id, wide.Id)).Import.Status);
+    }
+
+    [Fact]
+    public async Task CreatingUniversalAccount_BoundsDerivedBankIdentifierLength()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Db.BankAccounts.Remove(fixture.Account);
+        await fixture.Db.SaveChangesAsync();
+        var clock = Clock();
+        var accounts = new BankAccountService(fixture.Db, new BankingAccessService(fixture.Db, clock), clock,
+            new StatementProfileCatalog([new UniversalBankCsvStatementProfile()]));
+
+        var created = await accounts.CreateAsync(fixture.Admin.Id, new BankAccountForm
+        {
+            WalletId = fixture.BankWallet.Id, BankName = new string('b', 150),
+            AccountIdentifier = "001234567890", BalanceBasis = BankBalanceBasis.Ledger
+        });
+
+        var stored = await fixture.Db.BankAccounts.AsNoTracking().SingleAsync(a => a.Id == created.Id);
+        Assert.Equal(new string('B', 100), stored.BankIdentifier);
+    }
+
+    [Fact]
+    public async Task UniversalCommit_RevalidatesContinuityAgainstNewlyCommittedPredecessor()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.Status = CashSessionStatus.Closed;
+        await fixture.Db.SaveChangesAsync();
+        var (service, evidence, _) = UniversalSetup(fixture);
+        var firstFile = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(), "first.csv", true,
+            Content("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+                    "2026-11-01,,ONE,Deposit,,100.00,1100.00\n"));
+        var secondFile = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(), "second.csv", true,
+            Content("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+                    "2026-11-02,,TWO,Deposit,,1.00,1000.00\n"));
+        var first = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, firstFile.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1), null));
+        var second = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, secondFile.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 2), new DateOnly(2026, 11, 2),
+                999m, "Test opening balance queued before its predecessor."));
+        Assert.True(await service.ProcessNextAsync());
+        Assert.True(await service.ProcessNextAsync());
+        var firstPreview = await service.GetPreviewAsync(fixture.Admin.Id, first.Id);
+        var secondPreview = await service.GetPreviewAsync(fixture.Admin.Id, second.Id);
+        await service.CommitAsync(fixture.Admin.Id, first.Id,
+            new CommitStatementForm { ExpectedVersion = firstPreview.Import.Version });
+
+        var error = await Assert.ThrowsAsync<BankingRuleException>(() => service.CommitAsync(fixture.Admin.Id, second.Id,
+            new CommitStatementForm { ExpectedVersion = secondPreview.Import.Version }));
+
+        Assert.Contains("latest committed closing balance", error.Message);
+    }
+
+    [Fact]
+    public async Task UniversalRows_KeepRequestedDatesAndTransactionDatesAcrossTimeZones()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.Status = CashSessionStatus.Closed;
+        fixture.Account.TimeZoneId = "Asia/Tokyo";
+        await fixture.Db.SaveChangesAsync();
+        var (service, evidence, _) = UniversalSetup(fixture);
+        var file = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(), "tokyo.csv", true,
+            Content("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+                    "2026-11-01,,TOKYO-1,Deposit,,100.00,1100.00\n"));
+        var import = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1), null));
+
+        Assert.True(await service.ProcessNextAsync());
+        var row = await fixture.Db.BankStatementRows.SingleAsync();
+        var processed = await service.GetPreviewAsync(fixture.Admin.Id, import.Id);
+
+        Assert.Equal(new DateOnly(2026, 11, 1), row.LedgerDate);
+        Assert.Equal(new DateOnly(2026, 11, 1), processed.Import.RequestedFromDate);
+        Assert.Equal(new DateOnly(2026, 11, 1), processed.Import.RequestedToDate);
+        Assert.Equal(new DateOnly(2026, 11, 1), await fixture.Db.BankStatementImports
+            .Where(i => i.Id == import.Id).Select(i => i.CoverageFromDate).SingleAsync());
+        Assert.Equal(new DateOnly(2026, 11, 1), await fixture.Db.BankStatementImports
+            .Where(i => i.Id == import.Id).Select(i => i.CoverageToDate).SingleAsync());
+    }
+
+    [Fact]
+    public async Task UniversalCorrection_DerivesTransactionDateFromCorrectedTimeInAccountZone()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.Status = CashSessionStatus.Closed;
+        fixture.Account.TimeZoneId = "Asia/Tokyo";
+        await fixture.Db.SaveChangesAsync();
+        var (service, evidence, _) = UniversalSetup(fixture);
+        var file = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(), "tokyo.csv", true,
+            Content("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+                    "2026-11-01,09:00:00,FIRST,Deposit,,100.00,1100.00\n" +
+                    "2026-11-02,,SECOND,Withdrawal,50.00,,1050.00\n"));
+        var import = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 2), null));
+        Assert.True(await service.ProcessNextAsync());
+        var preview = await service.GetPreviewAsync(fixture.Admin.Id, import.Id);
+        var corrected = await service.CorrectRowAsync(fixture.Admin.Id, import.Id, preview.Rows[0].Id,
+            new CorrectStatementRowForm
+            {
+                ExpectedVersion = preview.Import.Version, TransactionNumber = preview.Rows[0].TransactionNumber,
+                Reference = preview.Rows[0].Reference, CustomerIdentifier = preview.Rows[0].CustomerIdentifier,
+                Narration = preview.Rows[0].Narration, Currency = preview.Rows[0].Currency,
+                SignedAmount = preview.Rows[0].SignedAmount, RunningBalance = preview.Rows[0].RunningBalance,
+                OccurredAt = new DateTimeOffset(2026, 11, 2, 9, 0, 0, TimeSpan.FromHours(9)),
+                ValueDate = preview.Rows[0].ValueDate, HasPreciseTimestamp = true,
+                Reason = "Corrected the transaction date from the bank source."
+            });
+
+        Assert.Empty(corrected.Errors);
+        Assert.Equal(new DateOnly(2026, 11, 2), corrected.Rows[0].ValueDate);
+        Assert.Equal(new DateOnly(2026, 11, 2),
+            await fixture.Db.BankStatementRows.Where(r => r.Id == corrected.Rows[0].Id).Select(r => r.LedgerDate).SingleAsync());
+    }
+
+    [Fact]
+    public async Task UniversalImport_UsesSharedOrderingRulesForMixedTimeRows()
+    {
+        using var fixture = new BankingTestContext();
+        var (service, evidence, _) = UniversalSetup(fixture);
+        var file = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(), "mixed-time.csv", true,
+            Content("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+                    "2026-11-01,09:15:00,REF-1,Deposit,,10.00,110.00\n" +
+                    "2026-11-01,,REF-2,Fee,1.00,,109.00\n"));
+        var import = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1), null));
+        Assert.True(await service.ProcessNextAsync());
+        var preview = await service.GetPreviewAsync(fixture.Admin.Id, import.Id);
+
+        Assert.Empty(preview.Errors);
+        var committed = await service.CommitAsync(fixture.Admin.Id, import.Id,
+            new CommitStatementForm { ExpectedVersion = preview.Import.Version });
+        Assert.Equal(StatementImportStatus.Committed, committed.Status);
+    }
+
+    [Fact]
+    public async Task UniversalRevision_CorrectsEarliestCoverageAndLeavesBrokenLaterChainUnresolved()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.Status = CashSessionStatus.Closed;
+        await fixture.Db.SaveChangesAsync();
+        var (service, evidence, clock) = UniversalSetup(fixture);
+        var emptyCsv = "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n";
+        var evidenceFile = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "period.csv", true, Content(emptyCsv));
+        var firstDate = new DateOnly(2026, 11, 1);
+        var secondDate = new DateOnly(2026, 11, 2);
+        var first = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, evidenceFile.Id,
+            new StatementImportRequest(firstDate, firstDate, 123.45m, "Verified opening balance from bank advice."));
+        Assert.True(await service.ProcessNextAsync());
+        var firstPreview = await service.GetPreviewAsync(fixture.Admin.Id, first.Id);
+        await service.CommitAsync(fixture.Admin.Id, first.Id, new CommitStatementForm { ExpectedVersion = firstPreview.Import.Version });
+        var second = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, evidenceFile.Id,
+            new StatementImportRequest(secondDate, secondDate, null));
+        Assert.True(await service.ProcessNextAsync());
+        var secondPreview = await service.GetPreviewAsync(fixture.Admin.Id, second.Id);
+        await service.CommitAsync(fixture.Admin.Id, second.Id, new CommitStatementForm { ExpectedVersion = secondPreview.Import.Version });
+
+        var correctedFile = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "corrected.csv", true, Content(emptyCsv +
+                "2026-11-01,,REVISION-1,Deposit,,100.00,223.45\n"));
+        var correction = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, correctedFile.Id,
+            new StatementImportRequest(firstDate, firstDate, null));
+        Assert.True(await service.ProcessNextAsync());
+        var correctionPreview = await service.GetPreviewAsync(fixture.Admin.Id, correction.Id);
+        var decision = correctionPreview.Rows.Single();
+        await service.CommitAsync(fixture.Admin.Id, correction.Id, new CommitStatementForm
+        {
+            ExpectedVersion = correctionPreview.Import.Version,
+            Resolutions = [new(decision.Id, StatementRowResolutionKind.NewOccurrence, null,
+                "The corrected complete statement supplies this previously empty transaction date.")]
+        });
+
+        var reconciliation = new BankReconciliationService(fixture.Db,
+            new BankingAccessService(fixture.Db, clock), clock, new SessionBalanceService(fixture.Db, clock));
+        var review = await reconciliation.CreateAsync(fixture.Admin.Id, fixture.Account.Id, secondDate, secondDate);
+
+        Assert.Equal(DailyBankControlStatus.NeedsReview, review.DailyControls.Single().Status);
+        Assert.Null(review.DailyControls.Single().OpeningBalance);
+        Assert.Null(review.DailyControls.Single().ClosingBalance);
+    }
+
+    [Fact]
+    public async Task UniversalProcessing_BoundsPersistedAggregatedRowErrors()
+    {
+        using var fixture = new BankingTestContext();
+        var (service, evidence, _) = UniversalSetup(fixture);
+        var csv = "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+            string.Concat(Enumerable.Repeat("not-date,,REF,Fee,1.00,,bad\n", 200));
+        var file = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "invalid.csv", true, Content(csv));
+        var import = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id,
+            new StatementImportRequest(new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 1), null));
+
+        Assert.True(await service.ProcessNextAsync());
+        var failed = await service.GetPreviewAsync(fixture.Admin.Id, import.Id);
+
+        Assert.Equal(StatementImportStatus.Failed, failed.Import.Status);
+        Assert.NotNull(failed.Import.ErrorMessage);
+        Assert.True(failed.Import.ErrorMessage.Length <= 2000);
+    }
+
+    [Fact]
+    public async Task EnablingUniversalWorkflow_PersistsVerificationAndAcceptsConfirmedAvailableBasis()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Account.BalanceBasis = BankBalanceBasis.Available;
+        fixture.Account.ImportProfileKey = null;
+        fixture.Account.ImportProfileVerified = false;
+        await fixture.Db.SaveChangesAsync();
+        var (service, _, clock) = UniversalSetup(fixture);
+        var access = new BankingAccessService(fixture.Db, clock);
+        var accounts = new BankAccountService(fixture.Db, access,
+            new BusinessClock(new FixedTimeProvider()), new StatementProfileCatalog([new UniversalBankCsvStatementProfile()]));
+        var configured = await accounts.ConfigureAsync(fixture.Admin.Id, fixture.Account.Id, new BankAccountForm
+        {
+            WalletId = fixture.BankWallet.Id, BankName = fixture.Account.BankName,
+            AccountIdentifier = fixture.Account.AccountIdentifier, TimeZoneId = fixture.Account.TimeZoneId,
+            BalanceBasis = BankBalanceBasis.Available
+        }, fixture.Account.Version);
+
+        var enabled = await accounts.SetWorkflowAsync(fixture.Admin.Id, fixture.Account.Id, true, configured.Version);
+
+        Assert.True(enabled.WorkflowEnabled);
+        Assert.Equal(BankBalanceBasis.Available, enabled.BalanceBasis);
+        Assert.Equal(UniversalBankCsvStatementProfile.ProfileKey, fixture.Account.ImportProfileKey);
+        Assert.True(fixture.Account.ImportProfileVerified);
     }
 
     [Fact]
@@ -238,6 +634,21 @@ public class BankStatementTests
     private static BankStatementService Service(BankingTestContext fixture, IBusinessClock clock, StatementProfileCatalog catalog) => new(
         fixture.Db, new BankingAccessService(fixture.Db, clock), clock, catalog,
         Options.Create(new BankStatementOptions()), NullLogger<BankStatementService>.Instance);
+
+    private static (BankStatementService Service, BankEvidenceService Evidence, IBusinessClock Clock) UniversalSetup(
+        BankingTestContext fixture)
+    {
+        var profile = new UniversalBankCsvStatementProfile();
+        fixture.Account.ImportProfileKey = profile.Key;
+        fixture.Account.ImportProfileVerified = false;
+        fixture.Account.BankIdentifier = "TEST BANK";
+        fixture.Db.SaveChanges();
+        var clock = Clock();
+        var access = new BankingAccessService(fixture.Db, clock);
+        return (new BankStatementService(fixture.Db, access, clock, new StatementProfileCatalog([profile]),
+                Options.Create(new BankStatementOptions()), NullLogger<BankStatementService>.Instance),
+            new BankEvidenceService(fixture.Db, access, clock, Options.Create(new BankEvidenceOptions())), clock);
+    }
 
     private static IBusinessClock Clock() => new BusinessClock(new FixedTimeProvider());
     private static MemoryStream Content(string text) => new(Encoding.UTF8.GetBytes(text));

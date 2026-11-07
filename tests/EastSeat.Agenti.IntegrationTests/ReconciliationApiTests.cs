@@ -23,7 +23,7 @@ public sealed class ReconciliationApiTests(DatabaseFixture fixture) : Integratio
         client.DefaultRequestHeaders.Add("Cookie", $"{cookie.Name}={cookie.Value}");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.User));
 
-        using var response = await client.GetAsync("/api/banking/admin/accounts");
+        using var response = await client.PostAsync("/api/banking/wallet-adjustments/1/approve", null);
         using var ordinary = await client.GetAsync("/api/banking/current");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -55,7 +55,7 @@ public sealed class ReconciliationApiTests(DatabaseFixture fixture) : Integratio
     }
 
     [Fact]
-    public async Task SupervisorCannotReadStatements_AndForeignBranchCannotReadEvidence()
+    public async Task SupervisorCanReadStatementEvidence_ButAgentsAndForeignBranchCannot()
     {
         using var scenario = Seed();
         var supervisor = new ApplicationUser
@@ -67,10 +67,6 @@ public sealed class ReconciliationApiTests(DatabaseFixture fixture) : Integratio
         await DbContext.SaveChangesAsync();
         await using var app = new BankingApplicationFactory(Fixture.ConnectionString);
         using var client = app.CreateClient(new() { AllowAutoRedirect = false });
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(supervisor));
-        using var statementResponse = await client.GetAsync("/api/banking/admin/accounts");
-        Assert.Equal(HttpStatusCode.Forbidden, statementResponse.StatusCode);
-
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.Admin));
         using var content = new MultipartFormDataContent
         {
@@ -82,22 +78,28 @@ public sealed class ReconciliationApiTests(DatabaseFixture fixture) : Integratio
         using var uploaded = await client.PostAsync("/api/banking/evidence", content);
         Assert.Equal(HttpStatusCode.OK, uploaded.StatusCode);
         var file = await uploaded.Content.ReadFromJsonAsync<ApiResponse<EastSeat.Agenti.Web.Features.BankStatements.BankEvidenceInfoDto>>();
+        var fileId = file!.Data!.Id;
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(supervisor));
+        using var supervisorDownload = await client.GetAsync($"/api/banking/evidence/{fileId}");
+        Assert.Equal(HttpStatusCode.OK, supervisorDownload.StatusCode);
+
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.User));
-        using var statement = await client.GetAsync($"/api/banking/evidence/{file!.Data!.Id}");
+        using var statement = await client.GetAsync($"/api/banking/evidence/{fileId}");
         Assert.Equal(HttpStatusCode.Forbidden, statement.StatusCode);
 
         var foreignBranch = new EastSeat.Agenti.Shared.Domain.Entities.Branch { Name = "Other synthetic branch", CreatedAt = BankingScenario.Now };
         DbContext.Branches.Add(foreignBranch);
         await DbContext.SaveChangesAsync();
-        var foreignAdmin = new ApplicationUser
+        var foreignSupervisor = new ApplicationUser
         {
-            Id = "foreign-test-admin", UserName = "foreign-test-admin", Role = UserRole.Admin,
+            Id = "foreign-test-supervisor", UserName = "foreign-test-supervisor", Role = UserRole.Supervisor,
             BranchId = foreignBranch.Id, IsActive = true
         };
-        DbContext.Users.Add(foreignAdmin);
+        DbContext.Users.Add(foreignSupervisor);
         await DbContext.SaveChangesAsync();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(foreignAdmin));
-        using var foreignResponse = await client.GetAsync($"/api/banking/evidence/{file.Data.Id}");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(foreignSupervisor));
+        using var foreignResponse = await client.GetAsync($"/api/banking/evidence/{fileId}");
         Assert.Equal(HttpStatusCode.Forbidden, foreignResponse.StatusCode);
     }
 
