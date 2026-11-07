@@ -1,5 +1,6 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.UnitTests.Helpers.TestDataBuilders;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.CashCounts;
@@ -92,7 +93,8 @@ public class CashCountServiceTests : IDisposable
         _bankWorkflowMock.Setup(w => w.IsModernBranchAsync(It.IsAny<long>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
         _bankWorkflowMock.Setup(w => w.HandlesFormAsync(It.IsAny<long>(), It.IsAny<CashCountFormModel>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
         _sut = new CashCountService(_dbContext, _vaultServiceMock.Object, _notificationServiceMock.Object,
-            _walletAdjustmentServiceMock.Object, _bankWorkflowMock.Object);
+            _walletAdjustmentServiceMock.Object, _bankWorkflowMock.Object,
+            new BankingAccessService(_dbContext, new BusinessClock(TimeProvider.System)));
     }
 
     public void Dispose()

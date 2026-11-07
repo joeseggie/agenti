@@ -7,6 +7,7 @@ using EastSeat.Agenti.Web.Features.Vaults;
 using EastSeat.Agenti.Web.Features.WalletAdjustments;
 using Microsoft.ApplicationInsights;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace EastSeat.Agenti.Web.Features.CashCounts;
 
@@ -20,6 +21,7 @@ public class CashCountService(
     INotificationService notificationService,
     IWalletAdjustmentService walletAdjustmentService,
     IBankSessionWorkflow bankWorkflow,
+    IBankingAccessService access,
     TelemetryClient? telemetryClient = null) : ICashCountService
 {
     /// <inheritdoc />
@@ -508,19 +510,32 @@ public class CashCountService(
             return CashCountSaveResult.Error("User is not configured as an agent.");
         }
 
-        var cashCount = await dbContext.CashCounts
+        var workflow = await dbContext.CashCounts.AsNoTracking()
+            .Where(c => c.Id == cashCountId && c.AgentId == agent.Id)
+            .Select(c => (SessionWorkflowVersion?)c.CashSession!.WorkflowVersion)
+            .FirstOrDefaultAsync();
+        if (workflow == null)
+            return CashCountSaveResult.Error("Cash count not found.");
+        if (workflow == SessionWorkflowVersion.BankReconciliation)
+            return await RunBankWorkflowAsync(() => bankWorkflow.SubmitAsync(userId, cashCountId));
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync();
+        var countQuery = dbContext.Database.IsNpgsql()
+            ? dbContext.CashCounts.FromSqlInterpolated(
+                $"""SELECT * FROM "CashCounts" WHERE "Id" = {cashCountId} AND "AgentId" = {agent.Id} FOR UPDATE""")
+            : dbContext.CashCounts.Where(c => c.Id == cashCountId && c.AgentId == agent.Id);
+        var cashCount = await countQuery
             .Include(c => c.CashSession)
             .Include(c => c.Details)
                 .ThenInclude(d => d.Wallet)
-            .Where(c => c.Id == cashCountId && c.AgentId == agent.Id)
             .FirstOrDefaultAsync();
 
         if (cashCount == null)
         {
             return CashCountSaveResult.Error("Cash count not found.");
         }
-        if (cashCount.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
-            return await RunBankWorkflowAsync(() => bankWorkflow.SubmitAsync(userId, cashCountId));
+        // A circuit may already track this count; evaluate its committed state after taking the lock.
+        await dbContext.Entry(cashCount).ReloadAsync();
 
         if (cashCount.Status is CashCountStatus.PendingApproval or CashCountStatus.Approved)
         {
@@ -598,7 +613,8 @@ public class CashCountService(
                 // Rule 12: Auto-approve matching closing counts for today only
                 if (cashCount.CountDate == today && cashCount.TotalAmount == adjustedExpected)
                 {
-                    return await ExecuteClosingCountApproval(cashCount, branchId, userId, isAutoApproval: true);
+                    return await ExecuteClosingCountApproval(cashCount, branchId, userId,
+                        isAutoApproval: true, transaction);
                 }
 
                 // Rule 10, 16: If closing count has discrepancy, require explanation
@@ -640,6 +656,7 @@ public class CashCountService(
             cashCount.Status,
             userId,
             cashCount.Explanation);
+        await transaction.CommitAsync();
 
         var agentName = agent.User != null ? $"{agent.User.FirstName} {agent.User.LastName}".Trim() : agent.Code;
         var countType = cashCount.IsOpening ? "opening" : "closing";
@@ -683,6 +700,7 @@ public class CashCountService(
         {
             return CashCountSaveResult.Error("Cash count not found.");
         }
+        await RequireReviewBranchAsync(adminUserId, cashCount.CashSession!.BranchId);
         if (cashCount.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
         {
             return cashCount.IsOpening
@@ -737,6 +755,7 @@ public class CashCountService(
         {
             return CashCountSaveResult.Error("Cash count not found.");
         }
+        await RequireReviewBranchAsync(adminUserId, cashCount.CashSession!.BranchId);
         if (cashCount.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
         {
             return cashCount.IsOpening
@@ -1199,9 +1218,15 @@ public class CashCountService(
     /// Review comment: wraps vault deposit + wallet updates + status change in a single transaction.
     /// </summary>
     private async Task<CashCountSaveResult> ExecuteClosingCountApproval(
-        CashCount cashCount, long branchId, string userId, bool isAutoApproval)
+        CashCount cashCount, long branchId, string userId, bool isAutoApproval,
+        IDbContextTransaction? transaction = null)
     {
-        await using var transaction = await dbContext.Database.BeginTransactionAsync();
+        if (transaction == null)
+        {
+            await using var ownedTransaction = await dbContext.Database.BeginTransactionAsync();
+            return await ExecuteClosingCountApproval(cashCount, branchId, userId,
+                isAutoApproval, ownedTransaction);
+        }
 
         try
         {
@@ -1216,6 +1241,7 @@ public class CashCountService(
             if (!depositResult.Success)
             {
                 await transaction.RollbackAsync();
+                dbContext.ChangeTracker.Clear();
                 return CashCountSaveResult.Error($"Vault deposit failed: {depositResult.ErrorMessage}");
             }
 
@@ -1265,24 +1291,22 @@ public class CashCountService(
             }
 
             await dbContext.SaveChangesAsync();
+            await AddAuditLogAsync(
+                cashCount,
+                isAutoApproval ? CashCountAuditAction.AutoApproved : CashCountAuditAction.Approved,
+                CashCountStatus.PendingApproval,
+                cashCount.Status,
+                isAutoApproval ? null : userId,
+                isAutoApproval ? "Closing count auto-approved (matches opening)." : "Closing count approved.");
+            await TryCloseSessionAsync(cashCount.CashSessionId);
             await transaction.CommitAsync();
         }
         catch
         {
             await transaction.RollbackAsync();
+            dbContext.ChangeTracker.Clear();
             throw;
         }
-
-        await AddAuditLogAsync(
-            cashCount,
-            isAutoApproval ? CashCountAuditAction.AutoApproved : CashCountAuditAction.Approved,
-            CashCountStatus.PendingApproval,
-            cashCount.Status,
-            isAutoApproval ? null : userId,
-            isAutoApproval ? "Closing count auto-approved (matches opening)." : "Closing count approved.");
-
-        // Check if all agents' closing counts are now approved -> close session
-        await TryCloseSessionAsync(cashCount.CashSessionId);
 
         if (cashCount.Agent?.UserId != null)
         {
@@ -1639,6 +1663,13 @@ public class CashCountService(
         {
             return CashCountSaveResult.Error(exception.Message);
         }
+    }
+
+    private async Task RequireReviewBranchAsync(string userId, long branchId)
+    {
+        var actor = await access.GetActorAsync(userId);
+        if (actor.Role is not (UserRole.Admin or UserRole.Supervisor) || actor.BranchId != branchId)
+            throw new UnauthorizedAccessException("You may only review cash counts in your assigned branch.");
     }
 
     private async Task<Agent?> GetAgentForUserAsync(string userId)

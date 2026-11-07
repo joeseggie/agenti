@@ -1,4 +1,5 @@
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.UnitTests.Helpers;
 using EastSeat.Agenti.Web.Features.Agents;
 using EastSeat.Agenti.Web.Features.CashCounts;
@@ -65,5 +66,6 @@ public sealed class MobileContractTests
 
     private static CashCountService Counts(BankingTestContext scenario) => new(scenario.Db,
         Mock.Of<IVaultService>(), Mock.Of<INotificationService>(), Mock.Of<IWalletAdjustmentService>(),
-        Mock.Of<IBankSessionWorkflow>());
+        Mock.Of<IBankSessionWorkflow>(),
+        new BankingAccessService(scenario.Db, new BusinessClock(TimeProvider.System)));
 }

@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using EastSeat.Agenti.IntegrationTests.Infrastructure;
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.UnitTests.Helpers;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Agents;
@@ -11,15 +12,153 @@ using EastSeat.Agenti.Web.Features.Api;
 using EastSeat.Agenti.Web.Features.CashCounts;
 using EastSeat.Agenti.Web.Features.CashSessions;
 using EastSeat.Agenti.Web.Features.Dashboard;
+using EastSeat.Agenti.Web.Features.Notifications;
 using EastSeat.Agenti.Web.Features.Vaults;
+using EastSeat.Agenti.Web.Features.WalletAdjustments;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
+using Npgsql;
 
 namespace EastSeat.Agenti.IntegrationTests;
 
 public sealed class MobileApiTests(DatabaseFixture fixture) : IntegrationTestBase(fixture)
 {
+    [Theory]
+    [InlineData(UserRole.Admin, true)]
+    [InlineData(UserRole.Admin, false)]
+    [InlineData(UserRole.Supervisor, true)]
+    [InlineData(UserRole.Supervisor, false)]
+    public async Task LegacyCountReviews_RejectForeignBranchesThroughBothRouteGroups(UserRole role, bool approve)
+    {
+        using var scenario = Seed();
+        scenario.Session.WorkflowVersion = SessionWorkflowVersion.Legacy;
+        var foreign = AddAgent(null, "FORE");
+        foreign.User.Role = role;
+        var vault = await DbContext.Vaults.SingleAsync(v => v.BranchId == scenario.Agent.BranchId);
+        vault.CurrentBalance = 2_000m;
+        var count = new CashCount
+        {
+            AgentId = scenario.Agent.Id, CashSessionId = scenario.Session.Id, IsOpening = true,
+            CountDate = scenario.Session.SessionDate, Status = CashCountStatus.PendingApproval,
+            TotalAmount = 1_000m, CreatedAt = BankingScenario.Now
+        };
+        DbContext.CashCounts.Add(count);
+        await DbContext.SaveChangesAsync();
+        await using var app = new BankingApplicationFactory(Fixture.ConnectionString);
+        using var client = Client(app, foreign.User);
+
+        foreach (var route in new[] { "cash-counts", "banking/counts" })
+        {
+            using var response = await client.PostAsJsonAsync(
+                $"/api/{route}/{count.Id}/{(approve ? "approve" : "reject")}",
+                new { reason = "Synthetic rejection reason", rejectionReason = "Synthetic rejection reason" });
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+
+        await DbContext.Entry(count).ReloadAsync();
+        await DbContext.Entry(vault).ReloadAsync();
+        Assert.Equal(CashCountStatus.PendingApproval, count.Status);
+        Assert.Equal(2_000m, vault.CurrentBalance);
+        Assert.Empty(await DbContext.VaultTransactions.ToListAsync());
+        Assert.Empty(await DbContext.CashCountAuditLogs.ToListAsync());
+    }
+
+    [Fact]
+    public async Task OverlappingLegacyClosingSubmissions_PostToVaultExactlyOnce()
+    {
+        using var scenario = Seed();
+        var closing = await AddLegacyClosingAsync(scenario);
+
+        await using var firstDb = Fixture.CreateContext();
+        await using var secondDb = Fixture.CreateContext();
+        await secondDb.Database.OpenConnectionAsync();
+        var secondPid = ((NpgsqlConnection)secondDb.Database.GetDbConnection()).ProcessID;
+        var enteredDeposit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDeposit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstVault = new VaultService(firstDb);
+        var gatedVault = new Mock<IVaultService>();
+        gatedVault.Setup(v => v.DepositForSessionAsync(
+                It.IsAny<long>(), It.IsAny<long>(), It.IsAny<decimal>(), It.IsAny<string>(),
+                false, It.IsAny<CancellationToken>()))
+            .Returns(async (long sessionId, long branchId, decimal amount, string userId, bool ensureTransaction, CancellationToken token) =>
+            {
+                enteredDeposit.TrySetResult();
+                await releaseDeposit.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                return await firstVault.DepositForSessionAsync(sessionId, branchId, amount, userId, ensureTransaction, token);
+            });
+        var first = CreateCountService(firstDb, gatedVault.Object).SubmitCashCountAsync(scenario.User.Id, closing.Id);
+        Task<CashCountSaveResult>? second = null;
+        try
+        {
+            await enteredDeposit.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            second = CreateCountService(secondDb, new VaultService(secondDb)).SubmitCashCountAsync(scenario.User.Id, closing.Id);
+            await using var observer = new NpgsqlConnection(Fixture.ConnectionString);
+            await observer.OpenAsync();
+            await using var blocked = new NpgsqlCommand("SELECT cardinality(pg_blocking_pids(@pid)) > 0", observer);
+            blocked.Parameters.AddWithValue("pid", secondPid);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            while (!second.IsCompleted && !Equals(await blocked.ExecuteScalarAsync(timeout.Token), true))
+                await Task.Delay(10, timeout.Token);
+        }
+        finally
+        {
+            releaseDeposit.TrySetResult();
+            await first.WaitAsync(TimeSpan.FromSeconds(15));
+            if (second != null)
+                await second.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+
+        Assert.True((await first).Success);
+        Assert.NotNull(second);
+        Assert.True((await second).Success);
+        await using var verify = Fixture.CreateContext();
+        Assert.Equal(1_000m, (await verify.Vaults.SingleAsync()).CurrentBalance);
+        Assert.Single(await verify.VaultTransactions.Where(t => t.Type == VaultTransactionType.Closing).ToListAsync());
+        Assert.Single(await verify.CashCountAuditLogs.Where(a => a.CashCountId == closing.Id &&
+            a.Action == CashCountAuditAction.AutoApproved).ToListAsync());
+        Assert.All(await verify.Wallets.ToListAsync(), wallet => Assert.Equal(0m, wallet.Balance));
+        Assert.Equal(CashCountStatus.Approved, (await verify.CashCounts.SingleAsync(c => c.Id == closing.Id)).Status);
+    }
+
+    [Fact]
+    public async Task LegacyClosing_RollsBackPostingAndRetriesSafelyInTheSameContext()
+    {
+        using var scenario = Seed();
+        var closing = await AddLegacyClosingAsync(scenario);
+        await using var db = Fixture.CreateContext();
+        var vault = new VaultService(db);
+        var failOnce = true;
+        var failingVault = new Mock<IVaultService>();
+        failingVault.Setup(v => v.DepositForSessionAsync(
+                It.IsAny<long>(), It.IsAny<long>(), It.IsAny<decimal>(), It.IsAny<string>(),
+                false, It.IsAny<CancellationToken>()))
+            .Returns(async (long sessionId, long branchId, decimal amount, string userId, bool ensureTransaction, CancellationToken token) =>
+            {
+                var result = await vault.DepositForSessionAsync(sessionId, branchId, amount, userId, ensureTransaction, token);
+                if (failOnce)
+                {
+                    failOnce = false;
+                    throw new InvalidOperationException("Synthetic failure after deposit, before approval.");
+                }
+                return result;
+            });
+        var service = CreateCountService(db, failingVault.Object);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SubmitCashCountAsync(scenario.User.Id, closing.Id));
+        await using var verify = Fixture.CreateContext();
+        Assert.Equal(0m, await verify.Vaults.Select(v => v.CurrentBalance).SingleAsync());
+        Assert.Empty(await verify.VaultTransactions.ToListAsync());
+        Assert.Empty(await verify.CashCountAuditLogs.ToListAsync());
+        Assert.Equal(CashCountStatus.Draft, await verify.CashCounts.Where(c => c.Id == closing.Id).Select(c => c.Status).SingleAsync());
+
+        Assert.True((await service.SubmitCashCountAsync(scenario.User.Id, closing.Id)).Success);
+        Assert.Equal(1_000m, await verify.Vaults.Select(v => v.CurrentBalance).SingleAsync());
+        Assert.Single(await verify.VaultTransactions.ToListAsync());
+        Assert.Single(await verify.CashCountAuditLogs.ToListAsync());
+    }
+
     [Fact]
     public async Task ProtectedMobileEndpoints_RequireBearerEvenWithAdminCookie()
     {
@@ -320,6 +459,43 @@ public sealed class MobileApiTests(DatabaseFixture fixture) : IntegrationTestBas
         client.DefaultRequestHeaders.Authorization = new("Bearer", app.Token(scenario.User));
         using var approved = await client.PostAsync($"/api/vault/adjustment/{result.Data.TransactionId}/approve", null);
         Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
+    }
+
+    private static CashCountService CreateCountService(ApplicationDbContext db, IVaultService vault)
+    {
+        var adjustments = new Mock<IWalletAdjustmentService>();
+        adjustments.Setup(a => a.GetWalletAdjustmentTotalsAsync(It.IsAny<long>(), It.IsAny<long>()))
+            .ReturnsAsync(new Dictionary<long, decimal>());
+        return new(db, vault, Mock.Of<INotificationService>(), adjustments.Object,
+            Mock.Of<IBankSessionWorkflow>(), new BankingAccessService(db, new BusinessClock(TimeProvider.System)));
+    }
+
+    private async Task<CashCount> AddLegacyClosingAsync(BankingScenario scenario)
+    {
+        scenario.Session.WorkflowVersion = SessionWorkflowVersion.Legacy;
+        scenario.Session.SessionDate = DateOnly.FromDateTime(DateTime.UtcNow);
+        scenario.CashWallet.Balance = 1_000m;
+        scenario.BankWallet.Balance = 0m;
+        DbContext.CashCounts.Add(new CashCount
+        {
+            AgentId = scenario.Agent.Id, CashSessionId = scenario.Session.Id, IsOpening = true,
+            CountDate = scenario.Session.SessionDate, Status = CashCountStatus.Approved,
+            TotalAmount = 1_000m, CreatedAt = DateTimeOffset.UtcNow
+        });
+        var closing = new CashCount
+        {
+            AgentId = scenario.Agent.Id, CashSessionId = scenario.Session.Id, IsOpening = false,
+            CountDate = scenario.Session.SessionDate, Status = CashCountStatus.Draft,
+            TotalAmount = 1_000m, CreatedAt = DateTimeOffset.UtcNow,
+            Details =
+            [
+                new() { WalletId = scenario.CashWallet.Id, Amount = 1_000m },
+                new() { WalletId = scenario.BankWallet.Id, Amount = 0m }
+            ]
+        };
+        DbContext.CashCounts.Add(closing);
+        await DbContext.SaveChangesAsync();
+        return closing;
     }
 
     private BankingScenario Seed()
