@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.IdentityModel.Tokens;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Users;
+using Microsoft.EntityFrameworkCore;
 
 namespace EastSeat.Agenti.Web.Features.Api;
 
@@ -14,8 +15,25 @@ namespace EastSeat.Agenti.Web.Features.Api;
 /// </summary>
 public static class AuthEndpoints
 {
+    private static readonly string DummyPasswordHash =
+        new PasswordHasher<ApplicationUser>().HashPassword(new ApplicationUser(), Guid.NewGuid().ToString("N"));
+
     public static RouteGroupBuilder MapAuthApi(this RouteGroupBuilder group)
     {
+        group.MapGet("/me", async (ClaimsPrincipal principal, ApplicationDbContext db) =>
+        {
+            var userId = ApiAccess.UserId(principal);
+            var user = await db.Users.AsNoTracking().SingleAsync(u => u.Id == userId);
+            var agent = await db.Agents.AsNoTracking()
+                .Where(a => a.UserId == userId && a.IsActive)
+                .Select(a => new { a.Id, a.BranchId }).SingleOrDefaultAsync();
+            return Results.Ok(ApiResponse<SessionUserResponse>.Ok(new(
+                user.Id, user.Email ?? "", user.FullName, user.Role.ToString(),
+                agent?.Id, user.BranchId ?? agent?.BranchId)));
+        })
+        .WithName("GetApiSession")
+        .WithSummary("Validate the bearer session and return current account assignments");
+
         group.MapPost("/login", async (
             LoginRequest request,
             UserManager<ApplicationUser> userManager,
@@ -50,11 +68,8 @@ public static class AuthEndpoints
             }
             else
             {
-                // Use a constant dummy hash to consume roughly the same amount of time as a real check.
-                // This value should be any valid Identity password hash; the result is intentionally ignored.
-                const string dummyHash = "AQAAAAEAACcQAAAAEJ1nK1z0zSxN1W/7M7lT9BMG3c0kF4xHCV2+DummyHashForTimingOnly==";
                 var dummyUser = new ApplicationUser();
-                _ = userManager.PasswordHasher.VerifyHashedPassword(dummyUser, dummyHash, request.Password);
+                _ = userManager.PasswordHasher.VerifyHashedPassword(dummyUser, DummyPasswordHash, request.Password);
                 passwordValid = false;
             }
 

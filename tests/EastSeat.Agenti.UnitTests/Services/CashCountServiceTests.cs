@@ -1,5 +1,6 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.UnitTests.Helpers.TestDataBuilders;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.CashCounts;
@@ -21,6 +22,7 @@ public class CashCountServiceTests : IDisposable
     private readonly Mock<IVaultService> _vaultServiceMock;
     private readonly Mock<INotificationService> _notificationServiceMock;
     private readonly Mock<IWalletAdjustmentService> _walletAdjustmentServiceMock;
+    private readonly Mock<IBankSessionWorkflow> _bankWorkflowMock;
     private readonly CashCountService _sut;
     private readonly Branch _testBranch;
     private readonly ApplicationUser _testUser;
@@ -87,11 +89,12 @@ public class CashCountServiceTests : IDisposable
 
         _dbContext.SaveChanges();
 
-        var bankWorkflow = new Mock<IBankSessionWorkflow>();
-        bankWorkflow.Setup(w => w.IsModernBranchAsync(It.IsAny<long>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
-        bankWorkflow.Setup(w => w.HandlesFormAsync(It.IsAny<long>(), It.IsAny<CashCountFormModel>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        _bankWorkflowMock = new Mock<IBankSessionWorkflow>();
+        _bankWorkflowMock.Setup(w => w.IsModernBranchAsync(It.IsAny<long>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        _bankWorkflowMock.Setup(w => w.HandlesFormAsync(It.IsAny<long>(), It.IsAny<CashCountFormModel>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
         _sut = new CashCountService(_dbContext, _vaultServiceMock.Object, _notificationServiceMock.Object,
-            _walletAdjustmentServiceMock.Object, bankWorkflow.Object);
+            _walletAdjustmentServiceMock.Object, _bankWorkflowMock.Object,
+            new BankingAccessService(_dbContext, new BusinessClock(TimeProvider.System)));
     }
 
     public void Dispose()
@@ -372,6 +375,47 @@ public class CashCountServiceTests : IDisposable
     #region SaveCashCountAsync Tests
 
     [Fact]
+    public async Task SaveCashCountAsync_BankWorkflowReceivesNegativeObservations()
+    {
+        var bankWalletType = new WalletType
+        {
+            Id = 2,
+            Name = "Bank",
+            Type = WalletTypeEnum.Bank,
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        var bankWallet = WalletBuilder.Default()
+            .WithId(2)
+            .WithAgentId(_testAgent.Id)
+            .WithWalletTypeId(bankWalletType.Id)
+            .WithBalance(0m)
+            .Build();
+        _dbContext.WalletTypes.Add(bankWalletType);
+        _dbContext.Wallets.Add(bankWallet);
+        await _dbContext.SaveChangesAsync();
+
+        var form = new CashCountFormModel
+        {
+            IsOpening = true,
+            WalletEntries = [new() { WalletId = bankWallet.Id, CountedAmount = -10m }]
+        };
+        var expected = CashCountSaveResult.Ok(1, 1);
+        _bankWorkflowMock
+            .Setup(w => w.HandlesFormAsync(_testBranch.Id, form, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _bankWorkflowMock
+            .Setup(w => w.SaveAsync(_testUser.Id, form, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var result = await _sut.SaveCashCountAsync(_testUser.Id, form);
+
+        result.Should().Be(expected);
+        _bankWorkflowMock.Verify(
+            w => w.SaveAsync(_testUser.Id, form, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task SaveCashCountAsync_ForOpeningCount_CreatesBranchLevelSessionAndCount()
     {
         // Rules 1-3: Creates branch-level session
@@ -555,6 +599,18 @@ public class CashCountServiceTests : IDisposable
         var updatedCount = await _dbContext.CashCounts.FindAsync(cashCount.Id);
         updatedCount!.Status.Should().Be(CashCountStatus.PendingApproval);
         updatedCount.SubmittedAt.Should().NotBeNull();
+        var submittedAt = updatedCount.SubmittedAt;
+        var auditCount = await _dbContext.CashCountAuditLogs.CountAsync();
+        var notifications = _notificationServiceMock.Invocations.Count;
+
+        var replay = await _sut.SubmitCashCountAsync(_testUser.Id, cashCount.Id);
+
+        replay.Success.Should().BeTrue();
+        replay.CashCountId.Should().Be(cashCount.Id);
+        replay.CashSessionId.Should().Be(session.Id);
+        updatedCount.SubmittedAt.Should().Be(submittedAt);
+        (await _dbContext.CashCountAuditLogs.CountAsync()).Should().Be(auditCount);
+        _notificationServiceMock.Invocations.Count.Should().Be(notifications);
     }
 
     [Fact]
@@ -608,6 +664,20 @@ public class CashCountServiceTests : IDisposable
 
         var updated = await _dbContext.CashCounts.FindAsync(closingCount.Id);
         updated!.Status.Should().Be(CashCountStatus.Approved);
+        var approvedAt = updated.ApprovedAt;
+        var auditCount = await _dbContext.CashCountAuditLogs.CountAsync();
+        var notifications = _notificationServiceMock.Invocations.Count;
+        session.Status = CashSessionStatus.Closed;
+        await _dbContext.SaveChangesAsync();
+
+        var replay = await _sut.SubmitCashCountAsync(_testUser.Id, closingCount.Id);
+
+        replay.Success.Should().BeTrue();
+        updated.ApprovedAt.Should().Be(approvedAt);
+        (await _dbContext.CashCountAuditLogs.CountAsync()).Should().Be(auditCount);
+        _notificationServiceMock.Invocations.Count.Should().Be(notifications);
+        _vaultServiceMock.Verify(x => x.DepositForSessionAsync(
+            It.IsAny<long>(), It.IsAny<long>(), It.IsAny<decimal>(), It.IsAny<string>(), false, default), Times.Once);
     }
 
     [Fact]
@@ -649,7 +719,7 @@ public class CashCountServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task SubmitCashCountAsync_AlreadySubmitted_ReturnsError()
+    public async Task SubmitCashCountAsync_AlreadySubmitted_ReturnsExistingResult()
     {
         var session = CashSessionBuilder.Default()
             .WithBranchId(_testBranch.Id)
@@ -669,8 +739,34 @@ public class CashCountServiceTests : IDisposable
 
         var result = await _sut.SubmitCashCountAsync(_testUser.Id, cashCount.Id);
 
+        result.Success.Should().BeTrue();
+        result.CashCountId.Should().Be(cashCount.Id);
+        result.CashSessionId.Should().Be(session.Id);
+        _notificationServiceMock.VerifyNoOtherCalls();
+        _vaultServiceMock.VerifyNoOtherCalls();
+        (await _dbContext.CashCountAuditLogs.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task SubmitCashCountAsync_RejectedCount_StillRequiresSavingADraft()
+    {
+        var session = CashSessionBuilder.Default().WithBranchId(_testBranch.Id).Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+        var cashCount = CashCountBuilder.Default()
+            .WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id)
+            .WithStatus(CashCountStatus.Rejected)
+            .Build();
+        _dbContext.CashCounts.Add(cashCount);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.SubmitCashCountAsync(_testUser.Id, cashCount.Id);
+
         result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("already been submitted");
+        cashCount.Status.Should().Be(CashCountStatus.Rejected);
+        _notificationServiceMock.VerifyNoOtherCalls();
+        _vaultServiceMock.VerifyNoOtherCalls();
     }
 
     #endregion

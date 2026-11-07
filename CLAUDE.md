@@ -10,6 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Framework: ASP.NET Core Blazor Server (.NET 10)
 - Mobile: .NET MAUI Android app (`EastSeat.Agenti.Android`)
+- iOS companion: Expo SDK 58 + TypeScript (`mobile`, outside `Agenti.slnx`)
 - Database: PostgreSQL 16 (via Docker)
 - ORM: Entity Framework Core 10 + Npgsql
 - UI: MudBlazor 8.15
@@ -38,6 +39,34 @@ Agenti.slnx
 ```
 
 ## Development Commands
+
+### iOS Companion (Windows)
+
+The independent Expo project is in `mobile`, with routes under `mobile\src\app`.
+Use Node 26.13.0 and npm 11. Backend contracts and business rules stay in the
+existing API/services; never duplicate them or alter the MAUI Android app to
+support this client. Tokens use SecureStore, not AsyncStorage.
+
+```powershell
+Set-Location mobile
+npm ci
+Copy-Item .env.example .env
+# Set EXPO_PUBLIC_API_URL to the existing HTTPS backend's /api URL.
+npm run ios
+npm run format:check
+npm run lint
+npm run typecheck
+npm test
+npm run export:ios
+```
+
+`npm run ios` starts Expo Go, not Xcode or a local simulator. EAS internal builds
+use `npm run build:internal` after Expo/Apple account and device setup. Store
+submission and native `ios`/`android` project edits are out of scope.
+The mobile CI requires no personal signing credentials. See
+[`mobile/README.md`](mobile/README.md) for the pinned-tooling/Expo Doctor caveat and
+[`docs/IOS_MOBILE_APP.md`](docs/IOS_MOBILE_APP.md) for API contracts, server-side
+branch isolation, and physical-iPhone acceptance gates.
 
 ### Database Operations
 

@@ -13,10 +13,11 @@ public class CashSessionService(
     TelemetryClient? telemetryClient = null) : ICashSessionService
 {
     /// <inheritdoc />
-    public async Task<List<CashSessionListItemDto>> GetCashSessionsAsync(long? branchId = null)
+    public async Task<List<CashSessionListItemDto>> GetCashSessionsAsync(long? branchId = null, long? agentId = null)
     {
-        var query = dbContext.CashSessions
-            .Include(cs => cs.CashCounts)
+        var query = dbContext.CashSessions.AsNoTracking()
+            .Where(s => !agentId.HasValue || s.CashCounts.Any(c => c.AgentId == agentId))
+            .Include(cs => cs.CashCounts.Where(c => !agentId.HasValue || c.AgentId == agentId))
             .AsQueryable();
 
         if (branchId.HasValue)
@@ -76,10 +77,10 @@ public class CashSessionService(
     }
 
     /// <inheritdoc />
-    public async Task<CashSessionDetailDto?> GetCashSessionDetailAsync(long sessionId)
+    public async Task<CashSessionDetailDto?> GetCashSessionDetailAsync(long sessionId, long? agentId = null)
     {
-        var session = await dbContext.CashSessions
-            .Include(cs => cs.CashCounts)
+        var session = await dbContext.CashSessions.AsNoTracking()
+            .Include(cs => cs.CashCounts.Where(c => !agentId.HasValue || c.AgentId == agentId))
                 .ThenInclude(c => c.Agent)
                     .ThenInclude(a => a!.User)
             .Include(cs => cs.CashCounts)

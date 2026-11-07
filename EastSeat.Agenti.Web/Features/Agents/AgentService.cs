@@ -10,9 +10,11 @@ namespace EastSeat.Agenti.Web.Features.Agents;
 public class AgentService(ApplicationDbContext dbContext) : IAgentService
 {
     /// <inheritdoc />
-    public async Task<List<AgentListItemDto>> GetAgentsAsync()
+    public async Task<List<AgentListItemDto>> GetAgentsAsync(long? branchId = null, long? agentId = null)
     {
         return await dbContext.Agents
+            .Where(a => (!branchId.HasValue || a.BranchId == branchId) &&
+                        (!agentId.HasValue || a.Id == agentId))
             .Include(a => a.User)
             .OrderBy(a => a.Code)
             .Select(a => new AgentListItemDto
