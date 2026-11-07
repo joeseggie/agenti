@@ -1,0 +1,18 @@
+Agenti universal bank statement CSV — schema version 1
+
+The first row must contain these exact headers in this exact order:
+TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance
+
+TransactionDate: required, yyyy-MM-dd.
+TransactionTime: optional, HH:mm:ss in the bank account time zone. Leave blank when the bank provides no time. Never invent a time.
+Reference: optional bank reference.
+Description: required bank narration.
+Debit: positive amount with exactly two decimal places. Leave blank for a credit.
+Credit: positive amount with exactly two decimal places. Leave blank for a debit.
+RunningBalance: balance after this row, exactly two decimal places; negative balances are allowed.
+
+Exactly one of Debit and Credit must be populated in each transaction row. Amounts may use plain digits (1234.50) or comma thousands separators (1,234.50); values with comma thousands separators must be quoted as CSV fields. Do not include currency symbols, spaces, formulas, extra columns, or totals rows. Dates in the file must fall inside the date range selected in Agenti.
+
+Rows must be in bank ledger order. Each running balance must equal the prior balance plus the signed transaction amount. For a first non-empty upload, Agenti derives the opening balance from the first running balance and movement. For a first empty period, Admin must enter an audited opening baseline. Later empty dates carry forward the prior committed closing balance.
+
+Daily control only: date-only rows cannot prove whether a bank posting occurred before or after a cash session closed. The result is not an exact intraday session-cutoff certification.

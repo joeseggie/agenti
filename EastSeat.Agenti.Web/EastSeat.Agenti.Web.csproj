@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <None Update="Data\app.db" CopyToOutputDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Update="Features\BankStatements\Schema\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="Features\BankStatements\Schema\*.json" />
   </ItemGroup>
 
   <ItemGroup>

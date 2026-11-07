@@ -184,8 +184,11 @@ public partial class ApplicationDbContext
             entity.Property(e => e.Currency).HasMaxLength(3).IsRequired();
             entity.Property(e => e.CommitRequestHash).HasMaxLength(64);
             entity.Property(e => e.ProfileKey).HasMaxLength(100).IsRequired();
+            entity.Property(e => e.SchemaHash).HasMaxLength(64);
+            entity.Property(e => e.OpeningBaselineReason).HasMaxLength(1000);
             entity.Property(e => e.OpeningBalance).HasPrecision(18, 2);
             entity.Property(e => e.ClosingBalance).HasPrecision(18, 2);
+            entity.Property(e => e.OpeningBaseline).HasPrecision(18, 2);
             entity.Property(e => e.ErrorMessage).HasMaxLength(2000);
             entity.Property(e => e.UploadedByUserId).HasMaxLength(450).IsRequired();
             entity.Property(e => e.Version).IsConcurrencyToken();

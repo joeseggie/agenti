@@ -23,7 +23,8 @@ public sealed partial class BankReconciliationService
             if (await db.BankReconciliationMatches.AnyAsync(m => m.BankTransactionId == bank.Id && m.IsActive, cancellationToken))
                 throw new BankingRuleException("A matched bank occurrence cannot also be a bank-only adjustment.");
             if (form.Classification == BankTransactionClassification.Fee && bank.AcceptedRow!.SignedAmount >= 0 ||
-                form.Classification == BankTransactionClassification.Commission && bank.AcceptedRow!.SignedAmount <= 0)
+                form.Classification == BankTransactionClassification.Commission && bank.AcceptedRow!.SignedAmount <= 0 ||
+                form.Classification == BankTransactionClassification.Interest && bank.AcceptedRow!.SignedAmount <= 0)
                 throw new BankingRuleException("The selected classification contradicts the debit/credit direction.");
             if (form.RelatedCustomerTransactionId.HasValue)
             {

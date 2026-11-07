@@ -731,6 +731,14 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<decimal?>("OpeningBaseline")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("OpeningBaselineReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
                     b.Property<long?>("PreviousImportId")
                         .HasColumnType("bigint");
 
@@ -747,8 +755,18 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<DateOnly?>("RequestedFromDate")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("RequestedToDate")
+                        .HasColumnType("date");
+
                     b.Property<int>("Revision")
                         .HasColumnType("integer");
+
+                    b.Property<string>("SchemaHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<string>("Status")
                         .IsRequired()

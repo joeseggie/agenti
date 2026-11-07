@@ -115,65 +115,6 @@ public static class BankingEndpoints
         group.MapPost("/evidence", UploadEvidenceAsync);
         group.MapGet("/evidence/{id:long}", DownloadEvidenceAsync);
 
-        var admin = group.MapGroup("/admin").RequireAuthorization("BankReconciliationApi");
-        admin.MapGet("/accounts", async (ClaimsPrincipal principal, IBankAccountService service, CancellationToken token) =>
-            Ok(await service.GetAccountsAsync(UserId(principal), token)));
-        admin.MapGet("/accounts/setup", async (ClaimsPrincipal principal, IBankAccountService service, CancellationToken token) =>
-            Ok(await service.GetSetupAsync(UserId(principal), token)));
-        admin.MapPost("/accounts", async (BankAccountForm form, ClaimsPrincipal principal, IBankAccountService service, CancellationToken token) =>
-            Ok(await service.CreateAsync(UserId(principal), form, token)));
-        admin.MapPost("/accounts/{id:long}/configure", async (long id, ConfigureBankAccountRequest form,
-            ClaimsPrincipal principal, IBankAccountService service, CancellationToken token) =>
-            Ok(await service.ConfigureAsync(UserId(principal), id, form.Account, form.ExpectedVersion, token)));
-        admin.MapPost("/accounts/{id:long}/workflow", async (long id, BankWorkflowRequest form,
-            ClaimsPrincipal principal, IBankAccountService service, CancellationToken token) =>
-            Ok(await service.SetWorkflowAsync(UserId(principal), id, form.Enabled, form.ExpectedVersion, token)));
-        admin.MapGet("/accounts/{accountId:long}/imports", async (long accountId, ClaimsPrincipal principal, IBankStatementService service, CancellationToken token) =>
-            Ok(await service.GetImportsAsync(UserId(principal), accountId, token)));
-        admin.MapPost("/imports", async (StartBankImportRequest form, ClaimsPrincipal principal, IBankStatementService service, CancellationToken token) =>
-            Ok(await service.StartAsync(UserId(principal), form.BankAccountId, form.EvidenceFileId, form.Reprocess, token)));
-        admin.MapGet("/imports/{id:long}", async (long id, ClaimsPrincipal principal, IBankStatementService service, CancellationToken token) =>
-            Ok(await service.GetPreviewAsync(UserId(principal), id, token)));
-        admin.MapPost("/imports/{id:long}/rows/{rowId:long}", async (long id, long rowId, CorrectStatementRowForm form,
-            ClaimsPrincipal principal, IBankStatementService service, CancellationToken token) =>
-            Ok(await service.CorrectRowAsync(UserId(principal), id, rowId, form, token)));
-        admin.MapPost("/imports/{id:long}/commit", async (long id, CommitStatementForm form,
-            ClaimsPrincipal principal, IBankStatementService service, CancellationToken token) =>
-            Ok(await service.CommitAsync(UserId(principal), id, form, token)));
-        admin.MapGet("/accounts/{accountId:long}/reviews", async (long accountId, ClaimsPrincipal principal,
-            IBankReconciliationService service, CancellationToken token) =>
-            Ok(await service.GetReviewsAsync(UserId(principal), accountId, token)));
-        admin.MapPost("/reviews", async (CreateBankReviewRequest form, ClaimsPrincipal principal,
-            IBankReconciliationService service, CancellationToken token) =>
-            Ok(await service.CreateAsync(UserId(principal), form.BankAccountId, form.FromDate, form.ToDate, token)));
-        admin.MapGet("/reviews/{id:long}", async (long id, ClaimsPrincipal principal, IBankReconciliationService service, CancellationToken token) =>
-            Ok(await service.GetAsync(UserId(principal), id, token)));
-        admin.MapPost("/reviews/{id:long}/auto-match", async (long id, ReviewVersionRequest form, ClaimsPrincipal principal,
-            IBankReconciliationService service, CancellationToken token) =>
-            Ok(await service.AutoMatchAsync(UserId(principal), id, form.ExpectedVersion, token)));
-        admin.MapPost("/reviews/{id:long}/match", async (long id, BankMatchForm form, ClaimsPrincipal principal,
-            IBankReconciliationService service, CancellationToken token) =>
-            Ok(await service.MatchAsync(UserId(principal), id, form, token)));
-        admin.MapPost("/reviews/{id:long}/matches/{matchId:long}/remove", async (long id, long matchId,
-            ReviewReasonRequest form, ClaimsPrincipal principal, IBankReconciliationService service, CancellationToken token) =>
-            Ok(await service.UnmatchAsync(UserId(principal), id, matchId, form.ExpectedVersion, form.Reason, token)));
-        admin.MapPost("/reviews/{id:long}/classify", async (long id, BankClassificationForm form, ClaimsPrincipal principal,
-            IBankReconciliationService service, CancellationToken token) =>
-            Ok(await service.ClassifyAsync(UserId(principal), id, form, token)));
-        admin.MapPost("/reviews/{id:long}/exceptions", async (long id, BankExceptionForm form, ClaimsPrincipal principal,
-            IBankReconciliationService service, CancellationToken token) =>
-            Ok(await service.RecordExceptionAsync(UserId(principal), id, form, token)));
-        admin.MapPost("/reviews/{id:long}/exceptions/{exceptionId:long}/resolve", async (long id, long exceptionId,
-            ResolveBankExceptionRequest form, ClaimsPrincipal principal, IBankReconciliationService service, CancellationToken token) =>
-            Ok(await service.ResolveExceptionAsync(UserId(principal), id, exceptionId, form.EvidenceBankTransactionId,
-                form.ExpectedVersion, form.Reason, token)));
-        admin.MapPost("/reviews/{id:long}/corrections", async (long id, ClosingCorrectionForm form, ClaimsPrincipal principal,
-            IBankReconciliationService service, CancellationToken token) =>
-            Ok(await service.ReturnForCorrectionAsync(UserId(principal), id, form, token)));
-        admin.MapPost("/reviews/{id:long}/approve", async (long id, ApproveBankClosingRequest form, ClaimsPrincipal principal,
-            IBankReconciliationService service, CancellationToken token) =>
-            Ok(await service.ApproveClosingAsync(UserId(principal), id, form.CashSessionId, form.CommandId,
-                form.ExpectedVersion, form.BasisHash, token)));
         return group;
     }
 

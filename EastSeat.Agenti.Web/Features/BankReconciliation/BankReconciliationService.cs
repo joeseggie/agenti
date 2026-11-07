@@ -15,7 +15,7 @@ public sealed partial class BankReconciliationService(
     public async Task<List<BankReviewListItemDto>> GetReviewsAsync(
         string userId, long accountId, CancellationToken cancellationToken = default)
     {
-        await access.RequireAccountAsync(userId, accountId, adminOnly: true, cancellationToken);
+        await RequireReviewerAsync(userId, accountId, cancellationToken);
         return await db.BankReconciliationReviews.AsNoTracking().Where(r => r.BankAccountId == accountId)
             .OrderByDescending(r => r.Id).Select(r =>
                 new BankReviewListItemDto(r.Id, r.BankAccountId, r.FromDate, r.ToDate, r.Status, r.Version))
@@ -42,7 +42,7 @@ public sealed partial class BankReconciliationService(
         string userId, long reviewId, CancellationToken cancellationToken = default)
     {
         var accountId = await ReviewAccountIdAsync(reviewId, cancellationToken);
-        await access.RequireAccountAsync(userId, accountId, adminOnly: true, cancellationToken);
+        await RequireReviewerAsync(userId, accountId, cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var review = await db.BankReconciliationReviews.AsNoTracking().SingleAsync(r => r.Id == reviewId, cancellationToken);
         var result = await EvaluateAsync(review, cancellationToken);
@@ -65,6 +65,15 @@ public sealed partial class BankReconciliationService(
     private async Task<long> ReviewAccountIdAsync(long reviewId, CancellationToken cancellationToken) =>
         await db.BankReconciliationReviews.Where(r => r.Id == reviewId).Select(r => (long?)r.BankAccountId)
             .SingleOrDefaultAsync(cancellationToken) ?? throw new BankingRuleException("Bank review not found.");
+
+    private async Task RequireReviewerAsync(string userId, long accountId, CancellationToken cancellationToken)
+    {
+        var actor = await access.GetActorAsync(userId, cancellationToken);
+        if (actor.Role is not (UserRole.Admin or UserRole.Supervisor) ||
+            !await db.BankAccounts.AnyAsync(a => a.Id == accountId && a.BranchId == actor.BranchId && a.IsActive,
+                cancellationToken))
+            throw new UnauthorizedAccessException("Only a branch administrator or supervisor may review bank controls.");
+    }
 
     private async Task<ReviewFacts> LoadFactsAsync(BankReconciliationReview review, CancellationToken cancellationToken)
     {

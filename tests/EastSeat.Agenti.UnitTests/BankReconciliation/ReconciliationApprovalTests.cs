@@ -15,6 +15,87 @@ namespace EastSeat.Agenti.UnitTests.BankReconciliation;
 public class ReconciliationApprovalTests
 {
     [Fact]
+    public async Task DailyControl_MatchesUniqueDateOnlyAmountAndDoesNotCertifySessionCutoff()
+    {
+        using var fixture = new BankingTestContext();
+        var (customer, reconciliation, time, _) = Services(fixture);
+        SessionBalanceTests.AddOpening(fixture);
+        await customer.CaptureAsync(fixture.User.Id, Deposit(fixture));
+        FreezeClosing(fixture, 150_000m, 950_000m);
+        time.Now = BankingTestContext.Now.AddDays(1);
+        var dateOnlyRow = new ParsedStatementEntry(
+            "synthetic line", "synthetic bank fields", null, null, null, "synthetic bank posting",
+            "UGX", -50_000m, 950_000m, BankingTestContext.Now, null, null, false);
+        await ImportAsync(fixture, time, [dateOnlyRow], 950_000m);
+
+        var review = await reconciliation.CreateAsync(fixture.Admin.Id, fixture.Account.Id,
+            fixture.Session.SessionDate, fixture.Session.SessionDate);
+        review = await reconciliation.AutoMatchAsync(fixture.Admin.Id, review.Id, review.Version);
+
+        Assert.True(review.DailyControls.Single().Status == DailyBankControlStatus.Reconciled,
+            $"status={review.DailyControls.Single().Status}, opening={review.DailyControls.Single().OpeningBalance}, " +
+            $"closing={review.DailyControls.Single().ClosingBalance}, " +
+            $"statement={review.DailyControls.Single().StatementMovements}, register={review.DailyControls.Single().RegisterMovements}, " +
+            $"difference={review.DailyControls.Single().Difference}, unaccounted={review.DailyControls.Single().UnaccountedBankEntries}");
+        Assert.Equal(BankReconciliationStatus.Reconciled, review.DailyControlStatus);
+        Assert.Single(review.Matches);
+        Assert.False(review.Sessions.Single().CanApprove);
+        Assert.Contains(review.Sessions.Single().BlockingReasons,
+            reason => reason.Contains("cutoff", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task SupervisorFlag_RequiresAdministratorResponseAndPreservesBothDecisions()
+    {
+        using var fixture = new BankingTestContext();
+        var (_, reconciliation, _, _) = Services(fixture);
+        var review = await reconciliation.CreateAsync(fixture.Admin.Id, fixture.Account.Id,
+            fixture.Session.SessionDate, fixture.Session.SessionDate);
+        var administrator = await fixture.Db.Users.SingleAsync(u => u.Id == fixture.Admin.Id);
+        administrator.Role = UserRole.Supervisor;
+        await fixture.Db.SaveChangesAsync();
+
+        review = await reconciliation.FlagAsync(fixture.Admin.Id, review.Id, review.Version,
+            "The transaction-date control needs a second-person review.");
+
+        Assert.True(review.Flags.Single().IsOpen);
+        Assert.Equal(BankReconciliationStatus.NeedsReview, review.DailyControlStatus);
+        administrator.Role = UserRole.Admin;
+        await fixture.Db.SaveChangesAsync();
+        review = await reconciliation.RespondToFlagAsync(fixture.Admin.Id, review.Id,
+            new BankFlagResponseForm(review.Version, review.Flags.Single().Id,
+                "The statement coverage gap is documented and accepted for follow-up.", Void: false));
+
+        Assert.False(review.Flags.Single().IsOpen);
+        Assert.Equal(fixture.Admin.Id, review.Flags.Single().ResponseByUserId);
+        Assert.Equal("The statement coverage gap is documented and accepted for follow-up.", review.Flags.Single().Response);
+    }
+
+    [Fact]
+    public async Task UnknownClassification_KeepsDailyControlOpen()
+    {
+        using var fixture = new BankingTestContext();
+        var (_, reconciliation, time, _) = Services(fixture);
+        time.Now = BankingTestContext.Now.AddDays(1);
+        await ImportAsync(fixture, time, [Row("UNKNOWN-BANK-ROW", -10_000m, 990_000m, 0)], 990_000m);
+        var review = await reconciliation.CreateAsync(fixture.Admin.Id, fixture.Account.Id,
+            fixture.Session.SessionDate, fixture.Session.SessionDate);
+        var bank = review.BankEntries.Single();
+
+        review = await reconciliation.ClassifyAsync(fixture.Admin.Id, review.Id, new BankClassificationForm
+        {
+            ExpectedReviewVersion = review.Version,
+            BankTransactionId = bank.Id,
+            Classification = BankTransactionClassification.Unknown,
+            EvidenceFileId = bank.EvidenceFileId,
+            Reason = "The bank-only movement has not been identified."
+        });
+
+        Assert.Equal(DailyBankControlStatus.NeedsReview, review.DailyControls.Single().Status);
+        Assert.Equal(1, review.DailyControls.Single().UnaccountedBankEntries);
+    }
+
+    [Fact]
     public async Task Approval_UsesMatchedEvidenceWithoutChangingCurrentBalances()
     {
         using var fixture = new BankingTestContext();

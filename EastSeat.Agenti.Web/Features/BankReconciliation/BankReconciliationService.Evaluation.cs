@@ -2,6 +2,7 @@ using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Features.BankStatements;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 
 namespace EastSeat.Agenti.Web.Features.BankReconciliation;
@@ -27,6 +28,26 @@ public sealed partial class BankReconciliationService
         };
         foreach (var session in facts.Sessions)
             result.Sessions.Add(await EvaluateSessionAsync(session, facts, cancellationToken));
+        result.DailyControls = BuildDailyControls(review, facts);
+        result.DailyControlStatus = result.DailyControls.Any(d =>
+                d.Status is DailyBankControlStatus.MissingCoverage or DailyBankControlStatus.NeedsReview)
+            ? BankReconciliationStatus.NeedsCorrection
+            : result.DailyControls.Any(d => d.Status == DailyBankControlStatus.WithExceptions)
+                ? BankReconciliationStatus.WithExceptions
+                : BankReconciliationStatus.Reconciled;
+        var flagDecisions = await db.BankReconciliationDecisions.AsNoTracking().Where(d =>
+                d.ReviewId == review.Id && (d.Kind == ReconciliationDecisionKind.SupervisorFlagged ||
+                    d.Kind == ReconciliationDecisionKind.AdminFlagResponse))
+            .OrderBy(d => d.Id).ToListAsync(cancellationToken);
+        foreach (var flag in flagDecisions.Where(d => d.Kind == ReconciliationDecisionKind.SupervisorFlagged))
+        {
+            var response = flagDecisions.FirstOrDefault(d => d.Kind == ReconciliationDecisionKind.AdminFlagResponse &&
+                FlagIdFrom(d.DetailsJson) == flag.Id);
+            result.Flags.Add(new BankReviewFlagDto(flag.Id, flag.PerformedByUserId, flag.PerformedAt, flag.Reason,
+                response?.PerformedByUserId, response?.PerformedAt, response?.Reason, response == null));
+        }
+        if (result.Flags.Any(f => f.IsOpen))
+            result.DailyControlStatus = BankReconciliationStatus.NeedsReview;
         foreach (var bank in facts.Banks.Where(b => b.AcceptedRow!.LedgerDate >= review.FromDate &&
                      b.AcceptedRow.LedgerDate <= review.ToDate && b.AcceptedRow.SignedAmount != 0))
         {
@@ -39,6 +60,77 @@ public sealed partial class BankReconciliationService
             (result.Sessions.Any(s => !s.CanApprove) || result.PeriodIssues.Count > 0))
             result.Status = BankReconciliationStatus.NeedsReview;
         return result;
+    }
+
+    private static long? FlagIdFrom(string details)
+    {
+        using var document = JsonDocument.Parse(details);
+        return document.RootElement.TryGetProperty("FlagId", out var value) && value.TryGetInt64(out var id)
+            ? id : null;
+    }
+
+    private List<DailyBankControlDto> BuildDailyControls(BankReconciliationReview review, ReviewFacts facts)
+    {
+        var controls = new List<DailyBankControlDto>();
+        for (var date = review.FromDate; date <= review.ToDate; date = date.AddDays(1))
+        {
+            var import = facts.Coverage.Where(i => i.CoverageFromDate <= date && i.CoverageToDate >= date)
+                .OrderByDescending(i => i.CommittedAt ?? i.CreatedAt).ThenByDescending(i => i.Id).FirstOrDefault();
+            if (import?.CoverageVerified != true)
+            {
+                controls.Add(new(date, DailyBankControlStatus.MissingCoverage, null, null, 0, 0, 0, 0, 0,
+                    "A committed, verified statement period is required for this date."));
+                continue;
+            }
+
+            var rows = StatementValidation.EffectiveRows(import.Rows);
+            var dayRows = rows.Where(r => r.LedgerDate == date).OrderBy(r => r.Sequence).ToList();
+            var opening = BalanceBefore(import, rows, date);
+            var closing = dayRows.Count > 0 ? dayRows[^1].RunningBalance : opening;
+            var bankEntries = facts.Banks.Where(b => b.AcceptedRow!.LedgerDate == date &&
+                b.AcceptedRow.SignedAmount != 0).ToList();
+            var statementMovements = bankEntries.Sum(b => b.AcceptedRow!.SignedAmount);
+            var registerMovements = facts.Legs.Where(l => l.Kind != BankLegKind.ExpectedSettlement &&
+                clock.GetBusinessDate(l.OccurredAt) == date).Sum(l => l.SignedAmount);
+            var classifiedMovements = bankEntries.Where(b =>
+                    b.Classification is not (BankTransactionClassification.Unclassified or BankTransactionClassification.Unknown) &&
+                    !facts.Matches.Any(m => m.BankTransactionId == b.Id && m.IsActive))
+                .Sum(b => b.AcceptedRow!.SignedAmount);
+            var unaccounted = bankEntries.Count(b => !BankAccountedFor(b, facts));
+            var difference = statementMovements - registerMovements - classifiedMovements;
+            var hasOutstandingException = facts.Exceptions.Any(e =>
+                e.CashSessionId != 0 && !e.IsResolved &&
+                facts.Sessions.Any(s => s.Id == e.CashSessionId && s.SessionDate == date));
+            var status = !opening.HasValue || !closing.HasValue || unaccounted > 0 || difference != 0
+                ? DailyBankControlStatus.NeedsReview
+                : hasOutstandingException ? DailyBankControlStatus.WithExceptions : DailyBankControlStatus.Reconciled;
+            var note = dayRows.Any(r => !r.HasPreciseTimestamp)
+                ? "Daily transaction-date control only; this does not certify balances at an intraday session cutoff."
+                : "Daily movement control; session cutoff certification is evaluated separately.";
+            controls.Add(new(date, status, opening, closing, statementMovements, registerMovements,
+                classifiedMovements, difference, unaccounted, note));
+        }
+        return controls;
+    }
+
+    private static decimal? BalanceBefore(
+        BankStatementImport import, List<BankStatementRow> rows, DateOnly date)
+    {
+        if (!import.OpeningBalance.HasValue || !import.CoverageFromDate.HasValue || date < import.CoverageFromDate)
+            return null;
+        var balance = import.OpeningBalance.Value;
+        foreach (var day in rows.Where(r => r.LedgerDate >= import.CoverageFromDate && r.LedgerDate < date)
+                     .GroupBy(r => r.LedgerDate).OrderBy(g => g.Key))
+        {
+            var ordered = day.OrderBy(r => r.Sequence).ToList();
+            if (ordered[0].RunningBalance - ordered[0].SignedAmount != balance)
+                return null;
+            balance = ordered[^1].RunningBalance;
+        }
+        var currentRows = rows.Where(r => r.LedgerDate == date).OrderBy(r => r.Sequence).ToList();
+        if (currentRows.Count > 0 && currentRows[0].RunningBalance - currentRows[0].SignedAmount != balance)
+            return null;
+        return balance;
     }
 
     private async Task<SessionReconciliationDto> EvaluateSessionAsync(
@@ -121,7 +213,8 @@ public sealed partial class BankReconciliationService
                 continue;
             var explanation = facts.Exceptions.FirstOrDefault(e => e.BankTransactionId == bank.Id &&
                 e.Kind == BankExceptionKind.BankFailure && e.BankExplanationVerified && e.Amount == Math.Abs(bank.AcceptedRow.SignedAmount));
-            if (bank.Classification != BankTransactionClassification.Unclassified || explanation != null)
+            if (bank.Classification is not (BankTransactionClassification.Unclassified or BankTransactionClassification.Unknown) ||
+                explanation != null)
             {
                 bankAdjustment += bank.AcceptedRow.SignedAmount;
                 dto.Adjustments.Add(new(explanation == null ? bank.Classification.ToString() : "Verified bank failure",
@@ -343,7 +436,7 @@ public sealed partial class BankReconciliationService
 
     private static bool BankAccountedFor(BankTransaction bank, ReviewFacts facts) =>
         bank.AcceptedRow!.SignedAmount == 0 ||
-        bank.Classification != BankTransactionClassification.Unclassified ||
+        bank.Classification is not (BankTransactionClassification.Unclassified or BankTransactionClassification.Unknown) ||
         facts.Matches.Any(m => m.BankTransactionId == bank.Id &&
             facts.Legs.Any(l => Key(l) == Key(m) && ValidFinancialMatch(bank, l))) ||
         facts.Exceptions.Any(e => e.BankTransactionId == bank.Id && e.Kind == BankExceptionKind.BankFailure &&

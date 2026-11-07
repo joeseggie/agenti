@@ -97,8 +97,9 @@ public sealed partial class BankStatementService
                 throw new BankingConflictException("The statement preview changed. Refresh and review it before committing.");
             var profile = RequireProfile(import);
             var account = import.BankAccount!;
-            if (account.BankIdentifier != profile.BankIdentifier || !account.ImportProfileVerified)
-                throw new BankingRuleException("The statement profile is no longer verified for this account.");
+            if ((profile.BankIdentifier != "*" && account.BankIdentifier != profile.BankIdentifier) ||
+                (profile.Key != UniversalBankCsvStatementProfile.ProfileKey && !account.ImportProfileVerified))
+                throw new BankingRuleException("The statement parser is no longer configured for this account.");
             var rows = StatementValidation.EffectiveRows(import.Rows);
             var errors = StatementValidation.Check(import, rows, account.AccountIdentifier, account.Currency, account.BalanceBasis);
             if (errors.Count != 0)

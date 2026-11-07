@@ -76,9 +76,7 @@
 		<Compile Include="..\EastSeat.Agenti.Web\Shared\Domain\Enums\WalletAdjustmentReason.cs" Link="Models\Banking\WalletAdjustmentReason.cs" />
 		<Compile Include="..\EastSeat.Agenti.Web\Shared\Domain\Enums\WalletAdjustmentStatus.cs" Link="Models\Banking\WalletAdjustmentStatus.cs" />
 		<Compile Include="..\EastSeat.Agenti.Web\Features\CustomerTransactions\CustomerTransactionDtos.cs" Link="Models\Banking\CustomerTransactionDtos.cs" />
-		<Compile Include="..\EastSeat.Agenti.Web\Features\BankStatements\BankAccountDtos.cs" Link="Models\Banking\BankAccountDtos.cs" />
 		<Compile Include="..\EastSeat.Agenti.Web\Features\BankStatements\BankEvidenceDtos.cs" Link="Models\Banking\BankEvidenceDtos.cs" />
-		<Compile Include="..\EastSeat.Agenti.Web\Features\BankStatements\BankStatementDtos.cs" Link="Models\Banking\BankStatementDtos.cs" />
 		<Compile Include="..\EastSeat.Agenti.Web\Features\BankReconciliation\BankReconciliationDtos.cs" Link="Models\Banking\BankReconciliationDtos.cs" />
 		<Compile Include="..\EastSeat.Agenti.Web\Features\BankReconciliation\BankingRequests.cs" Link="Models\Banking\BankingRequests.cs" />
 		<Compile Include="..\EastSeat.Agenti.Web\Features\BankRuns\BankRunDtos.cs" Link="Models\Banking\BankRunDtos.cs" />

@@ -14,7 +14,8 @@ public sealed class BankAccountService(
     public async Task<List<BankAccountDto>> GetAccountsAsync(string userId, CancellationToken cancellationToken = default)
     {
         var actor = await access.GetActorAsync(userId, cancellationToken);
-        actor.RequireAdmin();
+        if (actor.Role is not (UserRole.Admin or UserRole.Supervisor))
+            throw new UnauthorizedAccessException("Only administrators and supervisors may review bank accounts.");
         var accounts = await db.BankAccounts.AsNoTracking().Include(a => a.Wallet)
             .Where(a => a.BranchId == actor.BranchId).OrderBy(a => a.BankName).ToListAsync(cancellationToken);
         return accounts.Select(Map).ToList();
@@ -52,7 +53,9 @@ public sealed class BankAccountService(
             var account = new BankAccount
             {
                 BranchId = actor.BranchId, WalletId = wallet.Id, BankName = form.BankName.Trim(),
-                BankIdentifier = profile?.BankIdentifier,
+                BankIdentifier = profile?.BankIdentifier == "*"
+                    ? form.BankName.Trim().ToUpperInvariant()
+                    : profile?.BankIdentifier,
                 AccountIdentifier = form.AccountIdentifier.Trim(), Currency = wallet.Currency,
                 TimeZoneId = form.TimeZoneId, BalanceBasis = form.BalanceBasis,
                 ImportProfileKey = profile?.Key, ImportProfileVerified = profile?.IsVerified == true,
@@ -94,7 +97,7 @@ public sealed class BankAccountService(
                 throw new BankingRuleException("Account identity, time zone and balance basis cannot be rewritten after financial activity.");
             var profile = ValidateProfile(form.ImportProfileKey, form.BalanceBasis);
             if ((hasHistory || account.WorkflowEnabled) && profile != null &&
-                account.BankIdentifier != null && account.BankIdentifier != profile.BankIdentifier)
+                profile.BankIdentifier != "*" && account.BankIdentifier != null && account.BankIdentifier != profile.BankIdentifier)
                 throw new BankingRuleException("A statement profile cannot change this account's bank identity.");
             if (account.WorkflowEnabled && profile?.IsVerified != true)
                 throw new BankingRuleException("Pause enrollment before removing a verified statement profile.");
@@ -103,7 +106,8 @@ public sealed class BankAccountService(
             account.TimeZoneId = form.TimeZoneId;
             account.BalanceBasis = form.BalanceBasis;
             account.ImportProfileKey = profile?.Key;
-            account.BankIdentifier = profile?.BankIdentifier ?? account.BankIdentifier;
+            if (profile?.BankIdentifier != "*")
+                account.BankIdentifier = profile?.BankIdentifier ?? account.BankIdentifier;
             account.ImportProfileVerified = profile?.IsVerified == true;
             account.Version++;
             await db.SaveChangesAsync(cancellationToken);
@@ -131,10 +135,11 @@ public sealed class BankAccountService(
                 throw new BankingConflictException("The account configuration changed. Refresh and retry.");
             if (enabled)
             {
-                var profile = profiles.Find(account.ImportProfileKey);
-                if (!scope.IsActive || !account.ImportProfileVerified || profile?.IsVerified != true ||
+                var profile = profiles.Find(account.ImportProfileKey) ??
+                              profiles.Find(UniversalBankCsvStatementProfile.ProfileKey);
+                if (!scope.IsActive || profile?.IsVerified != true ||
                     account.BalanceBasis == BankBalanceBasis.Unverified || profile.BalanceBasis != account.BalanceBasis)
-                    throw new BankingRuleException("Enrollment requires a verified bank profile and a confirmed matching balance basis. Representative bank samples are required.");
+                    throw new BankingRuleException("Enrollment requires the universal Agenti CSV parser and a confirmed matching balance basis.");
                 if (await db.Agents.CountAsync(a => a.BranchId == scope.BranchId && a.IsActive, cancellationToken) != 1 ||
                     await db.BankAccounts.AnyAsync(a => a.BranchId == scope.BranchId && a.WorkflowEnabled && a.Id != accountId, cancellationToken))
                     throw new BankingRuleException("This release supports one active agent and one enrolled bank account per branch.");
@@ -167,10 +172,9 @@ public sealed class BankAccountService(
 
     private IStatementImportProfile? ValidateProfile(string? key, BankBalanceBasis basis)
     {
-        if (string.IsNullOrWhiteSpace(key))
-            return null;
-        var profile = profiles.Find(key)
-            ?? throw new BankingRuleException("The selected bank statement profile is not installed.");
+        var profile = profiles.Find(key) ?? profiles.Find(UniversalBankCsvStatementProfile.ProfileKey);
+        if (profile == null)
+            throw new BankingRuleException("The universal Agenti CSV statement parser is not installed.");
         if (basis != BankBalanceBasis.Unverified && profile.BalanceBasis != basis)
             throw new BankingRuleException("The statement profile and the entered bank balance use different bases.");
         return profile;
@@ -200,5 +204,5 @@ public sealed class BankAccountService(
     private static BankAccountDto Map(BankAccount account) => new(
         account.Id, account.WalletId, account.Wallet?.Name ?? string.Empty, account.BankName,
         account.AccountIdentifier, account.Currency, account.TimeZoneId, account.BalanceBasis,
-        account.ImportProfileKey, account.ImportProfileVerified, account.WorkflowEnabled, account.IsActive, account.Version);
+        account.ImportProfileKey, true, account.WorkflowEnabled, account.IsActive, account.Version);
 }

@@ -13,7 +13,7 @@ namespace EastSeat.Agenti.UnitTests.BankReconciliation;
 public class BankStatementTests
 {
     [Fact]
-    public async Task MissingVerifiedProfile_KeepsEvidenceWithoutInventingAnImport()
+    public async Task MissingInstalledParser_KeepsEvidenceWithoutInventingAnImport()
     {
         using var fixture = new BankingTestContext();
         var clock = Clock();
@@ -27,7 +27,7 @@ public class BankStatementTests
         var import = await service.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id);
 
         Assert.Equal(StatementImportStatus.Failed, import.Status);
-        Assert.Contains("verified profile", import.ErrorMessage);
+        Assert.Contains("No installed statement parser", import.ErrorMessage);
         Assert.False(await service.ProcessNextAsync());
         Assert.Equal(0, await fixture.Db.BankTransactions.CountAsync());
         Assert.Equal("unparsed source", Encoding.UTF8.GetString((await evidence.DownloadAsync(fixture.Admin.Id, file.Id)).Content));

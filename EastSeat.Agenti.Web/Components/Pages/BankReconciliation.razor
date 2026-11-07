@@ -6,7 +6,7 @@
 @using EastSeat.Agenti.Web.Features.BankStatements
 @using EastSeat.Agenti.Web.Features.CashSessions
 @inherits BankingPageBase
-@attribute [Authorize(Policy = "BankReconciliation")]
+@attribute [Authorize(Policy = "BankReconciliationReview")]
 @rendermode InteractiveServer
 @inject IBankReconciliationService Reconciliation
 @inject IBankAccountService Accounts
@@ -23,7 +23,7 @@
         <MudButton Href="/bank-statements">Bank statements</MudButton>
         <MudButton OnClick="RefreshAsync" Disabled="Busy">Refresh</MudButton>
     </MudStack>
-    <MudText Class="my-2">Admin-only review. Approval certifies frozen observations and never repeats an old vault allocation.</MudText>
+    <MudText Class="my-2">Admin-only daily control. Transaction dates support account-level movement reconciliation, not exact intraday session-cutoff certification. Any separate closing approval requires precise cutoff evidence and never repeats an old vault allocation.</MudText>
     @if (Error != null) { <MudAlert Severity="Severity.Error" Class="my-3">@Error</MudAlert> }
     @if (Busy) { <MudProgressLinear Indeterminate="true" Class="my-3" /> }
     <MudPaper Class="pa-4 my-3" Outlined="true">
@@ -35,7 +35,10 @@
             </MudItem>
             <MudItem xs="12" sm="3"><MudTextField T="string" Label="From session date (yyyy-MM-dd)" @bind-Value="_from" Disabled="Busy" /></MudItem>
             <MudItem xs="12" sm="3"><MudTextField T="string" Label="Through session date (yyyy-MM-dd)" @bind-Value="_to" Disabled="Busy" /></MudItem>
-            <MudItem xs="12" sm="2"><MudButton OnClick="CreateAsync" Disabled="@(Busy || _accountId == 0)" Color="Color.Primary" Variant="Variant.Filled">Start review</MudButton></MudItem>
+            @if (_isAdmin)
+            {
+                <MudItem xs="12" sm="2"><MudButton OnClick="CreateAsync" Disabled="@(Busy || _accountId == 0)" Color="Color.Primary" Variant="Variant.Filled">Start review</MudButton></MudItem>
+            }
         </MudGrid>
         <MudText Typo="Typo.caption">Choose a daily, weekly, or monthly date range. Each included session keeps its own approval and exceptions.</MudText>
         <MudSelect T="long" Label="Existing review" Value="_reviewId" ValueChanged="OpenReviewAsync" Disabled="Busy">
@@ -51,9 +54,32 @@
     }
     @if (_review != null)
     {
+        <MudPaper Class="pa-4 my-3" Outlined="true">
+            <MudText Typo="Typo.h5">Daily transaction-date controls</MudText>
+            <MudText Typo="Typo.body2">These results are account-level controls and do not certify whether a posting occurred before or after a session closed. Missing bank times are never inferred.</MudText>
+            <MudTable T="DailyBankControlDto" Items="_review.DailyControls" Dense="true" Hover="true" Class="my-2">
+                <HeaderContent><MudTh>Date</MudTh><MudTh>Status</MudTh><MudTh>Opening</MudTh><MudTh>Statement movement</MudTh><MudTh>Register movement</MudTh><MudTh>Bank-only</MudTh><MudTh>Difference</MudTh><MudTh>Unaccounted</MudTh></HeaderContent>
+                <RowTemplate Context="day">
+                    <MudTd>@day.Date</MudTd><MudTd>@day.Status</MudTd>
+                    <MudTd>@(day.OpeningBalance?.ToString("N2") ?? "-")</MudTd>
+                    <MudTd>@day.StatementMovements.ToString("N2")</MudTd><MudTd>@day.RegisterMovements.ToString("N2")</MudTd>
+                    <MudTd>@day.ClassifiedBankOnlyMovements.ToString("N2")</MudTd><MudTd>@day.Difference.ToString("N2")</MudTd>
+                    <MudTd>@day.UnaccountedBankEntries</MudTd>
+                </RowTemplate>
+            </MudTable>
+            @foreach (var day in _review.DailyControls.Where(d => d.Status != DailyBankControlStatus.Reconciled))
+            {
+                <MudAlert Severity="@(day.Status == DailyBankControlStatus.WithExceptions ? Severity.Warning : Severity.Error)" Class="my-2">
+                    @day.Date: @day.Note Opening @(day.OpeningBalance?.ToString("N2") ?? "not established"), closing @(day.ClosingBalance?.ToString("N2") ?? "not established").
+                </MudAlert>
+            }
+        </MudPaper>
         <MudStack Row="true" AlignItems="AlignItems.Center" Class="my-3">
-            <MudText Typo="Typo.h5">Review #@_review.Id - @_review.Status</MudText>
-            <MudButton OnClick="AutoMatchAsync" Disabled="Busy" Color="Color.Primary" Variant="Variant.Outlined">Match unique exact entries</MudButton>
+            <MudText Typo="Typo.h5">Review #@_review.Id - daily control: @_review.DailyControlStatus</MudText>
+            @if (_isAdmin)
+            {
+                <MudButton OnClick="AutoMatchAsync" Disabled="Busy" Color="Color.Primary" Variant="Variant.Outlined">Match unique exact entries</MudButton>
+            }
         </MudStack>
         @foreach (var issue in _review.PeriodIssues) { <MudAlert Severity="Severity.Warning" Class="my-2">@issue</MudAlert> }
         @foreach (var session in _review.Sessions)
@@ -77,10 +103,13 @@
                 {
                     <MudText Typo="Typo.caption">@adjustment.Kind: @adjustment.Amount.ToString("N2") - @adjustment.Explanation</MudText>
                 }
-                <MudButton OnClick="@(() => ApproveAsync(session))" Disabled="@(Busy || !session.CanApprove)" Color="Color.Success" Variant="Variant.Filled" Class="mr-2">
-                    Approve against this evidence
-                </MudButton>
-                <MudButton OnClick="@(() => SelectCorrection(session))" Disabled="@(Busy || !session.ClosingCountId.HasValue)">Request historical correction</MudButton>
+                @if (_isAdmin)
+                {
+                    <MudButton OnClick="@(() => ApproveAsync(session))" Disabled="@(Busy || !session.CanApprove)" Color="Color.Success" Variant="Variant.Filled" Class="mr-2">
+                        Approve against this evidence
+                    </MudButton>
+                    <MudButton OnClick="@(() => SelectCorrection(session))" Disabled="@(Busy || !session.ClosingCountId.HasValue)">Request historical correction</MudButton>
+                }
             </MudPaper>
         }
         <MudGrid Class="my-4">
@@ -124,6 +153,8 @@
                 </MudTable>
             </MudItem>
         </MudGrid>
+        @if (_isAdmin)
+        {
         <MudPaper Class="pa-4 my-3" Outlined="true">
             <MudText Typo="Typo.h6">Manual match / bank-only classification</MudText>
             <MudTextField T="string" Label="Evidence-based decision reason" @bind-Value="_reason" Lines="2" Disabled="Busy" />
@@ -140,6 +171,29 @@
             </MudSelect>
             <MudButton OnClick="UnmatchAsync" Disabled="@(Busy || _matchId == 0)" Color="Color.Warning">Remove match with audit reason</MudButton>
         </MudPaper>
+        }
+        <MudPaper Class="pa-4 my-3" Outlined="true">
+            <MudText Typo="Typo.h6">Supervisor review flag</MudText>
+            <MudTextField T="string" Label="Review concern (10-2,000 characters)" @bind-Value="_flagReason" Lines="2" Disabled="Busy" />
+            <MudButton OnClick="FlagAsync" Disabled="Busy" Color="Color.Warning">Raise flag for Admin</MudButton>
+            @foreach (var flag in _review.Flags)
+            {
+                <MudDivider Class="my-2" />
+                <MudText>Flag #@flag.Id by @flag.RaisedByUserId at @UgandaTime(flag.RaisedAt): @flag.Reason</MudText>
+                @if (flag.IsOpen && _isAdmin)
+                {
+                    <MudTextField T="string" Label="Admin response note or void reason" @bind-Value="_flagResponse" Lines="2" />
+                    <MudCheckBox T="bool" @bind-Value="_voidFlag" Label="Void this flag" />
+                    <MudButton OnClick="@(() => RespondToFlagAsync(flag.Id))" Disabled="Busy" Color="Color.Primary">Record Admin response</MudButton>
+                }
+                else if (flag.Response != null)
+                {
+                    <MudText>Admin response (@flag.ResponseByUserId at @UgandaTime(flag.RespondedAt!.Value)): @flag.Response</MudText>
+                }
+            }
+        </MudPaper>
+        @if (_isAdmin)
+        {
         <MudPaper Class="pa-4 my-3" Outlined="true">
             <MudText Typo="Typo.h6">Document an exception</MudText>
             <MudSelect T="long" Label="Affected session" @bind-Value="_exception.CashSessionId">
@@ -184,6 +238,7 @@
                 <MudButton OnClick="ReturnAsync" Disabled="Busy" Color="Color.Warning">Send correction request</MudButton>
             </MudPaper>
         }
+        }
     }
 </MudContainer>
 
@@ -209,9 +264,14 @@
     private ClosingCorrectionForm _correction = new();
     private string _movementIds = string.Empty;
     private readonly Dictionary<string, Guid> _approvalCommands = [];
+    private bool _isAdmin;
+    private string _flagReason = string.Empty;
+    private string _flagResponse = string.Empty;
+    private bool _voidFlag;
 
     protected override Task OnInitializedAsync() => RunAsync(async () =>
     {
+        _isAdmin = (await Access.GetActorAsync(UserId)).Role == UserRole.Admin;
         _accounts = await Accounts.GetAccountsAsync(UserId);
         _accountId = _accounts.FirstOrDefault()?.Id ?? 0;
         var date = Clock.Today;
@@ -242,6 +302,18 @@
     });
     private Task OpenReviewAsync(long id) => RunAsync(async () => { _reviewId = id; _review = await Reconciliation.GetAsync(UserId, id); });
     private Task AutoMatchAsync() => RunAsync(async () => _review = await Reconciliation.AutoMatchAsync(UserId, _review!.Id, _review.Version));
+    private Task FlagAsync() => RunAsync(async () =>
+    {
+        _review = await Reconciliation.FlagAsync(UserId, _review!.Id, _review.Version, _flagReason);
+        _flagReason = string.Empty;
+    });
+    private Task RespondToFlagAsync(long flagId) => RunAsync(async () =>
+    {
+        _review = await Reconciliation.RespondToFlagAsync(UserId, _review!.Id,
+            new BankFlagResponseForm(_review.Version, flagId, _flagResponse, _voidFlag));
+        _flagResponse = string.Empty;
+        _voidFlag = false;
+    });
     private static string LegKey(BankLegDto leg) => $"{leg.Kind}:{leg.Id}";
     private BankLegDto SelectedLeg() => _review!.RegisterEntries.SingleOrDefault(l => LegKey(l) == _legKey)
         ?? throw new BankingRuleException("Select a register source.");

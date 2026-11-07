@@ -92,8 +92,6 @@ public static class MauiProgram
         builder.Services.AddTransient<ProfilePage>();
         builder.Services.AddTransient<BankOperationsPage>();
         builder.Services.AddTransient<CustomerBankingPage>();
-        builder.Services.AddTransient<BankStatementsPage>();
-        builder.Services.AddTransient<BankReviewPage>();
 
         // ── Shell ────────────────────────────────────────────────────────────
         builder.Services.AddTransient<AppShell>();

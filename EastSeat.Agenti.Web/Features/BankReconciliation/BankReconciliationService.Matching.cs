@@ -118,18 +118,17 @@ public sealed partial class BankReconciliationService
         return BankReconciliationStatus.InProgress;
     }
 
-    private static bool ExactCandidate(BankTransaction bank, BankLegDto leg)
+    private bool ExactCandidate(BankTransaction bank, BankLegDto leg)
     {
         if (!ValidFinancialMatch(bank, leg))
             return false;
         var row = bank.AcceptedRow!;
-        if (!string.IsNullOrWhiteSpace(leg.Reference))
+        var hasBankReference = !string.IsNullOrWhiteSpace(row.TransactionNumber) ||
+                               !string.IsNullOrWhiteSpace(row.Reference);
+        if (!string.IsNullOrWhiteSpace(leg.Reference) && hasBankReference)
             return string.Equals(leg.Reference, row.TransactionNumber, StringComparison.Ordinal) ||
                    string.Equals(leg.Reference, row.Reference, StringComparison.Ordinal);
-        return leg.Kind == BankLegKind.CustomerMovement && row.HasPreciseTimestamp &&
-               !string.IsNullOrWhiteSpace(leg.CustomerIdentifier) &&
-               string.Equals(leg.CustomerIdentifier, row.CustomerIdentifier, StringComparison.Ordinal) &&
-               leg.OccurredAt == row.OccurredAt;
+        return clock.GetBusinessDate(leg.OccurredAt) == row.LedgerDate;
     }
 
     private void AddMatch(BankReconciliationReview review, BankTransaction bank, BankLegDto leg, string userId, string reason)

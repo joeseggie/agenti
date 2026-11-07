@@ -2,7 +2,9 @@ using EastSeat.Agenti.Shared.Domain.Enums;
 
 namespace EastSeat.Agenti.Web.Features.BankStatements;
 
-public sealed record StatementAccountContext(string AccountIdentifier, string Currency, string TimeZoneId, BankBalanceBasis BalanceBasis);
+public sealed record StatementAccountContext(
+    string AccountIdentifier, string Currency, string TimeZoneId, BankBalanceBasis BalanceBasis,
+    DateOnly? CoverageFromDate = null, DateOnly? CoverageToDate = null, decimal? OpeningBaseline = null);
 
 public sealed record ParsedStatement(
     string AccountIdentifier, string Currency, BankBalanceBasis BalanceBasis,
@@ -24,6 +26,7 @@ public interface IStatementImportProfile
     bool IsVerified { get; }
     BankBalanceBasis BalanceBasis { get; }
     IReadOnlyList<string> SupportedContentTypes { get; }
+    string SchemaHash => string.Empty;
     Task<ParsedStatement> ParseAsync(Stream source, string contentType, StatementAccountContext account, CancellationToken cancellationToken);
     string? GetReliableIdentity(ParsedStatementEntry entry);
 }

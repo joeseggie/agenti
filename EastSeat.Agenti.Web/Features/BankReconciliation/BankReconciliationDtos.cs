@@ -39,6 +39,25 @@ public sealed record WalletReconciliationDto(
 
 public sealed record ReconciliationAdjustmentDto(string Kind, decimal Amount, string Explanation, long? BankTransactionId, long? ExceptionId);
 
+public enum DailyBankControlStatus
+{
+    MissingCoverage,
+    NeedsReview,
+    Reconciled,
+    WithExceptions
+}
+
+public sealed record DailyBankControlDto(
+    DateOnly Date, DailyBankControlStatus Status, decimal? OpeningBalance, decimal? ClosingBalance,
+    decimal StatementMovements, decimal RegisterMovements, decimal ClassifiedBankOnlyMovements,
+    decimal Difference, int UnaccountedBankEntries, string Note);
+
+public sealed record BankReviewFlagDto(
+    long Id, string RaisedByUserId, DateTimeOffset RaisedAt, string Reason,
+    string? ResponseByUserId, DateTimeOffset? RespondedAt, string? Response, bool IsOpen);
+
+public sealed record BankFlagResponseForm(int ExpectedReviewVersion, long FlagId, string Response, bool Void);
+
 public sealed class SessionReconciliationDto
 {
     public long CashSessionId { get; set; }
@@ -72,11 +91,14 @@ public sealed class BankReconciliationReviewDto
     public DateOnly ToDate { get; set; }
     public int Version { get; set; }
     public BankReconciliationStatus Status { get; set; }
+    public BankReconciliationStatus DailyControlStatus { get; set; }
     public List<SessionReconciliationDto> Sessions { get; set; } = [];
+    public List<DailyBankControlDto> DailyControls { get; set; } = [];
     public List<BankLedgerItemDto> BankEntries { get; set; } = [];
     public List<BankLegDto> RegisterEntries { get; set; } = [];
     public List<BankMatchDto> Matches { get; set; } = [];
     public List<BankExceptionDto> Exceptions { get; set; } = [];
+    public List<BankReviewFlagDto> Flags { get; set; } = [];
     public List<BankCorrectionRequestDto> CorrectionRequests { get; set; } = [];
     public List<string> PeriodIssues { get; set; } = [];
 }
@@ -136,6 +158,8 @@ public interface IBankReconciliationService
     Task<List<BankReviewListItemDto>> GetReviewsAsync(string userId, long accountId, CancellationToken cancellationToken = default);
     Task<BankReconciliationReviewDto> CreateAsync(string userId, long accountId, DateOnly from, DateOnly to, CancellationToken cancellationToken = default);
     Task<BankReconciliationReviewDto> GetAsync(string userId, long reviewId, CancellationToken cancellationToken = default);
+    Task<BankReconciliationReviewDto> FlagAsync(string userId, long reviewId, int expectedVersion, string reason, CancellationToken cancellationToken = default);
+    Task<BankReconciliationReviewDto> RespondToFlagAsync(string userId, long reviewId, BankFlagResponseForm form, CancellationToken cancellationToken = default);
     Task<BankReconciliationReviewDto> AutoMatchAsync(string userId, long reviewId, int expectedVersion, CancellationToken cancellationToken = default);
     Task<BankReconciliationReviewDto> MatchAsync(string userId, long reviewId, BankMatchForm form, CancellationToken cancellationToken = default);
     Task<BankReconciliationReviewDto> UnmatchAsync(string userId, long reviewId, long matchId, int expectedVersion, string reason, CancellationToken cancellationToken = default);

@@ -26,7 +26,7 @@ public sealed class ReconciliationApiTests(DatabaseFixture fixture) : Integratio
         using var response = await client.GetAsync("/api/banking/admin/accounts");
         using var ordinary = await client.GetAsync("/api/banking/current");
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         Assert.Equal(HttpStatusCode.OK, ordinary.StatusCode);
     }
 
@@ -69,7 +69,7 @@ public sealed class ReconciliationApiTests(DatabaseFixture fixture) : Integratio
         using var client = app.CreateClient(new() { AllowAutoRedirect = false });
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(supervisor));
         using var statementResponse = await client.GetAsync("/api/banking/admin/accounts");
-        Assert.Equal(HttpStatusCode.Forbidden, statementResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, statementResponse.StatusCode);
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.Admin));
         using var content = new MultipartFormDataContent

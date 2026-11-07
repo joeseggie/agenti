@@ -12,7 +12,9 @@ public sealed class BankStatementOptions
 public sealed record BankStatementImportDto(
     long Id, long BankAccountId, long EvidenceFileId, string FileName, StatementImportStatus Status,
     string ProfileKey, int ProfileVersion, int Version, int Revision,
+    string? SchemaHash, DateOnly? RequestedFromDate, DateOnly? RequestedToDate,
     DateTimeOffset? CoverageFrom, DateTimeOffset? CoverageTo, decimal? OpeningBalance,
+    decimal? OpeningBaseline, string? OpeningBaselineReason,
     decimal? ClosingBalance, bool CoverageVerified, string? ErrorMessage, DateTimeOffset CreatedAt);
 
 public sealed record StatementRowDto(
@@ -39,6 +41,9 @@ public sealed class CommitStatementForm
     public List<StatementRowResolution> Resolutions { get; set; } = [];
 }
 
+public sealed record StatementImportRequest(
+    DateOnly FromDate, DateOnly ToDate, decimal? OpeningBaseline, string? OpeningBaselineReason = null);
+
 public sealed class CorrectStatementRowForm
 {
     public int ExpectedVersion { get; set; }
@@ -60,6 +65,9 @@ public interface IBankStatementService
 {
     Task<List<BankStatementImportDto>> GetImportsAsync(string userId, long accountId, CancellationToken cancellationToken = default);
     Task<BankStatementImportDto> StartAsync(string userId, long accountId, long evidenceId, bool reprocess = false, CancellationToken cancellationToken = default);
+    Task<BankStatementImportDto> StartAsync(
+        string userId, long accountId, long evidenceId, StatementImportRequest request,
+        bool reprocess = false, CancellationToken cancellationToken = default);
     Task<BankStatementPreviewDto> GetPreviewAsync(string userId, long importId, CancellationToken cancellationToken = default);
     Task<BankStatementPreviewDto> CorrectRowAsync(string userId, long importId, long rowId, CorrectStatementRowForm form, CancellationToken cancellationToken = default);
     Task<BankStatementImportDto> CommitAsync(string userId, long importId, CommitStatementForm form, CancellationToken cancellationToken = default);
