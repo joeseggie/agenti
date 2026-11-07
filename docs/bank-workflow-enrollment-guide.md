@@ -23,10 +23,10 @@ No production database was accessed. Enabling or deploying this workflow remains
 | Step | Actor | Input/action | Validation/output |
 |---|---|---|---|
 | E0 | Finance + Admin | Confirm the branch, agent, Bank wallet, account identity, currency, timezone and balance basis. | The account owner confirms what the statement balance represents. |
-| E1 | Admin | In `/bank-statements`, register the existing Bank wallet and account details. | One active bank-account binding per Bank wallet; no money moves. |
+| E1 | Admin | In `/bank-accounts`, register the existing Bank wallet and account details. | One active bank-account binding per Bank wallet; no money moves. |
 | E2 | Admin | Download the CSV template and guide; convert the bank export outside Agenti. | Exact schema and data rules below; source XLSX/PDF is not uploaded as a statement. |
 | E3 | Admin + Finance | For a first-ever empty date period, provide the opening baseline and its source/reason. | Baseline, evidence, actor, time and reason are audited; later periods use the prior committed closing balance. |
-| E4 | Admin | Finish active legacy sessions; enable new-session workflow if needed. | Existing session/vault safeguards remain. Enrollment does not rewrite legacy history. |
+| E4 | Admin | Finish active legacy sessions; enable new-session workflow on Bank accounts if needed. | Existing session/vault safeguards remain. Enrollment does not rewrite legacy history. |
 | E5 | Teller + opening approver | Operate the day: approve opening, capture customer activity, submit closing. | Closing locks trading and performs only the existing operational settlement once. |
 | E6 | Admin | Upload CSV, inspect diagnostics/preview, commit rows and open `/bank-reconciliation`. | Durable import/revision, private CSV evidence and a daily status per covered date. |
 | E7 | Admin | Match unique entries, manually resolve ambiguous rows, classify evidenced bank-only activity. | Unknown rows and unexplained differences keep the day open. |
@@ -38,12 +38,13 @@ The detailed teller/customer journey is in [Agenti: customer banking and bank-st
 
 ## E0-E1: confirm and bind the account
 
-1. Sign in as an Admin and open **Bank statements** (`/bank-statements`).
+1. Sign in as an Admin and open **Bank accounts** (`/bank-accounts`). If Bank statements has no account yet, follow its setup link.
 2. Expand **Register a bank account**.
 3. Select the teller's active **Bank wallet**. Cash and Mobile Money wallets are not eligible.
 4. Enter the bank name, account identifier exactly as printed, statement timezone (normally `Africa/Kampala`), and the confirmed balance basis (Ledger, Available or Float).
 5. Select **Save account binding**. Currency comes from the wallet.
 6. Confirm the selected account and wallet in the page. A bank wallet can have only one account binding. After financial history exists, account identity/timezone/basis are protected against casual edits.
+7. Use **Account configuration** for settings and **Open statements** to upload statements for the selected account. On Bank statements, **Manage account** returns to that same account's settings. Unsubmitted files and unsaved forms are not retained when navigating between pages.
 
 The universal CSV parser ships with Agenti. There is no profile upload, per-bank code registration, or Admin schema edit. New statement uploads must use the CSV contract described below. Old profile metadata on historical imports remains historical only.
 
@@ -75,7 +76,7 @@ Do not reorder, rename, add, or remove columns. Agenti accumulates row/column di
 
 ## E3: select dates and baseline
 
-1. Select the Bank account and enter the period's inclusive start and end dates.
+1. Open **Bank statements** (`/bank-statements`), select the Bank account and enter the period's inclusive start and end dates. The account summary and enrollment status are read-only here; use **Manage account** for settings.
 2. Upload one complete CSV for that range. Multi-day files are partitioned into daily controls.
 3. For the account's first imported period, if the first selected date has no transactions, enter the opening balance independently obtained from the bank and a source/reason. This baseline is a trust anchor and is audited with the Admin identity/time and retained statement evidence.
 4. If the first date contains rows, Agenti derives the range opening from the first running balance and movement. A supplied baseline must agree with that derived opening.
@@ -86,7 +87,7 @@ The app rejects future ranges, any selected date with an open session, missing s
 
 ## E4-E5: enable operations and close the day
 
-If the branch uses the modern workflow, satisfy the existing enrollment gates on the account page: active account/wallets, confirmed matching balance basis/currency, required wallet configuration, and no active legacy session. The initial workflow supports one active agent and one enrolled account per branch. These are session-enrollment limits, not a reason to merge multiple bank wallets into one statement account.
+If the branch uses the modern workflow, open **Bank accounts** (`/bank-accounts`) and satisfy the existing enrollment gates: active account/wallets, confirmed matching balance basis/currency, required wallet configuration, and no active legacy session. Use **Enable new-session workflow** or **Pause new enrollment** there. Enrollment controls new cash sessions, not CSV uploads. The initial workflow supports one active agent and one enrolled account per branch. These are session-enrollment limits, not a reason to merge multiple bank wallets into one statement account.
 
 The teller uses the normal opening/count process. Admin or Supervisor opening approval and vault funding safeguards are unchanged. During the day, the teller records customer movements, bank runs and cases in their normal screens. At closing, the teller submits actual wallet observations; Agenti freezes the snapshot, ends trading and performs the existing operational settlement once. A later bank review never deposits or zeros wallets a second time.
 
@@ -141,4 +142,4 @@ The **Daily control** result is distinct from session certification. Even a dail
 - Import, baseline audit, and range validation: `EastSeat.Agenti.Web/Features/BankStatements/BankStatementService.cs`
 - Daily control and date-only cutoff guard: `EastSeat.Agenti.Web/Features/BankReconciliation/BankReconciliationService.Evaluation.cs`
 - Matching, classifications and flags: `EastSeat.Agenti.Web/Features/BankReconciliation/`
-- Web workspaces: `EastSeat.Agenti.Web/Components/Pages/BankStatements.razor`, `BankReconciliation.razor`
+- Web workspaces: `EastSeat.Agenti.Web/Components/Pages/BankAccounts.razor`, `BankStatements.razor`, `BankReconciliation.razor`
