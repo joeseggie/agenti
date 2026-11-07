@@ -168,7 +168,7 @@ public sealed partial class BankReconciliationService(
             .ToListAsync(cancellationToken);
         var coverage = await db.BankStatementImports.AsNoTracking().Include(i => i.Rows)
             .Where(i => i.BankAccountId == account.Id && i.Status == StatementImportStatus.Committed &&
-                i.CoverageFromDate <= to && i.CoverageToDate >= from)
+                i.CoverageFromDate <= to)
             .ToListAsync(cancellationToken);
         await ValidateCurrentCoverageAsync(account.Id, coverage, cancellationToken);
         return new ReviewFacts(account, sessions, counts, snapshots, bridges, banks, legs, matches, customers, exceptions, corrections, coverage);

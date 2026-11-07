@@ -29,6 +29,54 @@ public class UniversalBankCsvStatementProfileTests
     }
 
     [Fact]
+    public async Task Parse_PreservesSelectedDatesAndConfirmedBalanceBasisAcrossTimeZones()
+    {
+        var parsed = await ParseAsync(
+            "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+            "2026-11-01,,REF-1,Deposit,,10.00,110.00",
+            "America/New_York", null, BankBalanceBasis.Available);
+
+        Assert.Equal(BankBalanceBasis.Available, parsed.BalanceBasis);
+        Assert.Equal(From, parsed.Entries.Single().ValueDate);
+        Assert.Equal(From, DateOnly.FromDateTime(parsed.CoverageFrom.ToOffset(TimeSpan.FromHours(-4)).DateTime));
+        Assert.Equal(To.AddDays(1), DateOnly.FromDateTime(parsed.CoverageTo.ToOffset(TimeSpan.FromHours(-5)).DateTime));
+    }
+
+    [Fact]
+    public async Task Parse_AllowsUntimedRowsAfterTimedRowsWhenDatesAreOrdered()
+    {
+        var parsed = await ParseAsync(
+            "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+            "2026-11-01,09:15:00,REF-1,Deposit,,10.00,110.00\n" +
+            "2026-11-01,,REF-2,Fee,1.00,,109.00",
+            "Africa/Kampala", null);
+
+        Assert.Equal(2, parsed.Entries.Count);
+        Assert.True(parsed.Entries[0].HasPreciseTimestamp);
+        Assert.False(parsed.Entries[1].HasPreciseTimestamp);
+    }
+
+    [Fact]
+    public async Task Parse_PreservesCrLfAndEscapedQuotesAcrossFormerBufferBoundaries()
+    {
+        const string header = "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\r\n";
+        const string rowPrefix = "2026-11-01,,REF,\"";
+        const string rowSuffix = "\",,1.00,11.00";
+        var quotePrefix = header + rowPrefix + new string('x', 4095 - header.Length - rowPrefix.Length);
+        var escapedQuoteCsv = quotePrefix + "\"\"x" + rowSuffix;
+        const string crLfRowPrefix = "2026-11-01,,REF,\"";
+        var crLfRow = "2026-11-01,,REF,\"" +
+            new string('x', 4095 - header.Length - crLfRowPrefix.Length - rowSuffix.Length) + rowSuffix;
+        var crLfCsv = header + crLfRow + "\r\n";
+
+        var escaped = await ParseAsync(escapedQuoteCsv, "Africa/Kampala", null);
+        var splitCrLf = await ParseAsync(crLfCsv, "Africa/Kampala", null);
+
+        Assert.EndsWith("x\"x", escaped.Entries.Single().Narration);
+        Assert.Single(splitCrLf.Entries);
+    }
+
+    [Fact]
     public async Task Parse_QuotedThousandsAmountsNeedValidCsvQuotingAndKeepRowsChained()
     {
         var csv =
@@ -117,11 +165,12 @@ public class UniversalBankCsvStatementProfileTests
         Assert.Contains("local date/time is invalid or ambiguous", error.Message);
     }
 
-    private static Task<ParsedStatement> ParseAsync(string csv, string zone, decimal? baseline)
+    private static Task<ParsedStatement> ParseAsync(
+        string csv, string zone, decimal? baseline, BankBalanceBasis basis = BankBalanceBasis.Ledger)
     {
         var profile = new UniversalBankCsvStatementProfile();
         var account = new StatementAccountContext(
-            "001234567890", "UGX", zone, BankBalanceBasis.Ledger, From, To, baseline);
+            "001234567890", "UGX", zone, basis, From, To, baseline);
         var source = new MemoryStream(Encoding.UTF8.GetBytes(csv));
         return profile.ParseAsync(source, UniversalBankCsvStatementProfile.CsvContentType, account, CancellationToken.None);
     }

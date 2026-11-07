@@ -78,8 +78,14 @@
                 <Authorized Context="bankReviewCtx">
                     <MudNavGroup Title="Bank Reconciliation" Icon="@Icons.Material.Filled.AccountBalance">
                         <MudNavLink Href="bank-statements">Statements and Accounts</MudNavLink>
-                        <MudNavLink Href="bank-reconciliation">Reconciliation Reviews</MudNavLink>
                     </MudNavGroup>
+                </Authorized>
+            </AuthorizeView>
+            <AuthorizeView Policy="BankReconciliationReview">
+                <Authorized Context="bankReconciliationReviewCtx">
+                    <MudNavLink Href="bank-reconciliation" Icon="@Icons.Material.Filled.AccountBalance">
+                        Reconciliation Reviews
+                    </MudNavLink>
                 </Authorized>
             </AuthorizeView>
             <MudNavLink Href="notifications" Icon="@Icons.Material.Filled.Notifications">

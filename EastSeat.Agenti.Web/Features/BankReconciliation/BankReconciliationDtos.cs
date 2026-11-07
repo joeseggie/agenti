@@ -50,7 +50,7 @@ public enum DailyBankControlStatus
 public sealed record DailyBankControlDto(
     DateOnly Date, DailyBankControlStatus Status, decimal? OpeningBalance, decimal? ClosingBalance,
     decimal StatementMovements, decimal RegisterMovements, decimal ClassifiedBankOnlyMovements,
-    decimal Difference, int UnaccountedBankEntries, string Note);
+    decimal Difference, int UnaccountedBankEntries, int UnaccountedRegisterEntries, string Note);
 
 public sealed record BankReviewFlagDto(
     long Id, string RaisedByUserId, DateTimeOffset RaisedAt, string Reason,

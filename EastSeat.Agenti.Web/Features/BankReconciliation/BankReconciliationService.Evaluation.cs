@@ -72,43 +72,103 @@ public sealed partial class BankReconciliationService
     private List<DailyBankControlDto> BuildDailyControls(BankReconciliationReview review, ReviewFacts facts)
     {
         var controls = new List<DailyBankControlDto>();
+        var sourceRows = facts.Coverage.ToDictionary(i => i.Id, i => StatementValidation.EffectiveRows(i.Rows));
+        var chainValidity = new Dictionary<long, bool>();
+        var closingBalances = new Dictionary<DateOnly, decimal?>();
+
+        BankStatementImport? LatestCoverage(DateOnly date) => facts.Coverage
+            .Where(i => i.CoverageFromDate <= date && i.CoverageToDate >= date)
+            .OrderByDescending(i => i.CommittedAt ?? i.CreatedAt).ThenByDescending(i => i.Id).FirstOrDefault();
+
+        bool IsChainValid(BankStatementImport source)
+        {
+            if (chainValidity.TryGetValue(source.Id, out var valid))
+                return valid;
+            if (source.CoverageVerified != true || !source.CoverageFromDate.HasValue ||
+                !source.CoverageToDate.HasValue || !source.OpeningBalance.HasValue)
+                return chainValidity[source.Id] = false;
+
+            var start = source.CoverageFromDate.Value;
+            if (start == DateOnly.MinValue)
+                return chainValidity[source.Id] = true;
+            var previousDate = start.AddDays(-1);
+            var predecessor = LatestCoverage(previousDate);
+            if (predecessor == null)
+                return chainValidity[source.Id] =
+                    !facts.Coverage.Any(i => i.CoverageToDate < start);
+
+            var priorClosing = ClosingAt(previousDate);
+            var sourceOpening = BalanceBefore(source, sourceRows[source.Id], start);
+            return chainValidity[source.Id] =
+                priorClosing.HasValue && sourceOpening.HasValue && priorClosing.Value == sourceOpening.Value;
+        }
+
+        decimal? ClosingAt(DateOnly date)
+        {
+            if (closingBalances.TryGetValue(date, out var cached))
+                return cached;
+            var source = LatestCoverage(date);
+            if (source == null || !IsChainValid(source))
+                return closingBalances[date] = null;
+            var rows = sourceRows[source.Id];
+            var opening = BalanceBefore(source, rows, date);
+            if (!opening.HasValue)
+                return closingBalances[date] = null;
+            var dayRows = rows.Where(r => r.LedgerDate == date).OrderBy(r => r.Sequence).ToList();
+            return closingBalances[date] = dayRows.Count > 0 ? dayRows[^1].RunningBalance : opening;
+        }
+
         for (var date = review.FromDate; date <= review.ToDate; date = date.AddDays(1))
         {
-            var import = facts.Coverage.Where(i => i.CoverageFromDate <= date && i.CoverageToDate >= date)
-                .OrderByDescending(i => i.CommittedAt ?? i.CreatedAt).ThenByDescending(i => i.Id).FirstOrDefault();
+            var import = LatestCoverage(date);
             if (import?.CoverageVerified != true)
             {
-                controls.Add(new(date, DailyBankControlStatus.MissingCoverage, null, null, 0, 0, 0, 0, 0,
+                controls.Add(new(date, DailyBankControlStatus.MissingCoverage, null, null, 0, 0, 0, 0, 0, 0,
                     "A committed, verified statement period is required for this date."));
                 continue;
             }
 
-            var rows = StatementValidation.EffectiveRows(import.Rows);
+            var rows = sourceRows[import.Id];
             var dayRows = rows.Where(r => r.LedgerDate == date).OrderBy(r => r.Sequence).ToList();
-            var opening = BalanceBefore(import, rows, date);
-            var closing = dayRows.Count > 0 ? dayRows[^1].RunningBalance : opening;
+            var opening = IsChainValid(import) ? BalanceBefore(import, rows, date) : null;
+            var closing = opening.HasValue ? dayRows.Count > 0 ? dayRows[^1].RunningBalance : opening : null;
             var bankEntries = facts.Banks.Where(b => b.AcceptedRow!.LedgerDate == date &&
                 b.AcceptedRow.SignedAmount != 0).ToList();
             var statementMovements = bankEntries.Sum(b => b.AcceptedRow!.SignedAmount);
-            var registerMovements = facts.Legs.Where(l => l.Kind != BankLegKind.ExpectedSettlement &&
-                clock.GetBusinessDate(l.OccurredAt) == date).Sum(l => l.SignedAmount);
+            var dayLegs = facts.Legs.Where(l => l.Kind != BankLegKind.ExpectedSettlement &&
+                clock.GetBusinessDate(l.OccurredAt) == date).ToList();
+            var validMatches = facts.Matches.Where(m => m.IsActive)
+                .Select(m => new
+                {
+                    Match = m,
+                    Bank = facts.Banks.SingleOrDefault(b => b.Id == m.BankTransactionId),
+                    Leg = facts.Legs.SingleOrDefault(l => Key(l) == Key(m))
+                })
+                .Where(x => x.Bank != null && x.Leg != null && ValidFinancialMatch(x.Bank, x.Leg))
+                .ToList();
+            var matchedBankIds = validMatches.Select(x => x.Bank!.Id).ToHashSet();
+            var matchedLegKeys = validMatches.Select(x => Key(x.Leg!)).ToHashSet();
+            var registerMovements = dayLegs.Where(l => !matchedLegKeys.Contains(Key(l))).Sum(l => l.SignedAmount) +
+                bankEntries.Where(b => matchedBankIds.Contains(b.Id)).Sum(b => b.AcceptedRow!.SignedAmount);
             var classifiedMovements = bankEntries.Where(b =>
                     b.Classification is not (BankTransactionClassification.Unclassified or BankTransactionClassification.Unknown) &&
-                    !facts.Matches.Any(m => m.BankTransactionId == b.Id && m.IsActive))
+                    !matchedBankIds.Contains(b.Id))
                 .Sum(b => b.AcceptedRow!.SignedAmount);
             var unaccounted = bankEntries.Count(b => !BankAccountedFor(b, facts));
+            var unaccountedRegister = dayLegs.Count(l => !RegisterLegAccountedFor(l, facts));
             var difference = statementMovements - registerMovements - classifiedMovements;
             var hasOutstandingException = facts.Exceptions.Any(e =>
                 e.CashSessionId != 0 && !e.IsResolved &&
                 facts.Sessions.Any(s => s.Id == e.CashSessionId && s.SessionDate == date));
-            var status = !opening.HasValue || !closing.HasValue || unaccounted > 0 || difference != 0
+            var status = !opening.HasValue || !closing.HasValue || unaccounted > 0 ||
+                unaccountedRegister > 0 || difference != 0
                 ? DailyBankControlStatus.NeedsReview
                 : hasOutstandingException ? DailyBankControlStatus.WithExceptions : DailyBankControlStatus.Reconciled;
             var note = dayRows.Any(r => !r.HasPreciseTimestamp)
                 ? "Daily transaction-date control only; this does not certify balances at an intraday session cutoff."
                 : "Daily movement control; session cutoff certification is evaluated separately.";
             controls.Add(new(date, status, opening, closing, statementMovements, registerMovements,
-                classifiedMovements, difference, unaccounted, note));
+                classifiedMovements, difference, unaccounted, unaccountedRegister, note));
         }
         return controls;
     }
@@ -441,6 +501,12 @@ public sealed partial class BankReconciliationService
             facts.Legs.Any(l => Key(l) == Key(m) && ValidFinancialMatch(bank, l))) ||
         facts.Exceptions.Any(e => e.BankTransactionId == bank.Id && e.Kind == BankExceptionKind.BankFailure &&
             e.BankExplanationVerified && e.Amount == Math.Abs(bank.AcceptedRow.SignedAmount));
+
+    private static bool RegisterLegAccountedFor(BankLegDto leg, ReviewFacts facts) =>
+        facts.Matches.Any(m => m.IsActive && Key(m) == Key(leg) &&
+            facts.Banks.Any(b => b.Id == m.BankTransactionId && ValidFinancialMatch(b, leg))) ||
+        facts.Exceptions.Any(e => e.BankExplanationVerified && e.Kind != BankExceptionKind.UnexplainedMovement &&
+            e.Amount >= Math.Abs(leg.SignedAmount) && RefersTo(e, leg));
 
     private static bool RefersTo(BankReconciliationException exception, BankLegDto leg) => leg.Kind switch
     {

@@ -199,7 +199,7 @@
 
     protected override Task OnInitializedAsync()
     {
-        _fromDate = _toDate = Clock.Today.ToDateTime(TimeOnly.MinValue);
+        _fromDate = _toDate = Clock.Today.AddDays(-1).ToDateTime(TimeOnly.MinValue);
         return LoadAsync();
     }
 
@@ -249,13 +249,19 @@
         var import = await Statements.StartAsync(UserId, _accountId, file.Id,
             new StatementImportRequest(DateOnly.FromDateTime(_fromDate.Value), DateOnly.FromDateTime(_toDate.Value),
                 _openingBaseline, _openingBaselineReason));
+        _openingBaseline = null;
+        _openingBaselineReason = null;
         _imports = await Statements.GetImportsAsync(UserId, _accountId);
         SetPreview(await Statements.GetPreviewAsync(UserId, import.Id));
     });
     private Task PreviewAsync(long id) => RunAsync(async () => SetPreview(await Statements.GetPreviewAsync(UserId, id)));
     private Task ReprocessAsync(BankStatementImportDto import) => RunAsync(async () =>
     {
-        var revision = await Statements.StartAsync(UserId, import.BankAccountId, import.EvidenceFileId, true);
+        var revision = import.RequestedFromDate.HasValue && import.RequestedToDate.HasValue
+            ? await Statements.StartAsync(UserId, import.BankAccountId, import.EvidenceFileId,
+                new StatementImportRequest(import.RequestedFromDate.Value, import.RequestedToDate.Value,
+                    import.OpeningBaselineReason == null ? null : import.OpeningBaseline, import.OpeningBaselineReason), true)
+            : await Statements.StartAsync(UserId, import.BankAccountId, import.EvidenceFileId, true);
         _imports = await Statements.GetImportsAsync(UserId, _accountId);
         SetPreview(await Statements.GetPreviewAsync(UserId, revision.Id));
     });

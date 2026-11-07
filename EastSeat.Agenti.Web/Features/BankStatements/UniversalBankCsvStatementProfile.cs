@@ -46,7 +46,8 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
         }
 
         using var reader = new StreamReader(source, new UTF8Encoding(false, true), detectEncodingFromByteOrderMarks: true, leaveOpen: true);
-        var records = await CsvRecords.ReadAsync(reader, cancellationToken);
+        var text = await reader.ReadToEndAsync(cancellationToken);
+        var records = CsvRecords.Read(text);
         if (records.Count == 0)
             throw new StatementParsingException("The CSV is empty. The first row must contain the exact Agenti template headers.");
 
@@ -59,7 +60,8 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
         }
 
         var entries = new List<ParsedStatementEntry>();
-        var priorAt = DateTimeOffset.MinValue;
+        DateOnly? priorDate = null;
+        DateTimeOffset? priorPreciseAt = null;
         decimal? opening = null;
         decimal? priorBalance = null;
         for (var index = 1; index < records.Count; index++)
@@ -124,13 +126,16 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
                 errors.Add($"Row {rowNumber}, TransactionTime: the local date/time is invalid or ambiguous in {account.TimeZoneId}.");
                 continue;
             }
-            if (occurredAt < priorAt)
+            if (priorDate.HasValue && date < priorDate.Value ||
+                hasPreciseTime && priorPreciseAt.HasValue && occurredAt < priorPreciseAt.Value)
             {
                 errors.Add($"Row {rowNumber}: transactions must be ordered by date and time.");
                 continue;
             }
 
-            priorAt = occurredAt;
+            priorDate = date;
+            if (hasPreciseTime)
+                priorPreciseAt = occurredAt;
             opening ??= runningBalance - signedAmount;
             if (priorBalance.HasValue && priorBalance.Value + signedAmount != runningBalance)
                 errors.Add($"Row {rowNumber}, RunningBalance: does not equal the prior balance plus this movement.");
@@ -227,7 +232,7 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
 
     private static class CsvRecords
     {
-        public static async Task<List<CsvRecord>> ReadAsync(TextReader reader, CancellationToken cancellationToken)
+        public static List<CsvRecord> Read(string text)
         {
             var result = new List<CsvRecord>();
             var fields = new List<string>();
@@ -237,64 +242,59 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
             var sawAny = false;
             var line = 1;
             var rowStart = 1;
-            var buffer = new char[4096];
-            int read;
-            while ((read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken)) > 0)
+            for (var i = 0; i < text.Length; i++)
             {
-                for (var i = 0; i < read; i++)
+                var c = text[i];
+                sawAny = true;
+                if (quoted)
                 {
-                    var c = buffer[i];
-                    sawAny = true;
-                    if (quoted)
+                    if (c == '"')
                     {
-                        if (c == '"')
+                        if (i + 1 < text.Length && text[i + 1] == '"')
                         {
-                            if (i + 1 < read && buffer[i + 1] == '"')
-                            {
-                                field.Append('"');
-                                i++;
-                            }
-                            else
-                            {
-                                quoted = false;
-                                afterQuote = true;
-                            }
+                            field.Append('"');
+                            i++;
                         }
                         else
                         {
-                            field.Append(c);
-                            if (c == '\n') line++;
+                            quoted = false;
+                            afterQuote = true;
                         }
-                        continue;
                     }
-                    if (afterQuote && c is not ',' and not '\r' and not '\n')
-                        throw new StatementParsingException($"Row {rowStart}: unexpected character after a quoted CSV field.");
-                    if (c == '"' && field.Length == 0 && !afterQuote)
+                    else
                     {
-                        quoted = true;
-                        continue;
+                        field.Append(c);
+                        if (c == '\n') line++;
                     }
-                    if (c == ',')
-                    {
-                        fields.Add(field.ToString());
-                        field.Clear();
-                        afterQuote = false;
-                        continue;
-                    }
-                    if (c is '\r' or '\n')
-                    {
-                        if (c == '\r' && i + 1 < read && buffer[i + 1] == '\n') i++;
-                        fields.Add(field.ToString());
-                        field.Clear();
-                        result.Add(new CsvRecord(fields));
-                        fields = [];
-                        afterQuote = false;
-                        line++;
-                        rowStart = line;
-                        continue;
-                    }
-                    field.Append(c);
+                    continue;
                 }
+                if (afterQuote && c is not ',' and not '\r' and not '\n')
+                    throw new StatementParsingException($"Row {rowStart}: unexpected character after a quoted CSV field.");
+                if (c == '"' && field.Length == 0 && !afterQuote)
+                {
+                    quoted = true;
+                    continue;
+                }
+                if (c == ',')
+                {
+                    fields.Add(field.ToString());
+                    field.Clear();
+                    afterQuote = false;
+                    continue;
+                }
+                if (c is '\r' or '\n')
+                {
+                    if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
+                    fields.Add(field.ToString());
+                    field.Clear();
+                    result.Add(new CsvRecord(fields));
+                    fields = [];
+                    afterQuote = false;
+                    line++;
+                    rowStart = line;
+                    continue;
+                }
+                field.Append(c);
             }
             if (quoted)
                 throw new StatementParsingException($"Row {rowStart}: a quoted CSV field is not closed.");

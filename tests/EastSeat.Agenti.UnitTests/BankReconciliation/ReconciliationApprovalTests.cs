@@ -96,6 +96,82 @@ public class ReconciliationApprovalTests
     }
 
     [Fact]
+    public async Task DailyControl_OffsettingUnmatchedRegisterLegsDoNotReconcileAnEmptyStatement()
+    {
+        using var fixture = new BankingTestContext();
+        var (customer, reconciliation, time, _) = Services(fixture);
+        SessionBalanceTests.AddOpening(fixture);
+        await customer.CaptureAsync(fixture.User.Id, Deposit(fixture));
+        var withdrawal = Deposit(fixture);
+        withdrawal.Kind = CustomerTransactionKind.Withdrawal;
+        withdrawal.BankReference = "WITHDRAWAL-50";
+        await customer.CaptureAsync(fixture.User.Id, withdrawal);
+        time.Now = BankingTestContext.Now.AddDays(1);
+        await ImportAsync(fixture, time, [], 1_000_000m);
+
+        var review = await reconciliation.CreateAsync(fixture.Admin.Id, fixture.Account.Id,
+            fixture.Session.SessionDate, fixture.Session.SessionDate);
+        var daily = review.DailyControls.Single();
+
+        Assert.Equal(0m, daily.RegisterMovements);
+        Assert.Equal(0m, daily.Difference);
+        Assert.Equal(2, daily.UnaccountedRegisterEntries);
+        Assert.Equal(DailyBankControlStatus.NeedsReview, daily.Status);
+    }
+
+    [Fact]
+    public async Task DailyControl_MatchedPostingOnNextDateBalancesOnItsBankLedgerDate()
+    {
+        using var fixture = new BankingTestContext();
+        var (customer, reconciliation, time, _) = Services(fixture);
+        SessionBalanceTests.AddOpening(fixture);
+        var movement = await customer.CaptureAsync(fixture.User.Id, Deposit(fixture));
+        time.Now = BankingTestContext.Now.AddDays(3);
+        var nextDay = new DateOnly(2026, 11, 3);
+        await ImportAsync(fixture, time,
+            [Row("RECEIPT-50", -50_000m, 950_000m, 0, nextDay,
+                new DateTimeOffset(2026, 11, 3, 9, 0, 0, TimeSpan.FromHours(3)))],
+            950_000m, coverageFrom: fixture.Session.SessionDate, coverageTo: nextDay);
+
+        var review = await reconciliation.CreateAsync(fixture.Admin.Id, fixture.Account.Id,
+            fixture.Session.SessionDate, nextDay);
+        review = await reconciliation.AutoMatchAsync(fixture.Admin.Id, review.Id, review.Version);
+
+        Assert.Single(review.Matches);
+        Assert.All(review.DailyControls, day => Assert.Equal(DailyBankControlStatus.Reconciled, day.Status));
+        Assert.Equal(0m, review.DailyControls[0].RegisterMovements);
+        Assert.Equal(-50_000m, review.DailyControls[1].RegisterMovements);
+        Assert.Equal(0m, review.DailyControls[1].Difference);
+    }
+
+    [Fact]
+    public async Task DailyControl_CorrectedPriorCoverageInvalidatesAReviewedLaterOpeningChain()
+    {
+        using var fixture = new BankingTestContext();
+        var (_, reconciliation, time, _) = Services(fixture);
+        time.Now = BankingTestContext.Now.AddDays(3);
+        var firstDate = new DateOnly(2026, 11, 1);
+        var secondDate = fixture.Session.SessionDate;
+        await ImportAsync(fixture, time,
+            [Row("FIRST-DAY", -100m, 900m, 0, firstDate,
+                new DateTimeOffset(2026, 11, 1, 9, 0, 0, TimeSpan.FromHours(3)))],
+            900m, coverageFrom: firstDate, coverageTo: firstDate, opening: 1_000m);
+        await ImportAsync(fixture, time, [], 900m,
+            coverageFrom: secondDate, coverageTo: secondDate, opening: 900m);
+
+        await ImportAsync(fixture, time,
+            [Row("FIRST-DAY", -200m, 800m, 0, firstDate,
+                new DateTimeOffset(2026, 11, 1, 9, 0, 0, TimeSpan.FromHours(3)))],
+            800m, acceptRevisions: true, coverageFrom: firstDate, coverageTo: firstDate, opening: 1_000m);
+
+        var review = await reconciliation.CreateAsync(fixture.Admin.Id, fixture.Account.Id, secondDate, secondDate);
+
+        Assert.Equal(DailyBankControlStatus.NeedsReview, review.DailyControls.Single().Status);
+        Assert.Null(review.DailyControls.Single().OpeningBalance);
+        Assert.Null(review.DailyControls.Single().ClosingBalance);
+    }
+
+    [Fact]
     public async Task Approval_UsesMatchedEvidenceWithoutChangingCurrentBalances()
     {
         using var fixture = new BankingTestContext();
@@ -412,9 +488,10 @@ public class ReconciliationApprovalTests
 
     private static async Task<BankStatementImportDto> ImportAsync(
         BankingTestContext fixture, TestTimeProvider time, IReadOnlyList<ParsedStatementEntry> rows, decimal closing,
-        bool acceptRevisions = false)
+        bool acceptRevisions = false, DateOnly? coverageFrom = null, DateOnly? coverageTo = null, decimal opening = 1_000_000m)
     {
-        var profile = new TestProfile(rows, closing);
+        var profile = new TestProfile(rows, opening, closing,
+            coverageFrom ?? new DateOnly(2026, 11, 2), coverageTo ?? new DateOnly(2026, 11, 2));
         var account = await fixture.Db.BankAccounts.FindAsync(fixture.Account.Id);
         account!.ImportProfileKey = profile.Key;
         account.ImportProfileVerified = true;
@@ -439,9 +516,10 @@ public class ReconciliationApprovalTests
         });
     }
 
-    private static ParsedStatementEntry Row(string id, decimal amount, decimal balance, int minutes) => new(
+    private static ParsedStatementEntry Row(
+        string id, decimal amount, decimal balance, int minutes, DateOnly? valueDate = null, DateTimeOffset? occurredAt = null) => new(
         "synthetic line", "synthetic bank fields", id, id, "SYNTHETIC-CUSTOMER", "synthetic bank posting",
-        "UGX", amount, balance, BankingTestContext.Now.AddMinutes(minutes), null, null, true);
+        "UGX", amount, balance, occurredAt ?? BankingTestContext.Now.AddMinutes(minutes), null, valueDate, true);
 
     private sealed class TestTimeProvider : TimeProvider
     {
@@ -449,7 +527,8 @@ public class ReconciliationApprovalTests
         public override DateTimeOffset GetUtcNow() => Now;
     }
 
-    private sealed class TestProfile(IReadOnlyList<ParsedStatementEntry> rows, decimal closing) : IStatementImportProfile
+    private sealed class TestProfile(
+        IReadOnlyList<ParsedStatementEntry> rows, decimal opening, decimal closing, DateOnly from, DateOnly to) : IStatementImportProfile
     {
         public string Key => "synthetic-reconciliation-v1";
         public string BankIdentifier => "synthetic-bank";
@@ -460,9 +539,9 @@ public class ReconciliationApprovalTests
         public IReadOnlyList<string> SupportedContentTypes => ["text/csv"];
         public Task<ParsedStatement> ParseAsync(Stream source, string contentType, StatementAccountContext account, CancellationToken cancellationToken) =>
             Task.FromResult(new ParsedStatement("SYNTHETIC-ACCOUNT", "UGX", BankBalanceBasis.Ledger,
-                new DateTimeOffset(2026, 11, 2, 0, 0, 0, TimeSpan.FromHours(3)),
-                new DateTimeOffset(2026, 11, 3, 0, 0, 0, TimeSpan.FromHours(3)),
-                1_000_000m, closing, true, rows));
+                new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.FromHours(3)),
+                new DateTimeOffset(to.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.FromHours(3)),
+                opening, closing, true, rows));
         public string? GetReliableIdentity(ParsedStatementEntry entry) => entry.TransactionNumber;
     }
 }

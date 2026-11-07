@@ -6,8 +6,5 @@ public sealed record CreateBankReviewRequest(long BankAccountId, DateOnly FromDa
 public sealed record ApproveBankClosingRequest(long CashSessionId, Guid CommandId, int ExpectedVersion, string BasisHash);
 public sealed record ResolveBankExceptionRequest(long EvidenceBankTransactionId, int ExpectedVersion, string Reason);
 public sealed record ResubmitBankCorrectionsRequest(int ExpectedVersion);
-public sealed record StartBankImportRequest(
-    long BankAccountId, long EvidenceFileId, DateOnly? FromDate = null, DateOnly? ToDate = null,
-    decimal? OpeningBaseline = null, bool Reprocess = false);
 public sealed record BankWorkflowRequest(bool Enabled, int ExpectedVersion);
 public sealed record BankingCapabilitiesDto(int ContractVersion, long MaximumEvidenceBytes, string BusinessTimeZone);

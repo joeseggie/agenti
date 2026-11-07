@@ -138,7 +138,8 @@ public sealed class BankAccountService(
                 var profile = profiles.Find(account.ImportProfileKey) ??
                               profiles.Find(UniversalBankCsvStatementProfile.ProfileKey);
                 if (!scope.IsActive || profile?.IsVerified != true ||
-                    account.BalanceBasis == BankBalanceBasis.Unverified || profile.BalanceBasis != account.BalanceBasis)
+                    account.BalanceBasis == BankBalanceBasis.Unverified ||
+                    (profile.Key != UniversalBankCsvStatementProfile.ProfileKey && profile.BalanceBasis != account.BalanceBasis))
                     throw new BankingRuleException("Enrollment requires the universal Agenti CSV parser and a confirmed matching balance basis.");
                 if (await db.Agents.CountAsync(a => a.BranchId == scope.BranchId && a.IsActive, cancellationToken) != 1 ||
                     await db.BankAccounts.AnyAsync(a => a.BranchId == scope.BranchId && a.WorkflowEnabled && a.Id != accountId, cancellationToken))
@@ -155,6 +156,8 @@ public sealed class BankAccountService(
                     .Select(w => w.Currency).Distinct().ToListAsync(cancellationToken);
                 if (currencies.Count != 1 || currencies[0] != account.Currency)
                     throw new BankingRuleException("The enrolled agent's wallets must use the bank account currency.");
+                account.ImportProfileKey = profile.Key;
+                account.ImportProfileVerified = profile.IsVerified;
             }
             account.WorkflowEnabled = enabled;
             account.Version++;
@@ -175,7 +178,8 @@ public sealed class BankAccountService(
         var profile = profiles.Find(key) ?? profiles.Find(UniversalBankCsvStatementProfile.ProfileKey);
         if (profile == null)
             throw new BankingRuleException("The universal Agenti CSV statement parser is not installed.");
-        if (basis != BankBalanceBasis.Unverified && profile.BalanceBasis != basis)
+        if (profile.Key != UniversalBankCsvStatementProfile.ProfileKey &&
+            basis != BankBalanceBasis.Unverified && profile.BalanceBasis != basis)
             throw new BankingRuleException("The statement profile and the entered bank balance use different bases.");
         return profile;
     }

@@ -58,13 +58,13 @@
             <MudText Typo="Typo.h5">Daily transaction-date controls</MudText>
             <MudText Typo="Typo.body2">These results are account-level controls and do not certify whether a posting occurred before or after a session closed. Missing bank times are never inferred.</MudText>
             <MudTable T="DailyBankControlDto" Items="_review.DailyControls" Dense="true" Hover="true" Class="my-2">
-                <HeaderContent><MudTh>Date</MudTh><MudTh>Status</MudTh><MudTh>Opening</MudTh><MudTh>Statement movement</MudTh><MudTh>Register movement</MudTh><MudTh>Bank-only</MudTh><MudTh>Difference</MudTh><MudTh>Unaccounted</MudTh></HeaderContent>
+                <HeaderContent><MudTh>Date</MudTh><MudTh>Status</MudTh><MudTh>Opening</MudTh><MudTh>Statement movement</MudTh><MudTh>Register movement</MudTh><MudTh>Bank-only</MudTh><MudTh>Difference</MudTh><MudTh>Unaccounted bank / register</MudTh></HeaderContent>
                 <RowTemplate Context="day">
                     <MudTd>@day.Date</MudTd><MudTd>@day.Status</MudTd>
                     <MudTd>@(day.OpeningBalance?.ToString("N2") ?? "-")</MudTd>
                     <MudTd>@day.StatementMovements.ToString("N2")</MudTd><MudTd>@day.RegisterMovements.ToString("N2")</MudTd>
                     <MudTd>@day.ClassifiedBankOnlyMovements.ToString("N2")</MudTd><MudTd>@day.Difference.ToString("N2")</MudTd>
-                    <MudTd>@day.UnaccountedBankEntries</MudTd>
+                    <MudTd>@day.UnaccountedBankEntries / @day.UnaccountedRegisterEntries</MudTd>
                 </RowTemplate>
             </MudTable>
             @foreach (var day in _review.DailyControls.Where(d => d.Status != DailyBankControlStatus.Reconciled))
