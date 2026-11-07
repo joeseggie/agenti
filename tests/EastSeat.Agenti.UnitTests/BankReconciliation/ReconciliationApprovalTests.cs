@@ -72,10 +72,36 @@ public class ReconciliationApprovalTests
     }
 
     [Fact]
-    public async Task UnknownClassification_KeepsDailyControlOpen()
+    public async Task OverlappingReview_StillShowsOpenFlagAndBlocksSessionApproval()
     {
         using var fixture = new BankingTestContext();
         var (_, reconciliation, time, _) = Services(fixture);
+        time.Now = BankingTestContext.Now.AddDays(1);
+        await ImportAsync(fixture, time, [], 1_000_000m);
+        var date = fixture.Session.SessionDate;
+        var flagged = await reconciliation.CreateAsync(fixture.Admin.Id, fixture.Account.Id, date, date);
+        var overlapping = await reconciliation.CreateAsync(fixture.Admin.Id, fixture.Account.Id, date, date);
+        var administrator = await fixture.Db.Users.SingleAsync(u => u.Id == fixture.Admin.Id);
+        administrator.Role = UserRole.Supervisor;
+        await fixture.Db.SaveChangesAsync();
+
+        flagged = await reconciliation.FlagAsync(fixture.Admin.Id, flagged.Id, flagged.Version,
+            "The transaction-date control needs a second-person review.");
+        overlapping = await reconciliation.GetAsync(fixture.Admin.Id, overlapping.Id);
+
+        Assert.Contains(overlapping.Flags, flag => flag.IsOpen);
+        Assert.Equal(BankReconciliationStatus.NeedsReview, overlapping.DailyControlStatus);
+        Assert.Contains(overlapping.Sessions.Single().BlockingReasons,
+            reason => reason.Contains("unresolved supervisor flag", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task UnknownClassification_KeepsDailyControlOpen()
+    {
+        using var fixture = new BankingTestContext();
+        var (_, reconciliation, time, evidence) = Services(fixture);
+        SessionBalanceTests.AddOpening(fixture);
+        FreezeClosing(fixture, 100_000m, 950_000m);
         time.Now = BankingTestContext.Now.AddDays(1);
         await ImportAsync(fixture, time, [Row("UNKNOWN-BANK-ROW", -10_000m, 990_000m, 0)], 990_000m);
         var review = await reconciliation.CreateAsync(fixture.Admin.Id, fixture.Account.Id,
@@ -90,9 +116,84 @@ public class ReconciliationApprovalTests
             EvidenceFileId = bank.EvidenceFileId,
             Reason = "The bank-only movement has not been identified."
         });
+        var proof = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(),
+            "bank-explanation.pdf", false,
+            new MemoryStream(Encoding.UTF8.GetBytes("%PDF-synthetic bank explanation")));
+        review = await reconciliation.RecordExceptionAsync(fixture.Admin.Id, review.Id, new BankExceptionForm
+        {
+            ExpectedReviewVersion = review.Version, CashSessionId = fixture.Session.Id,
+            Kind = BankExceptionKind.BankFailure, Amount = 10_000m, BankTransactionId = bank.Id,
+            EvidenceFileId = proof.Id, BankExplanationVerified = true,
+            Explanation = "Bank support verified a failure but has not identified the transaction."
+        });
 
         Assert.Equal(DailyBankControlStatus.NeedsReview, review.DailyControls.Single().Status);
         Assert.Equal(1, review.DailyControls.Single().UnaccountedBankEntries);
+        Assert.False(review.Sessions.Single().CanApprove);
+        Assert.Contains(review.Sessions.Single().BlockingReasons,
+            reason => reason.Contains($"Bank occurrence {bank.Id}", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task DailyControl_UnexplainedExceptionRemainsBlocking()
+    {
+        using var fixture = new BankingTestContext();
+        var (_, reconciliation, time, _) = Services(fixture);
+        time.Now = BankingTestContext.Now.AddDays(1);
+        var import = await ImportAsync(fixture, time, [], 1_000_000m);
+        fixture.Db.BankReconciliationExceptions.Add(new BankReconciliationException
+        {
+            BankAccountId = fixture.Account.Id, CashSessionId = fixture.Session.Id,
+            Kind = BankExceptionKind.UnexplainedMovement, Amount = 100m, Explanation = "Movement not explained.",
+            EvidenceFileId = import.EvidenceFileId, RecordedByUserId = fixture.Admin.Id,
+            RecordedAt = time.Now
+        });
+        await fixture.Db.SaveChangesAsync();
+
+        var review = await reconciliation.CreateAsync(fixture.Admin.Id, fixture.Account.Id,
+            fixture.Session.SessionDate, fixture.Session.SessionDate);
+
+        Assert.Equal(DailyBankControlStatus.NeedsReview, review.DailyControls.Single().Status);
+    }
+
+    [Fact]
+    public async Task DateOnlyCutoffGuard_UsesBankAccountTimeZone()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Account.TimeZoneId = "Asia/Tokyo";
+        fixture.Session.SessionDate = new DateOnly(2026, 10, 31);
+        fixture.Session.OpenedAt = new DateTimeOffset(2026, 10, 31, 22, 0, 0, TimeSpan.FromHours(3));
+        fixture.Session.Status = CashSessionStatus.Open;
+        await fixture.Db.SaveChangesAsync();
+        SessionBalanceTests.AddOpening(fixture);
+        FreezeClosing(fixture, 100_000m, 950_000m);
+        var (_, reconciliation, time, _) = Services(fixture);
+        time.Now = BankingTestContext.Now.AddDays(1);
+        var profile = new UniversalBankCsvStatementProfile();
+        fixture.Account.ImportProfileKey = profile.Key;
+        await fixture.Db.SaveChangesAsync();
+        var clock = new BusinessClock(time);
+        var access = new BankingAccessService(fixture.Db, clock);
+        var evidence = new BankEvidenceService(fixture.Db, access, clock, Options.Create(new BankEvidenceOptions()));
+        var file = await evidence.UploadAsync(fixture.Admin.Id, fixture.Account.Id, Guid.NewGuid(), "tokyo.csv", true,
+            new MemoryStream(Encoding.UTF8.GetBytes(
+                "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+                "2026-11-01,,DATE-ONLY,Deposit,50000.00,,950000.00")));
+        var imports = new BankStatementService(fixture.Db, access, clock, new StatementProfileCatalog([profile]),
+            Options.Create(new BankStatementOptions()), NullLogger<BankStatementService>.Instance);
+        var import = await imports.StartAsync(fixture.Admin.Id, fixture.Account.Id, file.Id,
+            new StatementImportRequest(new DateOnly(2026, 10, 31), new DateOnly(2026, 11, 2), 1_000_000m,
+                "Verified opening balance from synthetic bank advice."));
+        Assert.True(await imports.ProcessNextAsync());
+        var preview = await imports.GetPreviewAsync(fixture.Admin.Id, import.Id);
+        await imports.CommitAsync(fixture.Admin.Id, import.Id, new CommitStatementForm { ExpectedVersion = preview.Import.Version });
+
+        var review = await reconciliation.CreateAsync(fixture.Admin.Id, fixture.Account.Id,
+            fixture.Session.SessionDate, fixture.Session.SessionDate);
+
+        Assert.False(review.Sessions.Single().CanApprove);
+        Assert.Contains(review.Sessions.Single().BlockingReasons,
+            reason => reason.Contains("balance cannot be established", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
