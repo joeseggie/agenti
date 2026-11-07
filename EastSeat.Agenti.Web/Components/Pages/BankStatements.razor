@@ -10,70 +10,46 @@
 @inject IBankStatementService Statements
 @inject IBankEvidenceService Evidence
 @inject IBusinessClock Clock
+@inject NavigationManager Nav
 @inject Microsoft.Extensions.Options.IOptions<BankEvidenceOptions> EvidenceOptions
 
 <PageTitle>Bank Statements - Agenti</PageTitle>
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
-    <MudStack Row="true" Justify="Justify.SpaceBetween">
+    <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.SpaceBetween">
         <MudText Typo="Typo.h4">Bank statements</MudText>
         <MudButton Href="/bank-reconciliation">Reconciliation</MudButton>
         <MudButton OnClick="LoadAsync" Disabled="Busy">Refresh</MudButton>
     </MudStack>
     @if (Error != null) { <MudAlert Severity="Severity.Error" Class="my-3">@Error</MudAlert> }
     @if (Busy) { <MudProgressLinear Indeterminate="true" Class="my-3" /> }
-    <MudExpansionPanels Class="my-3">
-        <MudExpansionPanel Text="Register a bank account">
-            @if (_setup != null)
-            {
-                <MudStack Spacing="2">
-                    <MudSelect T="long" Label="Agent bank wallet" @bind-Value="_newAccount.WalletId" Disabled="Busy">
-                        @foreach (var wallet in _setup.Wallets)
-                        {
-                            <MudSelectItem T="long" Value="@wallet.Id">@wallet.AgentName - @wallet.Name (@wallet.Currency)</MudSelectItem>
-                        }
-                    </MudSelect>
-                    <MudTextField T="string" Label="Bank name" @bind-Value="_newAccount.BankName" />
-                    <MudTextField T="string" Label="Account identifier shown on statement" @bind-Value="_newAccount.AccountIdentifier" />
-                    <MudTextField T="string" Label="Statement time zone" @bind-Value="_newAccount.TimeZoneId" />
-                    <MudSelect T="BankBalanceBasis" Label="Confirmed balance basis" @bind-Value="_newAccount.BalanceBasis">
-                        @foreach (var basis in Enum.GetValues<BankBalanceBasis>()) { <MudSelectItem T="BankBalanceBasis" Value="@basis">@basis</MudSelectItem> }
-                    </MudSelect>
-                    <MudButton OnClick="CreateAccountAsync" Disabled="Busy" Color="Color.Primary" Variant="Variant.Filled">Save account binding</MudButton>
-                </MudStack>
-            }
-        </MudExpansionPanel>
-    </MudExpansionPanels>
     @if (Loaded && Error == null && _accounts.Count == 0)
     {
-        <MudAlert Severity="Severity.Info">Register the existing agent bank wallet to begin. This does not move money or change legacy sessions.</MudAlert>
+        <MudAlert Severity="Severity.Info" Class="my-3">
+            Register the existing agent bank wallet on <MudLink Href="/bank-accounts">Bank accounts</MudLink> to begin.
+            This does not move money or change legacy sessions.
+        </MudAlert>
     }
-    <MudSelect T="long" Label="Bank account" Value="_accountId" ValueChanged="SelectAccountAsync" Disabled="Busy">
-        @foreach (var account in _accounts)
-        {
-            <MudSelectItem T="long" Value="@account.Id">@account.BankName - @account.AccountIdentifier</MudSelectItem>
-        }
-    </MudSelect>
+    @if (_accounts.Count > 0)
+    {
+        <MudSelect T="long" Label="Bank account" Value="_accountId" ValueChanged="SelectAccount" Disabled="Busy">
+            @foreach (var account in _accounts)
+            {
+                <MudSelectItem T="long" Value="@account.Id">@account.BankName - @account.AccountIdentifier</MudSelectItem>
+            }
+        </MudSelect>
+    }
     @if (_selected != null)
     {
         <MudPaper Class="pa-4 my-3" Outlined="true">
-            <MudText>@_selected.BankName / @_selected.Currency / @_selected.BalanceBasis</MudText>
-            <MudText>New-session enrollment: @(_selected.WorkflowEnabled ? "Enabled" : "Paused")</MudText>
-            <MudButton OnClick="ToggleWorkflowAsync" Disabled="Busy" Color="Color.Warning">
-                @(_selected.WorkflowEnabled ? "Pause new enrollment" : "Enable new-session workflow")
-            </MudButton>
-            <MudExpansionPanels Class="mt-3">
-                <MudExpansionPanel Text="Account configuration">
-                    <MudTextField T="string" Label="Bank name" @bind-Value="_editAccount.BankName" />
-                    <MudTextField T="string" Label="Account identifier" @bind-Value="_editAccount.AccountIdentifier" />
-                    <MudTextField T="string" Label="Statement time zone" @bind-Value="_editAccount.TimeZoneId" />
-                    <MudSelect T="BankBalanceBasis" Label="Balance basis" @bind-Value="_editAccount.BalanceBasis">
-                        @foreach (var basis in Enum.GetValues<BankBalanceBasis>()) { <MudSelectItem T="BankBalanceBasis" Value="@basis">@basis</MudSelectItem> }
-                    </MudSelect>
-                    <MudButton OnClick="ConfigureAsync" Disabled="Busy">Save configuration</MudButton>
-                </MudExpansionPanel>
-            </MudExpansionPanels>
+            <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                <MudStack Spacing="1">
+                    <MudText>@_selected.BankName / @_selected.Currency / @_selected.BalanceBasis</MudText>
+                    <MudText Typo="Typo.body2">New-session enrollment: @(_selected.WorkflowEnabled ? "Enabled" : "Paused")</MudText>
+                </MudStack>
+                <MudButton Href="@($"/bank-accounts?accountId={_selected.Id}")" Disabled="Busy">Manage account</MudButton>
+            </MudStack>
         </MudPaper>
-        <MudPaper Class="pa-4 my-3" Outlined="true">
+        <MudPaper @key="_accountId" Class="pa-4 my-3" Outlined="true">
             <MudText Typo="Typo.h6">Upload a bank statement CSV</MudText>
             <MudText Typo="Typo.body2">Download the <a href="/templates/agenti-bank-statement-v1.csv" download>blank CSV template</a> and <a href="/templates/agenti-bank-statement-v1-guide.txt" target="_blank">column guide</a>. Convert the bank export outside Agenti, then upload one CSV for the selected date range. The app checks daily balances and movements; date-only rows do not certify exact session cutoff balances.</MudText>
             <MudGrid Class="my-2">
@@ -174,12 +150,10 @@
 </MudContainer>
 
 @code {
+    [SupplyParameterFromQuery(Name = "accountId")] public long? AccountId { get; set; }
     private List<BankAccountDto> _accounts = [];
-    private BankAccountSetupDto? _setup;
     private long _accountId;
     private BankAccountDto? _selected;
-    private BankAccountForm _newAccount = new();
-    private BankAccountForm _editAccount = new();
     private List<BankStatementImportDto> _imports = [];
     private BankStatementPreviewDto? _preview;
     private IBrowserFile? _file;
@@ -200,48 +174,42 @@
         public string Reason { get; set; } = string.Empty;
     }
 
-    protected override Task OnInitializedAsync()
+    protected override void OnInitialized()
     {
         _fromDate = _toDate = Clock.Today.AddDays(-1).ToDateTime(TimeOnly.MinValue);
-        return LoadAsync();
     }
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
 
     private Task LoadAsync() => RunAsync(async () =>
     {
+        _selected = null;
+        _preview = null;
+        _editRowId = null;
+        _decisions.Clear();
         _accounts = await Accounts.GetAccountsAsync(UserId);
-        _setup = await Accounts.GetSetupAsync(UserId);
-        if (_accountId == 0) _accountId = _accounts.FirstOrDefault()?.Id ?? 0;
-        await LoadSelectedAsync();
-    });
-
-    private async Task LoadSelectedAsync()
-    {
-        _selected = _accounts.SingleOrDefault(a => a.Id == _accountId);
-        if (_selected == null) return;
-        _editAccount = new BankAccountForm
+        var accountId = AccountId ?? (_accounts.Any(a => a.Id == _accountId) ? _accountId : _accounts.FirstOrDefault()?.Id ?? 0);
+        if (accountId != _accountId)
         {
-            WalletId = _selected.WalletId, BankName = _selected.BankName, AccountIdentifier = _selected.AccountIdentifier,
-            TimeZoneId = _selected.TimeZoneId, BalanceBasis = _selected.BalanceBasis, ImportProfileKey = _selected.ImportProfileKey
-        };
+            _accountId = accountId;
+            _imports = [];
+            _file = null;
+            _uploadKey = Guid.NewGuid();
+            _openingBaseline = null;
+            _openingBaselineReason = null;
+            _fromDate = _toDate = Clock.Today.AddDays(-1).ToDateTime(TimeOnly.MinValue);
+        }
+        _selected = _accounts.SingleOrDefault(a => a.Id == _accountId);
+        if (_selected == null)
+        {
+            if (AccountId.HasValue || _accountId != 0) throw new UnauthorizedAccessException();
+            return;
+        }
         _imports = await Statements.GetImportsAsync(UserId, _accountId);
-    }
+    }, queueIfBusy: true);
 
-    private Task SelectAccountAsync(long id) => RunAsync(async () => { _accountId = id; _preview = null; await LoadSelectedAsync(); });
-    private async Task CreateAccountAsync()
-    {
-        if (await RunAsync(async () => { _accountId = (await Accounts.CreateAsync(UserId, _newAccount)).Id; _newAccount = new(); }))
-            await LoadAsync();
-    }
-    private async Task ConfigureAsync()
-    {
-        if (await RunAsync(async () => { await Accounts.ConfigureAsync(UserId, _accountId, _editAccount, _selected!.Version); }))
-            await LoadAsync();
-    }
-    private async Task ToggleWorkflowAsync()
-    {
-        if (await RunAsync(async () => { await Accounts.SetWorkflowAsync(UserId, _accountId, !_selected!.WorkflowEnabled, _selected.Version); }))
-            await LoadAsync();
-    }
+    private void SelectAccount(long id) => Nav.NavigateTo(Nav.GetUriWithQueryParameter("accountId", id));
+
     private void SelectFile(InputFileChangeEventArgs args) { _file = args.File; _uploadKey = Guid.NewGuid(); }
     private Task UploadAsync() => RunAsync(async () =>
     {

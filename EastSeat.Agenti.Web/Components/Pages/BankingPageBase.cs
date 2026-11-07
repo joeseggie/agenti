@@ -11,6 +11,7 @@ public abstract class BankingPageBase : ComponentBase
     [Inject] protected AuthenticationStateProvider Authentication { get; set; } = null!;
     [Inject] protected ILogger<BankingPageBase> Log { get; set; } = null!;
     private bool _busy;
+    private Func<Task>? _pendingReload;
     protected string UserId { get; private set; } = string.Empty;
     protected bool IsAdmin { get; private set; }
     // Prerendered markup has no event handlers; keep inputs disabled until the circuit is interactive so typed data is not discarded.
@@ -18,11 +19,37 @@ public abstract class BankingPageBase : ComponentBase
     protected bool Loaded { get; private set; }
     protected string? Error { get; private set; }
 
-    protected async Task<bool> RunAsync(Func<Task> action)
+    protected async Task<bool> RunAsync(Func<Task> action, bool queueIfBusy = false)
     {
         if (_busy)
+        {
+            if (queueIfBusy) _pendingReload = action;
             return false;
+        }
         _busy = true;
+        try
+        {
+            var result = await RunActionAsync(action);
+            var actionError = Error;
+            var lastReloadSucceeded = true;
+            while (_pendingReload != null)
+            {
+                var reload = _pendingReload;
+                _pendingReload = null;
+                lastReloadSucceeded = await RunActionAsync(reload);
+            }
+            if (!result && lastReloadSucceeded)
+                Error = actionError;
+            return result;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task<bool> RunActionAsync(Func<Task> action)
+    {
         Error = null;
         try
         {
@@ -53,10 +80,6 @@ public abstract class BankingPageBase : ComponentBase
         {
             Log.LogError("Banking page {Page} failed with {ExceptionType}.", GetType().Name, exception.GetType().Name);
             Error = "The operation could not be completed. Your form has been retained; refresh its status before retrying.";
-        }
-        finally
-        {
-            _busy = false;
         }
         return false;
     }

@@ -42,7 +42,7 @@ Here, **agent/teller means the human banking operator**, not an AI agent.
 |---|---|---|
 | Agent/teller | Opening and closing observations; customer receipts; actual cash/bank effects; bank runs; adjustment requests; customer-case follow-ups; authorized historical corrections. | Web: Cash Count, Customer Transactions, Bank Runs. Android: Cash Count and Customer banking. |
 | Supervisor | Independently approve/reject opening counts and wallet adjustments; review daily bank controls and raise a reasoned flag for Admin response. | Count/adjustment approvals; Web bank reconciliation read/flag view; Android Cash Count. |
-| Administrator | Account setup, CSV statement intake, reconciliation, matching/classification, exception handling, import revisions, Supervisor responses, and any separate eligible closing certification. | Web: Statements (`/bank-statements`) and Reconciliation (`/bank-reconciliation`). No Android statement-import workflow. |
+| Administrator | Account setup, CSV statement intake, reconciliation, matching/classification, exception handling, import revisions, Supervisor responses, and any separate eligible closing certification. | Web: Bank accounts (`/bank-accounts`), Bank statements (`/bank-statements`) and Reconciliation (`/bank-reconciliation`). No Android statement-import workflow. |
 | Application | Validate permissions and state, calculate expected positions, preserve evidence/history, process imports, enforce review gates and issue in-app notifications. | Automatic responses to user actions and the server-side import processor. |
 | Bank/customer | Supply the actual transaction result, receipt, statement, reversal confirmation or customer settlement evidence. | Outside Agenti; the user records/verifies this evidence in Agenti. |
 | Implementation/release team | Verify real-bank formats, release compatible backend/mobile versions and satisfy deployment gates. | Release prerequisite, not a teller action. |
@@ -53,11 +53,13 @@ An approver cannot approve their own modern opening, review their own modern wal
 
 | ID / actor | User action | Expected inputs | Output / outcome | If requirements are not met |
 |---|---|---|---|---|
-| **A1 - Admin** | Bind the existing Bank wallet to the bank account. | Wallet; bank name; account identifier; timezone; confirmed balance basis. The wallet supplies currency. | One bank account binding per Bank wallet. The universal CSV schema is shipped by Agenti; there is no profile picker. | Inactive/wrong-branch wallets and duplicate bindings are rejected. Identity/timezone/basis cannot be casually rewritten after financial activity. |
-| **A2 - Admin** | Enable new-session workflow if this branch uses the modern session workflow. | Active account and wallets; matching currency/balance basis; finished legacy sessions; initial branch enrollment gates. | New eligible sessions use the modern workflow; existing sessions remain unchanged. | Session/vault safeguards remain. Pausing enrollment never rewrites sessions already created. |
+| **A1 - Admin** | On **Bank accounts**, bind the existing Bank wallet to the bank account. Use **Account configuration** there for settings. | Wallet; bank name; account identifier; timezone; confirmed balance basis. The wallet supplies currency. | One bank account binding per Bank wallet. The universal CSV schema is shipped by Agenti; there is no profile picker. | Inactive/wrong-branch wallets and duplicate bindings are rejected. Identity/timezone/basis cannot be casually rewritten after financial activity. |
+| **A2 - Admin** | On **Bank accounts**, enable new-session workflow if this branch uses the modern session workflow. | Active account and wallets; matching currency/balance basis; finished legacy sessions; initial branch enrollment gates. | New eligible sessions use the modern workflow; existing sessions remain unchanged. | Session/vault safeguards remain. Pausing enrollment never rewrites sessions already created. |
 | **A3 - Admin/Finance** | Verify CSV preparation and first-period baseline if required. | Shipped schema version/hash, bank export converted outside Agenti, documented account basis, and source/reason for a first empty period's opening balance. | A committed import retains private source evidence, schema hash, actor/time, and any baseline audit. | Do not upload source XLSX/PDF as a statement or fabricate times. |
 
 For the detailed enrollment procedure, prerequisites, enable gates and troubleshooting, see [Bank workflow enrollment guide](bank-workflow-enrollment-guide.md).
+
+Use **Open statements** on Bank accounts to work with the selected account's statements. Bank statements keeps account selection and a read-only summary/status; **Manage account** returns to the selected account's setup and enrollment controls.
 
 ## 4. Daily agent workflow
 

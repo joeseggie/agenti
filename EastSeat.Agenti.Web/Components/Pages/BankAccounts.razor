@@ -1,0 +1,148 @@
+@page "/bank-accounts"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Shared.Services
+@using EastSeat.Agenti.Web.Features.BankStatements
+@inherits BankingPageBase
+@attribute [Authorize(Policy = "BankReconciliation")]
+@rendermode InteractiveServer
+@inject IBankAccountService Accounts
+@inject NavigationManager Nav
+
+<PageTitle>Bank Accounts - Agenti</PageTitle>
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.SpaceBetween">
+        <MudText Typo="Typo.h4">Bank accounts</MudText>
+        <MudButton OnClick="LoadAsync" Disabled="Busy">Refresh</MudButton>
+    </MudStack>
+    @if (Error != null) { <MudAlert Severity="Severity.Error" Class="my-3">@Error</MudAlert> }
+    @if (Busy) { <MudProgressLinear Indeterminate="true" Class="my-3" /> }
+    <MudExpansionPanels Class="my-3">
+        <MudExpansionPanel Text="Register a bank account">
+            @if (_setup != null)
+            {
+                <MudStack Spacing="2">
+                    <MudSelect T="long" Label="Agent bank wallet" @bind-Value="_newAccount.WalletId" Disabled="Busy">
+                        @foreach (var wallet in _setup.Wallets)
+                        {
+                            <MudSelectItem T="long" Value="@wallet.Id">@wallet.AgentName - @wallet.Name (@wallet.Currency)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudTextField T="string" Label="Bank name" @bind-Value="_newAccount.BankName" Disabled="Busy" />
+                    <MudTextField T="string" Label="Account identifier shown on statement" @bind-Value="_newAccount.AccountIdentifier" Disabled="Busy" />
+                    <MudTextField T="string" Label="Statement time zone" @bind-Value="_newAccount.TimeZoneId" Disabled="Busy" />
+                    <MudSelect T="BankBalanceBasis" Label="Confirmed balance basis" @bind-Value="_newAccount.BalanceBasis" Disabled="Busy">
+                        @foreach (var basis in Enum.GetValues<BankBalanceBasis>()) { <MudSelectItem T="BankBalanceBasis" Value="@basis">@basis</MudSelectItem> }
+                    </MudSelect>
+                    <MudButton OnClick="CreateAccountAsync" Disabled="Busy" Color="Color.Primary" Variant="Variant.Filled">Save account binding</MudButton>
+                </MudStack>
+            }
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+    @if (Loaded && Error == null && _accounts.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">Register the existing agent bank wallet to begin. This does not move money or change legacy sessions.</MudAlert>
+    }
+    @if (_accounts.Count > 0)
+    {
+        <MudSelect T="long" Label="Bank account" Value="_accountId" ValueChanged="SelectAccount" Disabled="Busy">
+            @foreach (var account in _accounts)
+            {
+                <MudSelectItem T="long" Value="@account.Id">@account.BankName - @account.AccountIdentifier</MudSelectItem>
+            }
+        </MudSelect>
+    }
+    @if (_selected != null)
+    {
+        <MudPaper Class="pa-4 my-3" Outlined="true">
+            <MudStack Spacing="2">
+                <MudText>@_selected.BankName / @_selected.Currency / @_selected.BalanceBasis</MudText>
+                <MudText Typo="Typo.body2">Bank wallet: @_selected.WalletName</MudText>
+                <MudText>New-session enrollment: @(_selected.WorkflowEnabled ? "Enabled" : "Paused")</MudText>
+                <MudText Typo="Typo.body2">Enrollment controls new cash sessions, not CSV statement uploads. Existing sessions and financial safeguards remain unchanged.</MudText>
+                <MudStack Row="true" Wrap="Wrap.Wrap">
+                    <MudButton OnClick="ToggleWorkflowAsync" Disabled="Busy" Color="Color.Warning">
+                        @(_selected.WorkflowEnabled ? "Pause new enrollment" : "Enable new-session workflow")
+                    </MudButton>
+                    <MudButton Href="@($"/bank-statements?accountId={_selected.Id}")" Disabled="Busy" Color="Color.Primary">Open statements</MudButton>
+                </MudStack>
+            </MudStack>
+            <MudExpansionPanels Class="mt-3">
+                <MudExpansionPanel Text="Account configuration">
+                    <MudStack Spacing="2">
+                        <MudTextField T="string" Label="Bank name" @bind-Value="_editAccount.BankName" Disabled="Busy" />
+                        <MudTextField T="string" Label="Account identifier" @bind-Value="_editAccount.AccountIdentifier" Disabled="Busy" />
+                        <MudTextField T="string" Label="Statement time zone" @bind-Value="_editAccount.TimeZoneId" Disabled="Busy" />
+                        <MudSelect T="BankBalanceBasis" Label="Balance basis" @bind-Value="_editAccount.BalanceBasis" Disabled="Busy">
+                            @foreach (var basis in Enum.GetValues<BankBalanceBasis>()) { <MudSelectItem T="BankBalanceBasis" Value="@basis">@basis</MudSelectItem> }
+                        </MudSelect>
+                        <MudButton OnClick="ConfigureAsync" Disabled="Busy">Save configuration</MudButton>
+                    </MudStack>
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        </MudPaper>
+    }
+</MudContainer>
+
+@code {
+    [SupplyParameterFromQuery(Name = "accountId")] public long? AccountId { get; set; }
+    private List<BankAccountDto> _accounts = [];
+    private BankAccountSetupDto? _setup;
+    private long _accountId;
+    private BankAccountDto? _selected;
+    private BankAccountForm _newAccount = new();
+    private BankAccountForm _editAccount = new();
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private Task LoadAsync() => RunAsync(async () =>
+    {
+        _selected = null;
+        _accounts = await Accounts.GetAccountsAsync(UserId);
+        _setup = await Accounts.GetSetupAsync(UserId);
+        _accountId = AccountId ?? (_accounts.Any(a => a.Id == _accountId) ? _accountId : _accounts.FirstOrDefault()?.Id ?? 0);
+        _selected = _accounts.SingleOrDefault(a => a.Id == _accountId);
+        if (_selected == null)
+        {
+            if (AccountId.HasValue || _accountId != 0) throw new UnauthorizedAccessException();
+            return;
+        }
+        _editAccount = new BankAccountForm
+        {
+            WalletId = _selected.WalletId, BankName = _selected.BankName, AccountIdentifier = _selected.AccountIdentifier,
+            TimeZoneId = _selected.TimeZoneId, BalanceBasis = _selected.BalanceBasis, ImportProfileKey = _selected.ImportProfileKey
+        };
+    }, queueIfBusy: true);
+
+    private void SelectAccount(long id) => Nav.NavigateTo(Nav.GetUriWithQueryParameter("accountId", id));
+
+    private async Task CreateAccountAsync()
+    {
+        if (await RunAsync(async () =>
+        {
+            _accountId = (await Accounts.CreateAsync(UserId, _newAccount)).Id;
+            _newAccount = new();
+        }))
+            SelectAccount(_accountId);
+    }
+
+    private async Task ConfigureAsync()
+    {
+        if (await RunAsync(async () =>
+        {
+            var account = _selected ?? throw new BankingRuleException("Select an account.");
+            await Accounts.ConfigureAsync(UserId, account.Id, _editAccount, account.Version);
+        }))
+            await LoadAsync();
+    }
+
+    private async Task ToggleWorkflowAsync()
+    {
+        if (await RunAsync(async () =>
+        {
+            var account = _selected ?? throw new BankingRuleException("Select an account.");
+            await Accounts.SetWorkflowAsync(UserId, account.Id, !account.WorkflowEnabled, account.Version);
+        }))
+            await LoadAsync();
+    }
+}
