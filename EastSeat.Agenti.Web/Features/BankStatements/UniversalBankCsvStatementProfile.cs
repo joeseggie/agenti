@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using Microsoft.Extensions.Options;
 
 namespace EastSeat.Agenti.Web.Features.BankStatements;
 
@@ -10,6 +11,10 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
     public const string ProfileKey = "agenti-universal-csv";
     public const string CsvContentType = "text/csv";
     private readonly UniversalBankCsvSchema _schema = UniversalBankCsvSchema.Load();
+    private readonly int _maximumRows;
+
+    public UniversalBankCsvStatementProfile(IOptions<BankStatementOptions>? options = null) =>
+        _maximumRows = options?.Value.MaximumRows ?? new BankStatementOptions().MaximumRows;
 
     public string Key => ProfileKey;
     public string BankIdentifier => "*";
@@ -47,7 +52,7 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
 
         using var reader = new StreamReader(source, new UTF8Encoding(false, true), detectEncodingFromByteOrderMarks: true, leaveOpen: true);
         var text = await reader.ReadToEndAsync(cancellationToken);
-        var records = CsvRecords.Read(text);
+        var records = CsvRecords.Read(text, _maximumRows, cancellationToken);
         if (records.Count == 0)
             throw new StatementParsingException("The CSV is empty. The first row must contain the exact Agenti template headers.");
 
@@ -232,8 +237,11 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
 
     private static class CsvRecords
     {
-        public static List<CsvRecord> Read(string text)
+        public static List<CsvRecord> Read(string text, int maximumRows, CancellationToken cancellationToken)
         {
+            if (maximumRows <= 0)
+                throw new StatementParsingException("The statement row limit must be greater than zero.");
+            var maximumRecords = maximumRows == int.MaxValue ? int.MaxValue : maximumRows + 1;
             var result = new List<CsvRecord>();
             var fields = new List<string>();
             var field = new StringBuilder();
@@ -244,6 +252,8 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
             var rowStart = 1;
             for (var i = 0; i < text.Length; i++)
             {
+                if ((i & 4095) == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
                 var c = text[i];
                 sawAny = true;
                 if (quoted)
@@ -287,6 +297,8 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
                     if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
                     fields.Add(field.ToString());
                     field.Clear();
+                    if (result.Count >= maximumRecords)
+                        throw new StatementParsingException("The statement exceeds the configured row limit. Export a smaller interval.");
                     result.Add(new CsvRecord(fields));
                     fields = [];
                     afterQuote = false;
@@ -301,8 +313,11 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
             if (sawAny && (field.Length > 0 || fields.Count > 0 || afterQuote))
             {
                 fields.Add(field.ToString());
+                if (result.Count >= maximumRecords)
+                    throw new StatementParsingException("The statement exceeds the configured row limit. Export a smaller interval.");
                 result.Add(new CsvRecord(fields));
             }
+            cancellationToken.ThrowIfCancellationRequested();
             return result;
         }
     }

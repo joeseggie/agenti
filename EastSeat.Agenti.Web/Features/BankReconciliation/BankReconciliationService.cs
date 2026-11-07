@@ -166,11 +166,25 @@ public sealed partial class BankReconciliationService(
         var corrections = await db.CashCountCorrectionRequests.AsNoTracking().Include(r => r.CashCount)
             .Where(r => sessionIds.Contains(r.CashCount!.CashSessionId) && r.AgentId == agentId)
             .ToListAsync(cancellationToken);
-        var coverage = await db.BankStatementImports.AsNoTracking().Include(i => i.Rows)
+        var coverageMetadata = await db.BankStatementImports.AsNoTracking()
             .Where(i => i.BankAccountId == account.Id && i.Status == StatementImportStatus.Committed &&
                 i.CoverageFromDate <= to)
+            .Select(i => new BankStatementImport
+            {
+                Id = i.Id, BankAccountId = i.BankAccountId, CoverageFrom = i.CoverageFrom,
+                CoverageTo = i.CoverageTo, CoverageFromDate = i.CoverageFromDate,
+                CoverageToDate = i.CoverageToDate, OpeningBalance = i.OpeningBalance,
+                ClosingBalance = i.ClosingBalance, CoverageVerified = i.CoverageVerified,
+                CreatedAt = i.CreatedAt, CommittedAt = i.CommittedAt
+            })
             .ToListAsync(cancellationToken);
-        await ValidateCurrentCoverageAsync(account.Id, coverage, cancellationToken);
+        var activeCoverageIds = coverageMetadata.Where(i => i.CoverageToDate >= from)
+            .Select(i => i.Id).ToList();
+        var activeCoverage = await db.BankStatementImports.AsNoTracking().Include(i => i.Rows)
+            .Where(i => activeCoverageIds.Contains(i.Id)).ToListAsync(cancellationToken);
+        var activeById = activeCoverage.ToDictionary(i => i.Id);
+        var coverage = coverageMetadata.Select(i => activeById.GetValueOrDefault(i.Id) ?? i).ToList();
+        await ValidateCurrentCoverageAsync(account.Id, activeCoverage, cancellationToken);
         return new ReviewFacts(account, sessions, counts, snapshots, bridges, banks, legs, matches, customers, exceptions, corrections, coverage);
     }
 

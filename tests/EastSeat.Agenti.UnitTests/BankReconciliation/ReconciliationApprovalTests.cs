@@ -85,14 +85,16 @@ public class ReconciliationApprovalTests
         administrator.Role = UserRole.Supervisor;
         await fixture.Db.SaveChangesAsync();
 
-        flagged = await reconciliation.FlagAsync(fixture.Admin.Id, flagged.Id, flagged.Version,
+        await reconciliation.FlagAsync(fixture.Admin.Id, flagged.Id, flagged.Version,
             "The transaction-date control needs a second-person review.");
         overlapping = await reconciliation.GetAsync(fixture.Admin.Id, overlapping.Id);
 
-        Assert.Contains(overlapping.Flags, flag => flag.IsOpen);
+        Assert.Empty(overlapping.Flags);
         Assert.Equal(BankReconciliationStatus.NeedsReview, overlapping.DailyControlStatus);
         Assert.Contains(overlapping.Sessions.Single().BlockingReasons,
             reason => reason.Contains("unresolved supervisor flag", StringComparison.OrdinalIgnoreCase));
+        await Assert.ThrowsAsync<BankingRuleException>(() => reconciliation.FlagAsync(fixture.Admin.Id, overlapping.Id,
+            overlapping.Version, "The existing overlapping flag must be answered first."));
     }
 
     [Fact]

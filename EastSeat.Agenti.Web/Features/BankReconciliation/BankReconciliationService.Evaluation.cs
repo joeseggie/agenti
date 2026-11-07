@@ -48,13 +48,13 @@ public sealed partial class BankReconciliationService
             : result.DailyControls.Any(d => d.Status == DailyBankControlStatus.WithExceptions)
                 ? BankReconciliationStatus.WithExceptions
                 : BankReconciliationStatus.Reconciled;
-        foreach (var flag in flags)
+        foreach (var flag in flags.Where(f => f.Flag.ReviewId == review.Id))
         {
             result.Flags.Add(new BankReviewFlagDto(flag.Flag.Id, flag.Flag.PerformedByUserId, flag.Flag.PerformedAt,
                 flag.Flag.Reason, flag.Response?.PerformedByUserId, flag.Response?.PerformedAt,
                 flag.Response?.Reason, flag.Response == null));
         }
-        if (result.Flags.Any(f => f.IsOpen))
+        if (flags.Any(f => f.Response == null))
             result.DailyControlStatus = BankReconciliationStatus.NeedsReview;
         foreach (var bank in facts.Banks.Where(b => b.AcceptedRow!.LedgerDate >= review.FromDate &&
                      b.AcceptedRow.LedgerDate <= review.ToDate && b.AcceptedRow.SignedAmount != 0))
@@ -147,6 +147,8 @@ public sealed partial class BankReconciliationService
             var source = LatestCoverage(date);
             if (source == null || !IsChainValid(source))
                 return closingBalances[date] = null;
+            if (source.CoverageToDate == date && sourceRows[source.Id].Count == 0)
+                return closingBalances[date] = source.ClosingBalance;
             var rows = sourceRows[source.Id];
             var opening = BalanceBefore(source, rows, date);
             if (!opening.HasValue)
@@ -189,8 +191,8 @@ public sealed partial class BankReconciliationService
                     b.Classification is not (BankTransactionClassification.Unclassified or BankTransactionClassification.Unknown) &&
                     !matchedBankIds.Contains(b.Id))
                 .Sum(b => b.AcceptedRow!.SignedAmount);
-            var unaccounted = bankEntries.Count(b => !BankAccountedFor(b, facts));
-            var unaccountedRegister = dayLegs.Count(l => !RegisterLegAccountedFor(l, facts));
+            var unaccounted = bankEntries.Count(b => !BankAccountedFor(b, facts, matchedBankIds));
+            var unaccountedRegister = dayLegs.Count(l => !RegisterLegAccountedFor(l, facts, matchedLegKeys));
             var difference = statementMovements - registerMovements - classifiedMovements;
             var dayExceptions = facts.Exceptions.Where(e => !e.IsResolved &&
                 facts.Sessions.Any(s => s.Id == e.CashSessionId && s.SessionDate == date)).ToList();
@@ -535,21 +537,23 @@ public sealed partial class BankReconciliationService
             ? StatementValidation.LedgerTime(r) <= at : StatementValidation.LedgerTime(r) < at).Sum(r => r.SignedAmount);
     }
 
-    private static bool BankAccountedFor(BankTransaction bank, ReviewFacts facts) =>
+    private static bool BankAccountedFor(
+        BankTransaction bank, ReviewFacts facts, HashSet<long>? matchedBankIds = null) =>
         bank.AcceptedRow!.SignedAmount == 0 ||
         bank.Classification != BankTransactionClassification.Unknown &&
         (bank.Classification != BankTransactionClassification.Unclassified ||
-        facts.Matches.Any(m => m.BankTransactionId == bank.Id &&
-            facts.Legs.Any(l => Key(l) == Key(m) && ValidFinancialMatch(bank, l))) ||
-        facts.Exceptions.Any(e => e.BankTransactionId == bank.Id && e.Kind == BankExceptionKind.BankFailure &&
-            e.BankExplanationVerified && e.Amount == Math.Abs(bank.AcceptedRow.SignedAmount)));
+         (matchedBankIds?.Contains(bank.Id) ?? facts.Matches.Any(m => m.BankTransactionId == bank.Id &&
+             facts.Legs.Any(l => Key(l) == Key(m) && ValidFinancialMatch(bank, l)))) ||
+         facts.Exceptions.Any(e => e.BankTransactionId == bank.Id && e.Kind == BankExceptionKind.BankFailure &&
+             e.BankExplanationVerified && e.Amount == Math.Abs(bank.AcceptedRow.SignedAmount)));
 
     private sealed record ReviewFlagState(
         BankReconciliationDecision Flag, BankReconciliationDecision? Response, DateOnly FromDate, DateOnly ToDate);
 
-    private static bool RegisterLegAccountedFor(BankLegDto leg, ReviewFacts facts) =>
-        facts.Matches.Any(m => m.IsActive && Key(m) == Key(leg) &&
-            facts.Banks.Any(b => b.Id == m.BankTransactionId && ValidFinancialMatch(b, leg))) ||
+    private static bool RegisterLegAccountedFor(
+        BankLegDto leg, ReviewFacts facts, HashSet<(BankLegKind Kind, long Id)>? matchedLegKeys = null) =>
+        (matchedLegKeys?.Contains(Key(leg)) ?? facts.Matches.Any(m => m.IsActive && Key(m) == Key(leg) &&
+            facts.Banks.Any(b => b.Id == m.BankTransactionId && ValidFinancialMatch(b, leg)))) ||
         facts.Exceptions.Any(e => e.BankExplanationVerified && e.Kind != BankExceptionKind.UnexplainedMovement &&
             e.Amount >= Math.Abs(leg.SignedAmount) && RefersTo(e, leg));
 

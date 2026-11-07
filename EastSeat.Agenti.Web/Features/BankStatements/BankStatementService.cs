@@ -91,9 +91,10 @@ public sealed partial class BankStatementService(
                 (!fromDate.HasValue || !toDate.HasValue || fromDate > toDate || toDate >= clock.Today))
                 throw new BankingRuleException("Select a valid statement date range ending before today; the current business day is not complete.");
             if (request?.OpeningBaseline is decimal requestedBaseline &&
-                (requestedBaseline < 0 || requestedBaseline > 9_999_999_999_999_999.99m ||
+                (requestedBaseline < -9_999_999_999_999_999.99m ||
+                 requestedBaseline > 9_999_999_999_999_999.99m ||
                  decimal.Round(requestedBaseline, 2) != requestedBaseline))
-                throw new BankingRuleException("The opening baseline must be between zero and 9,999,999,999,999,999.99 with no more than two decimal places.");
+                throw new BankingRuleException("The opening baseline must be within ±9,999,999,999,999,999.99 with no more than two decimal places.");
             if (baseline.HasValue && (string.IsNullOrWhiteSpace(baselineReason) || baselineReason.Trim().Length > 1000))
                 throw new BankingRuleException("An opening baseline requires an audited source and reason of at most 1,000 characters.");
             if (!baseline.HasValue && !string.IsNullOrWhiteSpace(baselineReason))
@@ -104,10 +105,12 @@ public sealed partial class BankStatementService(
                         s.SessionDate >= fromDate && s.SessionDate <= toDate && s.Status != CashSessionStatus.Closed,
                         cancellationToken))
                     throw new BankingRuleException("Close every cash session in the selected date range before reconciling its bank statement.");
-                var previous = await db.BankStatementImports.AsNoTracking()
+                var previousImports = await db.BankStatementImports.AsNoTracking()
                     .Where(i => i.BankAccountId == accountId && i.Status == StatementImportStatus.Committed &&
                                 i.CoverageVerified && i.CoverageToDate < fromDate)
-                    .OrderByDescending(i => i.CoverageToDate).FirstOrDefaultAsync(cancellationToken);
+                    .ToListAsync(cancellationToken);
+                var previous = previousImports.OrderByDescending(i => i.CoverageToDate)
+                    .ThenByDescending(i => i.CommittedAt).ThenByDescending(i => i.Id).FirstOrDefault();
                 var revisingCoverage = await db.BankStatementImports.AsNoTracking().AnyAsync(i =>
                     i.BankAccountId == accountId && i.Status == StatementImportStatus.Committed &&
                     i.CoverageFromDate == fromDate && i.CoverageToDate == toDate, cancellationToken);

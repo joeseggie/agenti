@@ -1,6 +1,7 @@
 using System.Text;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Web.Features.BankStatements;
+using Microsoft.Extensions.Options;
 
 namespace EastSeat.Agenti.UnitTests.BankReconciliation;
 
@@ -103,6 +104,28 @@ public class UniversalBankCsvStatementProfileTests
         Assert.Empty(parsed.Entries);
         Assert.Equal(12_345m, parsed.OpeningBalance);
         Assert.Equal(12_345m, parsed.ClosingBalance);
+
+        var overdraft = await ParseAsync(csv, "Africa/Kampala", -123.45m);
+        Assert.Equal(-123.45m, overdraft.OpeningBalance);
+        Assert.Equal(-123.45m, overdraft.ClosingBalance);
+    }
+
+    [Fact]
+    public async Task Parse_EnforcesConfiguredRowLimitWhileTokenizing()
+    {
+        var profile = new UniversalBankCsvStatementProfile(
+            Options.Create(new BankStatementOptions { MaximumRows = 1 }));
+        var account = new StatementAccountContext(
+            "001234567890", "UGX", "Africa/Kampala", BankBalanceBasis.Ledger, From, To);
+        using var source = new MemoryStream(Encoding.UTF8.GetBytes(
+            "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+            "2026-11-01,,REF-1,Deposit,,1.00,11.00\n" +
+            "2026-11-02,,REF-2,Deposit,,1.00,12.00\n"));
+
+        var error = await Assert.ThrowsAsync<StatementParsingException>(() =>
+            profile.ParseAsync(source, UniversalBankCsvStatementProfile.CsvContentType, account, CancellationToken.None));
+
+        Assert.Contains("configured row limit", error.Message);
     }
 
     [Fact]

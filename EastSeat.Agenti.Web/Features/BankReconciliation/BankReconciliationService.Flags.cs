@@ -22,8 +22,8 @@ public sealed partial class BankReconciliationService
             await db.Entry(review).ReloadAsync(cancellationToken);
             if (review.Version != expectedVersion)
                 throw new BankingConflictException("This review changed. Refresh before flagging it.");
-            var openFlags = await OpenFlagsAsync(reviewId, cancellationToken);
-            if (openFlags.Count > 0)
+            var openFlags = await LoadOverlappingFlagsAsync(review, cancellationToken);
+            if (openFlags.Any(flag => flag.Response == null))
                 throw new BankingRuleException("Respond to the existing supervisor flag before raising another.");
             AddDecision(review, userId, ReconciliationDecisionKind.SupervisorFlagged, reason,
                 new { RaisedByRole = (await access.GetActorAsync(userId, cancellationToken)).Role.ToString() });

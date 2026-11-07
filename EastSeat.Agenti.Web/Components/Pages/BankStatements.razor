@@ -81,7 +81,7 @@
                 <MudItem xs="12" sm="4"><MudDatePicker Label="End date" @bind-Date="_toDate" Editable="true" DateFormat="yyyy-MM-dd" Disabled="Busy" /></MudItem>
                 @if (!_imports.Any(i => i.Status == StatementImportStatus.Committed && i.CoverageVerified))
                 {
-                    <MudItem xs="12" sm="4"><MudNumericField T="decimal?" Label="Initial opening balance (first empty period only)" @bind-Value="_openingBaseline" Min="0" /></MudItem>
+                    <MudItem xs="12" sm="4"><MudNumericField T="decimal?" Label="Initial opening balance (first empty period only)" @bind-Value="_openingBaseline" /></MudItem>
                 }
             </MudGrid>
             @if (_openingBaseline.HasValue)
