@@ -30,12 +30,16 @@ public abstract class BankingPageBase : ComponentBase
         try
         {
             var result = await RunActionAsync(action);
+            var actionError = Error;
+            var lastReloadSucceeded = true;
             while (_pendingReload != null)
             {
                 var reload = _pendingReload;
                 _pendingReload = null;
-                await RunActionAsync(reload);
+                lastReloadSucceeded = await RunActionAsync(reload);
             }
+            if (!result && lastReloadSucceeded)
+                Error = actionError;
             return result;
         }
         finally

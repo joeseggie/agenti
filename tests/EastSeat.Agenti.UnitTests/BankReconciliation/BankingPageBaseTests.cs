@@ -50,7 +50,7 @@ public class BankingPageBaseTests
 
         Assert.Equal(!failOperation, await operation);
         Assert.Equal(new[] { "operation", "latest reload" }, executed);
-        Assert.Null(page.Message);
+        Assert.Equal(failOperation ? "Operation failed." : null, page.Message);
     }
 
     [Fact]
