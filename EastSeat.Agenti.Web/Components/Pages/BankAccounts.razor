@@ -97,9 +97,10 @@
 
     private Task LoadAsync() => RunAsync(async () =>
     {
+        _selected = null;
         _accounts = await Accounts.GetAccountsAsync(UserId);
         _setup = await Accounts.GetSetupAsync(UserId);
-        _accountId = AccountId ?? (_accountId == 0 ? _accounts.FirstOrDefault()?.Id ?? 0 : _accountId);
+        _accountId = AccountId ?? (_accounts.Any(a => a.Id == _accountId) ? _accountId : _accounts.FirstOrDefault()?.Id ?? 0);
         _selected = _accounts.SingleOrDefault(a => a.Id == _accountId);
         if (_selected == null)
         {
@@ -111,7 +112,7 @@
             WalletId = _selected.WalletId, BankName = _selected.BankName, AccountIdentifier = _selected.AccountIdentifier,
             TimeZoneId = _selected.TimeZoneId, BalanceBasis = _selected.BalanceBasis, ImportProfileKey = _selected.ImportProfileKey
         };
-    });
+    }, queueIfBusy: true);
 
     private void SelectAccount(long id) => Nav.NavigateTo(Nav.GetUriWithQueryParameter("accountId", id));
 

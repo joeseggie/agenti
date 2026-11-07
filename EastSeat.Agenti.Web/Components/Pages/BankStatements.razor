@@ -183,19 +183,21 @@
 
     private Task LoadAsync() => RunAsync(async () =>
     {
+        _selected = null;
+        _preview = null;
+        _editRowId = null;
+        _decisions.Clear();
         _accounts = await Accounts.GetAccountsAsync(UserId);
-        var accountId = AccountId ?? (_accountId == 0 ? _accounts.FirstOrDefault()?.Id ?? 0 : _accountId);
+        var accountId = AccountId ?? (_accounts.Any(a => a.Id == _accountId) ? _accountId : _accounts.FirstOrDefault()?.Id ?? 0);
         if (accountId != _accountId)
         {
             _accountId = accountId;
             _imports = [];
-            _preview = null;
-            _editRowId = null;
-            _decisions.Clear();
             _file = null;
             _uploadKey = Guid.NewGuid();
             _openingBaseline = null;
             _openingBaselineReason = null;
+            _fromDate = _toDate = Clock.Today.AddDays(-1).ToDateTime(TimeOnly.MinValue);
         }
         _selected = _accounts.SingleOrDefault(a => a.Id == _accountId);
         if (_selected == null)
@@ -204,7 +206,7 @@
             return;
         }
         _imports = await Statements.GetImportsAsync(UserId, _accountId);
-    });
+    }, queueIfBusy: true);
 
     private void SelectAccount(long id) => Nav.NavigateTo(Nav.GetUriWithQueryParameter("accountId", id));
 

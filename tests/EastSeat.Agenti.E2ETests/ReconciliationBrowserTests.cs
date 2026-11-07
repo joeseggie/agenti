@@ -5,6 +5,7 @@ using System.Text.Json;
 using EastSeat.Agenti.IntegrationTests.Infrastructure;
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.UnitTests.Helpers;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Api;
@@ -33,7 +34,8 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         scenario.Account.BankIdentifier = "synthetic-test-bank";
         (await db.AppConfigs.SingleAsync(c => c.Key == "SetupComplete")).Value = "true";
         await db.SaveChangesAsync();
-        await using var app = new BankingApplicationFactory(database.ConnectionString);
+        var lookupFailures = new AccountLookupFailures();
+        await using var app = CreateLookupControlledApp(lookupFailures);
         app.UseKestrel(0);
         var root = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single().TrimEnd('/');
         using var client = app.CreateClient(new() { AllowAutoRedirect = false, BaseAddress = new Uri(root) });
@@ -126,6 +128,17 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
             await refresh.ClickAsync();
         }
         await Expect(commit).ToBeEnabledAsync();
+        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Correct extraction", Exact = true }).ClickAsync();
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("^Correct extracted row #"))).ToBeVisibleAsync();
+        lookupFailures.FailNext();
+        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true }).ClickAsync();
+        await Expect(adminPage.GetByText("Simulated account lookup failure.", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(adminPage.GetByRole(AriaRole.Heading, new() { NameRegex = new("^Import #") })).ToHaveCountAsync(0);
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("^Correct extracted row #"))).ToHaveCountAsync(0);
+        await Expect(commit).ToHaveCountAsync(0);
+        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true }).ClickAsync();
+        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Review", Exact = true }).ClickAsync();
+        await Expect(commit).ToBeEnabledAsync();
         await commit.ClickAsync();
         await Expect(adminPage.GetByRole(AriaRole.Heading, new() { NameRegex = new("Import #.*Committed") })).ToBeVisibleAsync();
 
@@ -160,7 +173,9 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await AddCookieAsync(administrator, app, setup.Admin, root);
         var page = await administrator.NewPageAsync();
 
-        await page.GotoAsync(root + "/bank-statements");
+        await page.GotoAsync($"{root}/bank-statements?accountId={long.MaxValue}");
+        await Expect(page.GetByText("You do not have access to this banking operation.", new() { Exact = true })).ToBeVisibleAsync();
+        await NavigateBankPageAsync(page, "bank-statements");
         await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true })).ToBeEnabledAsync(new() { Timeout = 30_000 });
         await Expect(page.Locator("input[type=file]")).ToHaveCountAsync(0);
         await Expect(page.GetByLabel("Bank account", new() { Exact = true })).ToHaveCountAsync(0);
@@ -256,7 +271,8 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         };
         db.BankAccounts.AddRange(first, second);
         await db.SaveChangesAsync();
-        await using var app = new BankingApplicationFactory(database.ConnectionString);
+        var lookupFailures = new AccountLookupFailures();
+        await using var app = CreateLookupControlledApp(lookupFailures);
         app.UseKestrel(0);
         var root = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single().TrimEnd('/');
         using var playwright = await Playwright.CreateAsync();
@@ -272,8 +288,13 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await Expect(page).ToHaveURLAsync($"{root}/bank-accounts?accountId={second.Id}");
         await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true })).ToBeEnabledAsync(new() { Timeout = 30_000 });
         await Expect(page.GetByText("Zulu bank / UGX / Ledger", new() { Exact = true })).ToBeVisibleAsync();
+        lookupFailures.FailNext();
         await SelectAsync(page, "Bank account", "Alpha bank - ALPHA-ACCOUNT");
         await Expect(page).ToHaveURLAsync($"{root}/bank-accounts?accountId={first.Id}");
+        await Expect(page.GetByText("Simulated account lookup failure.", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.GetByText("Open statements", new() { Exact = true })).ToHaveCountAsync(0);
+        await Expect(page.GetByText("Account configuration", new() { Exact = true })).ToHaveCountAsync(0);
+        await page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true }).ClickAsync();
         await Expect(page.GetByText("Alpha bank / UGX / Ledger", new() { Exact = true })).ToBeVisibleAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true }).ClickAsync();
         await Expect(page.Locator("a").Filter(new() { HasText = "Open statements" }))
@@ -281,6 +302,8 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await page.GetByText("Open statements", new() { Exact = true }).ClickAsync();
         await Expect(page).ToHaveURLAsync($"{root}/bank-statements?accountId={first.Id}");
         await Expect(page.Locator("input[type=file]")).ToBeEnabledAsync(new() { Timeout = 30_000 });
+        await FillDateAsync(page, "Start date", "2026-10-28");
+        await FillDateAsync(page, "End date", "2026-10-29");
         await page.Locator("input[type=file]").SetInputFilesAsync(new FilePayload
         {
             Name = "unsubmitted.csv", MimeType = "text/csv",
@@ -288,11 +311,19 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         });
         await Expect(page.GetByText("unsubmitted.csv", new() { Exact = true })).ToBeVisibleAsync();
         await page.GetByLabel("Initial opening balance (first empty period only)", new() { Exact = true }).FillAsync("1000000");
+        lookupFailures.FailNext();
         await SelectAsync(page, "Bank account", "Zulu bank - ZULU-ACCOUNT");
         await Expect(page).ToHaveURLAsync($"{root}/bank-statements?accountId={second.Id}");
+        await Expect(page.GetByText("Simulated account lookup failure.", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.Locator("input[type=file]")).ToHaveCountAsync(0);
+        await page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true }).ClickAsync();
         await Expect(page.GetByText("Zulu bank / UGX / Ledger", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(page.GetByText("unsubmitted.csv", new() { Exact = true })).ToHaveCountAsync(0);
         await Expect(page.GetByLabel("Initial opening balance (first empty period only)", new() { Exact = true })).ToHaveValueAsync("");
+        using var clockScope = app.Services.CreateScope();
+        var defaultDate = clockScope.ServiceProvider.GetRequiredService<IBusinessClock>().Today.AddDays(-1).ToString("yyyy-MM-dd");
+        await Expect(page.GetByLabel("Start date", new() { Exact = true })).ToHaveValueAsync(defaultDate);
+        await Expect(page.GetByLabel("End date", new() { Exact = true })).ToHaveValueAsync(defaultDate);
         Assert.Equal(0, await page.Locator("input[type=file]").EvaluateAsync<int>("input => input.files.length"));
         await page.ReloadAsync();
         await Expect(page.Locator("a").Filter(new() { HasText = "Manage account" }))
@@ -366,7 +397,53 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
                 await Expect(page.GetByText("Open statements", new() { Exact = true })).ToHaveCountAsync(0);
                 await Expect(page.Locator("input[type=file]")).ToHaveCountAsync(0);
             }
+            await NavigateBankPageAsync(page, route);
+            await Expect(page.GetByText("Own branch bank / UGX / Ledger", new() { Exact = true })).ToBeVisibleAsync();
+            await Expect(page.GetByText("You do not have access to this banking operation.", new() { Exact = true })).ToHaveCountAsync(0);
         }
+    }
+
+    private BankingApplicationFactory CreateLookupControlledApp(AccountLookupFailures failures) =>
+        new(database.ConnectionString, services =>
+            services.AddScoped<IBankAccountService>(provider => new LookupFailingAccountService(
+                new BankAccountService(provider.GetRequiredService<ApplicationDbContext>(),
+                    provider.GetRequiredService<IBankingAccessService>(), provider.GetRequiredService<IBusinessClock>(),
+                    provider.GetRequiredService<StatementProfileCatalog>()), failures)));
+
+    private sealed class AccountLookupFailures
+    {
+        private int _failNext;
+        public void FailNext() => Interlocked.Exchange(ref _failNext, 1);
+        public bool TakeFailure() => Interlocked.Exchange(ref _failNext, 0) == 1;
+    }
+
+    private sealed class LookupFailingAccountService(IBankAccountService inner, AccountLookupFailures failures) : IBankAccountService
+    {
+        public async Task<List<BankAccountDto>> GetAccountsAsync(string userId, CancellationToken cancellationToken = default)
+        {
+            if (failures.TakeFailure()) throw new BankingRuleException("Simulated account lookup failure.");
+            return await inner.GetAccountsAsync(userId, cancellationToken);
+        }
+
+        public Task<BankAccountSetupDto> GetSetupAsync(string userId, CancellationToken cancellationToken = default) =>
+            inner.GetSetupAsync(userId, cancellationToken);
+        public Task<BankAccountDto> CreateAsync(string userId, BankAccountForm form, CancellationToken cancellationToken = default) =>
+            inner.CreateAsync(userId, form, cancellationToken);
+        public Task<BankAccountDto> ConfigureAsync(string userId, long accountId, BankAccountForm form, int expectedVersion, CancellationToken cancellationToken = default) =>
+            inner.ConfigureAsync(userId, accountId, form, expectedVersion, cancellationToken);
+        public Task<BankAccountDto> SetWorkflowAsync(string userId, long accountId, bool enabled, int expectedVersion, CancellationToken cancellationToken = default) =>
+            inner.SetWorkflowAsync(userId, accountId, enabled, expectedVersion, cancellationToken);
+    }
+
+    private static async Task NavigateBankPageAsync(IPage page, string route)
+    {
+        await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true })).ToBeEnabledAsync(new() { Timeout = 30_000 });
+        var toggle = page.GetByRole(AriaRole.Button, new() { Name = "Toggle Bank Reconciliation", Exact = true });
+        var link = page.Locator($"a[href='{route}']");
+        if (await toggle.GetAttributeAsync("aria-expanded") != "true")
+            await toggle.ClickAsync();
+        await Expect(toggle).ToHaveAttributeAsync("aria-expanded", "true");
+        await link.ClickAsync();
     }
 
     private static Task<IBrowser> LaunchBrowserAsync(IPlaywright playwright) => playwright.Chromium.LaunchAsync(new()

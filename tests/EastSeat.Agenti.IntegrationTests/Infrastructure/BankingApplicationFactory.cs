@@ -21,7 +21,8 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace EastSeat.Agenti.IntegrationTests.Infrastructure;
 
-public sealed class BankingApplicationFactory(string connectionString) : WebApplicationFactory<Program>
+public sealed class BankingApplicationFactory(
+    string connectionString, Action<IServiceCollection>? configureServices = null) : WebApplicationFactory<Program>
 {
     private readonly string _jwtKey = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
     public BankingTestClock Clock { get; } = new();
@@ -54,6 +55,7 @@ public sealed class BankingApplicationFactory(string connectionString) : WebAppl
             foreach (var descriptor in services.Where(d => d.ServiceType == typeof(IHostedService) &&
                 d.ImplementationType?.Name is "VaultExpirationService" or "UserAuditCleanupService").ToList())
                 services.Remove(descriptor);
+            configureServices?.Invoke(services);
         });
     }
 
