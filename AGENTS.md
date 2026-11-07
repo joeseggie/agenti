@@ -50,6 +50,15 @@ Features/{FeatureName}/
 builder.Services.AddScoped<IYourFeatureService, YourFeatureService>();
 ```
 
+## Bank Statements and Reconciliation
+
+- New statement imports use the shipped, versioned universal CSV schema; do not restore bank-specific executable statement profiles or an Admin-editable parser.
+- Statement import, matching/classification and Admin responses are Admin-only web workflows; Supervisors have web read/flag access. Do not add Android statement-import pages or routes; preserve unrelated Android banking APIs.
+- A transaction-date daily control is not exact session-cutoff certification. Never fabricate statement times or bypass the evaluator's date-only cutoff guard.
+- Preserve import revisions and append-only baseline, match, classification, flag, and response decisions. Unknown or unexplained rows remain unresolved.
+- An unresolved daily statement control warns but does not block the next session opening; existing session, opening-approval, and vault safeguards remain in force.
+- See `docs/bank-workflow-enrollment-guide.md` and `docs/agenti-banking-business-workflow.md` for the user process and `docs/centenary-agency-float-statement-profile.md` for superseded-format conversion notes.
+
 ---
 
 ## Code Generation Guidelines

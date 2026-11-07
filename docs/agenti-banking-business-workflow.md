@@ -2,13 +2,13 @@
 
 ## Purpose and scope
 
-This workflow describes the app-user journey for the customer-transaction capture and bank-statement reconciliation feature merged in PR #94, verified against `main` at commit `d80d172`. It covers both the web and Android workspaces.
+This workflow describes customer-transaction capture, session operations, and the Admin-operated universal CSV daily bank control. Teller capture and session work remain available on web and Android; statement import and reconciliation are Web Admin workflows only.
 
 **Scope assumption:** "the new feature" means the implemented banking/reconciliation feature. The previously discussed production MCP service is a proposed, separate read-only extension; its optional user journey is in section 12.
 
 This is a description of the implementation and its intended operating procedure after release, not confirmation that it is deployed or enabled in production. No production data was accessed to prepare it.
 
-**Release gate:** the generic workflows exist, but no real-bank statement profile is installed and verified in the inspected application. Representative bank exports, a verified importer, release acceptance and activation are still required. Uploading an unsupported statement retains private evidence but produces a failed import; it does not create valid bank transactions or enable enrollment.
+**Statement boundary:** Agenti accepts one release-shipped universal CSV contract, not bank-specific executable profiles. Admin downloads the template, converts the bank export outside Agenti, then uploads CSV. The date-level result is a daily movement control, not exact session-cutoff certification. A Centenary export must be mapped to the template before upload.
 
 Companion files:
 
@@ -41,21 +41,21 @@ Here, **agent/teller means the human banking operator**, not an AI agent.
 | Participant | Responsibility | Main workspace |
 |---|---|---|
 | Agent/teller | Opening and closing observations; customer receipts; actual cash/bank effects; bank runs; adjustment requests; customer-case follow-ups; authorized historical corrections. | Web: Cash Count, Customer Transactions, Bank Runs. Android: Cash Count and Customer banking. |
-| Supervisor | Independently approve or reject opening counts and wallet adjustments within the permitted branch. | Count/adjustment approvals; Android Cash Count approval actions. |
-| Administrator | Account setup, activation, statement intake, reconciliation, exceptions, correction grants and closing certification. May also perform opening/adjustment review. | Web: Statements and Accounts (`/bank-statements`), Reconciliation Reviews (`/bank-reconciliation`), count approvals. Android: Bank statements, Bank reconciliation and Cash Count. |
+| Supervisor | Independently approve/reject opening counts and wallet adjustments; review daily bank controls and raise a reasoned flag for Admin response. | Count/adjustment approvals; Web bank reconciliation read/flag view; Android Cash Count. |
+| Administrator | Account setup, CSV statement intake, reconciliation, matching/classification, exception handling, import revisions, Supervisor responses, and any separate eligible closing certification. | Web: Statements (`/bank-statements`) and Reconciliation (`/bank-reconciliation`). No Android statement-import workflow. |
 | Application | Validate permissions and state, calculate expected positions, preserve evidence/history, process imports, enforce review gates and issue in-app notifications. | Automatic responses to user actions and the server-side import processor. |
 | Bank/customer | Supply the actual transaction result, receipt, statement, reversal confirmation or customer settlement evidence. | Outside Agenti; the user records/verifies this evidence in Agenti. |
 | Implementation/release team | Verify real-bank formats, release compatible backend/mobile versions and satisfy deployment gates. | Release prerequisite, not a teller action. |
 
-An approver cannot approve their own modern opening, review their own modern wallet adjustment, or certify their own closing. If an Admin is also the teller, another authorized person must perform the relevant approval. Supervisors do not gain statement/reconciliation privileges.
+An approver cannot approve their own modern opening, review their own modern wallet adjustment, or certify their own closing. If an Admin is also the teller, another authorized person must perform the relevant approval. Supervisors can inspect and flag a branch's review; only Admins can upload/commit statements, match/classify rows, clear flags, or approve closings.
 
 ## 3. One-time onboarding and activation
 
 | ID / actor | User action | Expected inputs | Output / outcome | If requirements are not met |
 |---|---|---|---|---|
-| **A1 - Release team + Admin** | Validate the bank-statement format and release readiness. | Representative redacted CSV, XLSX and selectable-text PDF exports for the intended formats; account/reference conventions; timezone; balance basis; coverage and overlapping-export examples. | Installed, verified import profile for explicitly supported formats, with compatible application releases. | Workflow activation remains blocked. Generic file selection is not evidence that every bank layout is supported. Scanned PDFs/OCR are outside this release. |
-| **A2 - Admin** | Open Statements and Accounts; select **Register a bank account**, then **Save account binding**. | Existing agent bank wallet; bank name; account identifier as shown on statements; statement timezone; confirmed balance basis (Ledger, Available or Float); installed statement profile. Currency comes from the wallet. | A bank-account record bound to the existing wallet. No money moves and old sessions remain unchanged. | Wrong branch, inactive wallet or duplicate wallet binding is rejected. Account identity, timezone and balance basis cannot be casually rewritten after activity. |
-| **A3 - Admin** | Select the account and **Enable new-session workflow**. | Active account and wallets; verified matching profile/balance basis; completed legacy sessions; one active agent, one enrolled bank account, one active cash wallet and one active bank wallet in the branch; consistent wallet currency. | Eligible new sessions use the new workflow. Existing sessions retain their version/history. | Validation explains the unmet prerequisite. Pausing enrollment later stops new enrollment; it does not turn modern sessions back into legacy ones. |
+| **A1 - Admin** | Bind the existing Bank wallet to the bank account. | Wallet; bank name; account identifier; timezone; confirmed balance basis. The wallet supplies currency. | One bank account binding per Bank wallet. The universal CSV schema is shipped by Agenti; there is no profile picker. | Inactive/wrong-branch wallets and duplicate bindings are rejected. Identity/timezone/basis cannot be casually rewritten after financial activity. |
+| **A2 - Admin** | Enable new-session workflow if this branch uses the modern session workflow. | Active account and wallets; matching currency/balance basis; finished legacy sessions; initial branch enrollment gates. | New eligible sessions use the modern workflow; existing sessions remain unchanged. | Session/vault safeguards remain. Pausing enrollment never rewrites sessions already created. |
+| **A3 - Admin/Finance** | Verify CSV preparation and first-period baseline if required. | Shipped schema version/hash, bank export converted outside Agenti, documented account basis, and source/reason for a first empty period's opening balance. | A committed import retains private source evidence, schema hash, actor/time, and any baseline audit. | Do not upload source XLSX/PDF as a statement or fabricate times. |
 
 For the detailed enrollment procedure, prerequisites, enable gates and troubleshooting, see [Bank workflow enrollment guide](bank-workflow-enrollment-guide.md).
 
@@ -100,44 +100,43 @@ This is a next-business-day process, not an unrestricted same-day reopening. Do 
 
 ## 6. Administrator's end-of-day reconciliation
 
-Start this process after closing submission whenever the bank evidence is available. If the bank publishes the required evidence later, leave financial approval pending; do not make a substitute statement.
+Run this process after the teller's session is closed and the bank has published the complete daily export. It is an account-level, transaction-date control. It does **not** certify intraday cutoff balances: a row without a bank-provided time remains date-only, and Agenti never invents a time.
 
-| ID / actor | User action | Expected inputs | Output / outcome | Decision / next step |
-|---|---|---|---|---|
-| **R1 - Admin** | Download the statement from the bank outside Agenti. Select the account and **Upload and prepare preview**. | Actual source file in a format supported by the verified profile; correct bank account/currency/balance basis; evidence covering the session and relevant overnight interval. | Private original evidence and durable import identity. Usable imports progress from `Uploaded` to `Processing`. | Unsupported/unverified formats fail explicitly. Keep the error visible; obtain valid evidence or a verified adapter rather than treating an empty import as success. |
-| **R2 - Admin** | Refresh/reopen the preview and review extraction, balances and coverage. | Extracted times, references, identifiers, signed amounts, running balances and source locations. For corrections: replacement normalized values and evidence-based reason. For ambiguous overlaps: new occurrence vs existing occurrence/revision decision and applicable existing ID. | Source-linked reviewable rows; corrections preserve the original extraction and create normalization revisions. | Resolve errors, contradictory coverage and occurrence identity decisions before committing. Two genuinely separate identical-looking transactions must not be silently deduplicated. |
-| **R3 - Admin** | Select **Commit reviewed bank entries**. | Valid current import revision and all required row decisions. | Accepted canonical bank occurrences with source provenance; import becomes `Committed`. Commit does not move vault/wallet funds or approve a closing. | An identical file can be reused without duplicating money/evidence effects. Conflicts or incomplete decisions block acceptance instead of producing a partial successful ledger. |
-| **R4 - Admin** | Open Reconciliation Reviews; choose account and dates; **Start review**; select **Match unique exact entries**. | Committed statement evidence; approved opening and submitted closing snapshots; customer movements; bank runs; reviewed adjustments; date range. | Per-session wallet comparisons, bank/register matches, unmatched items, overnight issues, customer cases and explicit approval blockers. | Only uniquely exact candidates are automatically matched. Ambiguous/missing references or competing candidates require review; matching is not closing approval. |
-| **R5 - Admin** | Investigate every blocker; manually match, classify genuine bank-only activity, document a permitted exception, or request historical correction. | Selected bank occurrence and register source; amount/currency/direction agreement; supporting evidence and 10-2,000-character reason; affected case/session/amount; permitted correction scope. | Attributable decisions and a recalculated review. Eligibility is `Reconciled` or `WithExceptions` only when no approval blockers remain. | Use the decision table below. Refresh if concurrent changes make the screen stale. A verified exception is not a blanket waiver for missing customer transactions or unexplained debits. |
-| **R6 - Independent Admin** | For each eligible session, select **Approve against this evidence**. | Current review version/evidence basis, frozen closing and all required explanations. The UI supplies the technical version/request identity. | Closing becomes Approved; an immutable, versioned result records the snapshot/evidence reviewed, reviewer and time; agent receives an in-app approval notification. | Self-certification, stale evidence or unresolved blockers is rejected. No vault deposit, wallet zeroing or later-session fund movement is repeated. |
-| **R7 - Admin, on later evidence** | Reopen the affected review if a source changes, late evidence appears, or a historical correction changes the facts. | New accepted source/revision, linked later movement or correction; original result/history. | Affected current results require renewed review; a new certification preserves/supersedes the prior result without rewriting old count observations or current balances. | A previously approved count does not prove that the current evidence is still reconciled. Investigate `NeedsReview` and repeat R4-R6 as needed. |
+| Step / actor | Input | Action | Validation | Output / status | Next decision |
+|---|---|---|---|---|---|
+| **R1 - Admin** | Bank export, account/wallet binding, and period dates. | Download the blank Agenti CSV template and guide; convert the bank export outside Agenti. Upload only the CSV. | Exact ordered header `TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance`; dates `yyyy-MM-dd`; optional real time `HH:mm:ss`; each row has exactly one positive Debit/Credit amount; running balance chains. | Private CSV evidence and a durable import identity; schema version/hash captured. | Continue to R2 if accepted; otherwise correct the CSV outside Agenti and upload again. |
+| **R2 - Admin** | Start/end date, selected Bank wallet/account, optional first-period baseline and its source/reason. | Select account and range, upload, then refresh the durable preview. | Non-future range; no open session within the range; no missing dates after the last committed range; first empty period requires a baseline and reason; later ranges carry forward the prior committed closing balance. | `Uploaded` → `Processing` → `ReadyForReview`, or explicit `Failed` diagnostics. No partial rows commit on parse failure. | Resolve every reported parser/account/balance issue before commit. |
+| **R3 - Admin** | Valid multi-day preview, source rows, and any identity decisions. | Inspect each day's movements and balances, then **Commit reviewed bank entries**. | Complete date coverage, row sequence/balance chain, matching account/currency/basis, no conflicting overlap. An identical file can replay safely; two distinct identical-looking rows remain distinct unless evidence links them. | Accepted canonical bank occurrences and row provenance; no wallet/vault movement and no session certification. | Create/open an account review for the same dates. |
+| **R4 - Admin** | Committed import plus teller register/customer movements and bank-run entries. | Open **Reconciliation**, choose account/date range, **Start review**, then **Match unique exact entries**. | Auto-match requires a unique one-to-one amount, direction, currency and transaction-date candidate; a bank reference is used when both sides provide one. Ambiguous candidates stay unmatched. | Per-day opening/closing balance, statement movement total, register movement total, classified bank-only amount, difference, unaccounted row count, and a distinct daily-control status. | Manually match ambiguous rows or investigate every difference. The daily result is not exact session-cutoff approval. |
+| **R5 - Admin** | Selected bank row/register entry, supporting evidence, and a reason. | Manually match; classify verified Fee, Commission, Interest, Transfer, reversal or other bank-only movement; or leave it `Unknown`. | A match is one-to-one and amount/currency/direction-consistent. Bank-only classifications require evidence and a reason. | Decision and revision history are retained. `Unknown` or unclassified rows keep that date `NeedsReview`; unexplained difference keeps it `NeedsCorrection`. | Resolve or explicitly document the exception; never create a fake customer transaction to force a balance. |
+| **R6 - Supervisor** | Current branch review and specific concern. | Inspect the daily result and raise a flag with a 10-2,000 character reason. | Supervisor role and branch scope checked by the service; stale review version is rejected. | Immutable flag in the review history; daily status becomes `NeedsReview`. | Admin must respond in the app. |
+| **R7 - Admin** | Open Supervisor flag, current review version, and investigation outcome. | Record a reasoned response or explicitly void the flag with a reason. | Admin-only service check; response tied to the exact flag and cannot be duplicated. | Immutable response; the flag is closed while the original concern remains in history. | If facts require correction, continue to R8. |
+| **R8 - Admin** | Contradictory/incorrect source evidence and reason. | Upload/reprocess a corrected CSV as a retained new revision, then review that revision. Responding to or voiding a Supervisor flag is a separate R7 decision; a committed statement import is not silently voided. | Preserve source evidence and the previous revision; revalidate coverage, balances, matches and current review. Do not silently overwrite imported rows. | Affected daily result is recalculated; prior decisions/history remain inspectable. | Re-match and resolve affected rows; do not treat a prior status as current. |
+| **R9 - Agent/Admin** | Next opening request while yesterday's daily control is missing or unresolved. | Continue normal opening workflow; inspect visible warning and route the bank review issue to Admin. | Bank-control warning is not an opening authorization or cash/vault override. Existing opening approvals and funding safeguards remain enforced. | Next session is not blocked solely by an unresolved bank-statement review. | Complete the outstanding daily control without reopening the old session. |
 
-### R5 decision table
+### Daily-control exception outcomes
 
-| Finding | Required user input/action | Outcome |
-|---|---|---|
-| Correct bank row and register leg exist but did not auto-match | Select both and provide a reason; amount, currency and direction must agree. | One active allocation links that bank occurrence to that register source. |
-| Genuine bank fee, commission or other verified bank-origin movement | Select allowed classification, source/supporting evidence and explanation. | Bank-only adjustment is accounted for in review; no fabricated customer sale/receipt. |
-| Bank reversal belongs to a customer case | Link the actual bank return to the correct related case movement/expected settlement. | The return is accounted for once; it is not also counted as a separate generic adjustment. |
-| Failed bank operation with a documented outstanding case | Record BankFailure with verified bank explanation, evidence, linked case/occurrence and affected amount. | Approval may become eligible with `WithExceptions`, if all other conditions are met. The unresolved obligation remains visible. |
-| Posting delay | Record evidence and the exact affected source/case/amount; explicitly say whether the reported closing already includes the delayed posting. | The explained timing difference is evaluated against the actual balance basis; unrelated gaps remain blockers. |
-| Omitted or incorrect customer record | Send a scoped historical correction request; follow C1-C3. | Approval waits for resubmission and reevaluation. |
-| Missing statement coverage, unexplained debit, unexplained wallet variance or unverified explanation | Obtain/investigate evidence; leave the closing pending. | Approval remains unavailable. A matching grand total or a generic note is insufficient. |
-| Pending wallet adjustment | Obtain separate authorized adjustment review. | Reconciliation then uses the reviewed disposition; it does not bypass that approval. |
+| Scenario | App response and required action |
+|---|---|
+| Invalid header order, extra/missing columns, malformed date/time, invalid debit/credit or broken balance chain | Show row/column diagnostics; do not commit any statement transactions. Correct the CSV using the template. |
+| First-ever empty period | Enter the independently sourced opening balance and a reason/source. Actor, time, amount, evidence and reason are audited. |
+| Empty date after a known opening | Carry forward the previous closing balance and show zero movements; do not invent a statement row. |
+| Multi-day file | Split daily controls by `TransactionDate`; show each date separately, including zero-transaction dates. |
+| Missing date or an open session on a selected date | Reject the range or show a coverage gap; close the session/catch up from the missing date before committing. |
+| Same file replay or overlapping source | Identical file replay is idempotent. Conflicting overlap requires an explicit revision/identity decision; legitimate duplicate-looking rows are preserved. |
+| Unique amount/direction/date candidate | Auto-match only if one bank occurrence maps to one register leg and vice versa. |
+| Multiple candidates, missing bank reference, or different source facts | Leave unmatched for Admin selection; an explicit reason is saved. |
+| Fee/interest/transfer/reversal or other bank-only movement | Classify with source evidence and reason. An `Unknown` choice is an explicit unresolved state and keeps the day open. |
+| Supervisor flag | Admin records a response note or void reason. Both actions are auditable; the flag is never silently removed. |
+| Corrected import | Keep both source/revision history, invalidate affected current results, then re-review. |
 
-## 7. Approval checklist
+No action in R1-R9 fabricates transaction times, proves intraday posting order, changes wallet/vault balances, or bypasses opening dual approval.
 
-Before R6 can succeed, the review must establish the following, not merely equal opening and closing totals:
+## 7. Separate session-closing certification
 
-1. Approved opening and immutable submitted closing snapshots exist for the modern session, including its recorded operational settlement.
-2. Statement coverage is complete and consistent for the required observation intervals; bank balances can be established at the cutoffs.
-3. Each relevant bank occurrence and register bank leg is matched or accounted for by a specifically permitted, evidenced decision.
-4. Wallet positions, opening/closing observations and the overnight bridge have no unexplained differences.
-5. Wallet adjustments have their separate review; requested historical corrections are resubmitted.
-6. Customer cases are completed or covered by valid verified exceptions; inconsistent settlement/refund amounts are not excused.
-7. No unresolved unexplained/unverified bank exception remains, and the admin is reviewing the latest evidence version.
+The daily control in R1-R9 is not session approval. The review page retains a separate Admin closing-certification action for sessions when the bank source provides usable timestamps at the recorded opening and closing observations. This action is not part of the date-only CSV daily result.
 
-The review uses actual observation intervals, generally after the opening observation through the closing observation, and after the preceding closing through the next opening. A calendar date filter alone is not proof of coverage. A zero-transaction day still requires explicit coverage with consistent balances.
+Certification requires the latest frozen opening/closing snapshots, operational settlement, complete observation-interval coverage, current register and bank-source versions, accounted-for bank legs, reviewed wallet adjustments, and no blocking unexplained variance or correction. A date-only statement row makes the exact cutoff balance unavailable for that date; the certification action remains blocked rather than treating midnight as the transaction time. Historical approval never posts a second vault/wallet movement. Normal opening approval and vault safeguards remain unchanged.
 
 ## 8. Failed/pending operation and customer settlement
 
@@ -183,7 +182,7 @@ Assume one cash wallet and one bank wallet, both in UGX, with no pending cases o
 | D6 cash-to-bank run of 400,000 | 200,000 | 900,000 | Affected caches refresh to the projection and apply the transfer once. |
 | D8 actual closing matches these positions | 200,000 | 900,000 | Reported total is 1,100,000. |
 | D9 submit closing | Allocated wallet cache becomes 0 | Allocated wallet cache becomes 0 | Frozen observations remain 200,000 and 900,000; 1,100,000 is returned internally once. The external bank account is not emptied. |
-| R4-R6 review | Frozen cash remains 200,000 | Frozen bank remains 900,000 | Statement evidence accounts for the -500,000 customer debit and +400,000 bank-run credit; independent admin certifies without moving funds again. |
+| R4-R5 daily control | Frozen cash remains 200,000 | Frozen bank remains 900,000 | Statement evidence accounts for the -500,000 customer debit and +400,000 bank-run credit; daily control records account-level movement status without claiming exact cutoff certification. |
 
 If a genuine overnight bank credit of 2,000 occurs, the next observed opening may be cash 200,000 and bank 902,000. The app preserves yesterday's bank closing of 900,000 and records a +2,000 opening bridge. The 1,102,000 opening is split into 1,100,000 internal allocation plus 2,000 externally observed bank change, subject to normal opening checks. Admin later explains the overnight credit from bank evidence. It is not an invented vault top-up.
 
@@ -196,10 +195,12 @@ If a genuine overnight bank credit of 2,000 occurs, the next observed opening ma
 | Session open | Approved opening; permitted current-session customer capture, runs and adjustments. |
 | Session ended; awaiting admin approval | Trading is closed. Review is outstanding, but this alone does not block the next business day. |
 | Import Uploaded / Processing | Processing is durable and server-side. Refresh/reopen the import; do not repeatedly upload it to simulate progress. |
-| Import Failed | Evidence is not accepted statement data. Read the error; fix the source/profile and reprocess as appropriate. |
-| ReadyForReview / Committed | Reviewable extraction versus accepted bank occurrences; neither automatically approves a closing. |
+| Import Failed | Evidence is not accepted statement data. Read row/column diagnostics, correct the CSV and upload a new revision. |
+| Daily control `Reconciled` / `WithExceptions` | Date-level account movement control is complete, optionally with a documented exception. It is not exact session-cutoff certification. |
+| Daily control `NeedsReview` / `NeedsCorrection` | Flag, missing coverage, unknown row, unmatched item or movement difference remains; Admin investigates. This alone does not block the next opening. |
+| ReadyForReview / Committed | Reviewable universal CSV extraction versus accepted bank occurrences; neither moves funds nor automatically approves a closing. |
 | NeedsCorrection | Computed review blockers. An explicit C1 request is needed to grant teller correction access. |
-| Reconciled / WithExceptions | Review eligibility/outcome; an independent admin still explicitly certifies the closing. WithExceptions retains outstanding verified items. |
+| Reconciled / WithExceptions | Separate session-certification result, when precise observations allow it. `WithExceptions` retains outstanding verified items. |
 | NeedsReview | Later/current facts require renewed review; a retained older approval is not proof of current completeness. |
 | LegacyIncomplete | Historical records keep their legacy meaning; modern transaction completeness is not claimed. |
 
@@ -226,7 +227,7 @@ Paths are repository-relative. These are the inspected implementation sources, n
 | Workflow area | Representative source |
 |---|---|
 | Account setup and one-agent/account activation gates | `EastSeat.Agenti.Web\Features\BankStatements\BankAccountService.cs:121-162` |
-| Profile warning and statement preview/commit controls | `EastSeat.Agenti.Web\Components\Pages\BankStatements.razor:22-168`; `EastSeat.Agenti.Web\Features\BankStatements\BankStatementService.cs:49-58` |
+| Universal CSV template, private upload, baseline audit and statement preview/commit | `EastSeat.Agenti.Web\Features\BankStatements\Schema\agenti-bank-statement-v1.json`; `EastSeat.Agenti.Web\Components\Pages\BankStatements.razor`; `EastSeat.Agenti.Web\Features\BankStatements\BankStatementService.cs` |
 | Daily session, prior operational-close blocker, count inputs | `EastSeat.Agenti.Web\Features\CashCounts\BankSessionWorkflow.cs:37-147,185-308` |
 | Opening submit/reject/notifications | `EastSeat.Agenti.Web\Features\CashCounts\BankSessionWorkflow.cs:309-398` |
 | Exactly-once allocation/closing and frozen snapshots | `EastSeat.Agenti.Web\Shared\Services\SessionSettlementService.cs:22-190` |
@@ -235,10 +236,10 @@ Paths are repository-relative. These are the inspected implementation sources, n
 | Case evidence, verified credit, retries/refunds | `EastSeat.Agenti.Web\Features\CustomerTransactions\CustomerTransactionService.FollowUps.cs:10-27,99-212` |
 | Bank-run available-cash validation | `EastSeat.Agenti.Web\Features\BankRuns\BankRunService.cs:23-168` |
 | Independent adjustment review | `EastSeat.Agenti.Web\Features\WalletAdjustments\WalletAdjustmentService.cs:326-370` |
-| Matching and review gates | `EastSeat.Agenti.Web\Features\BankReconciliation\BankReconciliationService.Matching.cs:12-56`; `EastSeat.Agenti.Web\Features\BankReconciliation\BankReconciliationService.Evaluation.cs:57-240` |
+| Daily control, date-only cutoff protection, matching and Supervisor flag history | `EastSeat.Agenti.Web\Features\BankReconciliation\BankReconciliationService.Matching.cs`; `EastSeat.Agenti.Web\Features\BankReconciliation\BankReconciliationService.Evaluation.cs`; `EastSeat.Agenti.Web\Features\BankReconciliation\BankReconciliationService.Flags.cs` |
 | Exception, correction and approval decisions | `EastSeat.Agenti.Web\Features\BankReconciliation\BankReconciliationService.Decisions.cs:12-277` |
 | Correction resubmission | `EastSeat.Agenti.Web\Features\CustomerTransactions\CustomerTransactionService.Corrections.cs:179-210` |
-| Web admin actions and mobile navigation | `EastSeat.Agenti.Web\Components\Pages\BankReconciliation.razor:20-185`; `EastSeat.Agenti.Android\AppShell.xaml:16-35` |
+| Web Admin/Supervisor review and Android separation | `EastSeat.Agenti.Web\Components\Pages\BankStatements.razor`; `EastSeat.Agenti.Web\Components\Pages\BankReconciliation.razor`; Android no longer includes statement/reconciliation pages |
 | Workflow state names | `EastSeat.Agenti.Web\Shared\Domain\Enums\ReconciliationEnums.cs:1-110` |
 
 The daily process is complete only when operational closure, the relevant current financial certification, and any remaining customer/bank obligations are each explicitly accounted for. A closed session, an uploaded file, or equal grand totals alone does not satisfy all three.
