@@ -97,6 +97,8 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         var adminPage = await administrator.NewPageAsync();
         await adminPage.GotoAsync(root + "/bank-statements");
         await Expect(adminPage.Locator("input[type=file]")).ToBeEnabledAsync(new() { Timeout = 30_000 });
+        await FillDateAsync(adminPage, "Start date", "2026-11-02");
+        await FillDateAsync(adminPage, "End date", "2026-11-02");
         var source = new ParsedStatement("SYNTHETIC-ACCOUNT", "UGX", BankBalanceBasis.Ledger,
             new DateTimeOffset(2026, 11, 2, 0, 0, 0, TimeSpan.FromHours(3)),
             new DateTimeOffset(2026, 11, 3, 0, 0, 0, TimeSpan.FromHours(3)),
@@ -139,6 +141,15 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         Assert.Equal(CashCountStatus.Approved, (await final.CashCounts.FindAsync(saved.CashCountId))!.Status);
         Assert.Equal(1, await final.SessionFloatSettlements.CountAsync(s => s.Stage == FloatSettlementStage.Closing));
         Assert.Equal(1, await final.BankReconciliationResults.CountAsync());
+    }
+
+    private static async Task FillDateAsync(IPage page, string label, string isoDate)
+    {
+        var picker = page.GetByLabel(label, new() { Exact = true });
+        await picker.FillAsync(isoDate);
+        // MudBlazor parses typed dates when the field loses focus.
+        await picker.PressAsync("Tab");
+        await Expect(picker).ToHaveValueAsync(isoDate);
     }
 
     private static async Task AddCookieAsync(IBrowserContext browser, BankingApplicationFactory app, ApplicationUser user, string root)

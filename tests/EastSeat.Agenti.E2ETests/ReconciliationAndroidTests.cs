@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using EastSeat.Agenti.IntegrationTests.Infrastructure;
@@ -34,7 +33,7 @@ public sealed class ReconciliationAndroidTests(DatabaseFixture database) : IClas
 
     [AndroidDeviceFact]
     [Trait("Category", "AndroidDevice")]
-    public async Task Reconciliation_AndroidDraftRecoveryCaptureClosingAndAdminApproval()
+    public async Task Reconciliation_AndroidDraftRecoveryCaptureAndClosing()
     {
         var apk = Environment.GetEnvironmentVariable("AGENTI_ANDROID_TEST_APK")!;
         Assert.StartsWith(Package, Path.GetFileName(apk));
@@ -50,12 +49,11 @@ public sealed class ReconciliationAndroidTests(DatabaseFixture database) : IClas
         scenario.AddApprovedOpening(withSettlement: true);
         scenario.Account.WorkflowEnabled = true;
         scenario.Account.ImportProfileVerified = true;
-        scenario.Account.ImportProfileKey = SyntheticStatementProfile.ProfileKey;
+        scenario.Account.ImportProfileKey = UniversalBankCsvStatementProfile.ProfileKey;
         scenario.Account.BankIdentifier = "synthetic-test-bank";
         (await db.AppConfigs.SingleAsync(c => c.Key == "SetupComplete")).Value = "true";
         var password = "Banking" + Guid.NewGuid().ToString("N");
         ConfigureLogin(scenario.User, "agent@banking.invalid", password);
-        ConfigureLogin(scenario.Admin, "admin@banking.invalid", password);
         await db.SaveChangesAsync();
 
         using var rsa = RSA.Create(2048);
@@ -75,7 +73,6 @@ public sealed class ReconciliationAndroidTests(DatabaseFixture database) : IClas
         using var ready = await probe.GetAsync("https://127.0.0.1:58731/health/live");
         Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
         await device.CommandAsync("reverse", "tcp:58731", "tcp:58731");
-        var sourcePath = Path.Combine(Path.GetTempPath(), $"agenti-device-{Guid.NewGuid():N}.csv");
         try
         {
             await device.CommandAsync("shell", "am", "force-stop", Package);
@@ -108,54 +105,10 @@ public sealed class ReconciliationAndroidTests(DatabaseFixture database) : IClas
             await device.ClickTextAsync("Submit and end trading");
             await device.ClickTextAsync("Submit");
             await device.WaitTextAsync("Session ended");
-            Assert.Equal(CashCountStatus.PendingApproval, (await db.CashCounts.AsNoTracking().SingleAsync(c => !c.IsOpening)).Status);
-
-            await device.MenuAsync("Logout");
-            await LoginAsync(device, scenario.Admin.Email!, password);
-            await device.MenuAsync("Bank statements");
-            await device.ClickTextAsync("Statements: Test bank");
-            await device.ClickTextAsync("Upload original statement");
-            var source = new ParsedStatement("SYNTHETIC-ACCOUNT", "UGX", BankBalanceBasis.Ledger,
-                new DateTimeOffset(2026, 11, 2, 0, 0, 0, TimeSpan.FromHours(3)),
-                new DateTimeOffset(2026, 11, 2, 16, 0, 0, TimeSpan.FromHours(3)),
-                1_000_000m, 950_000m, true,
-                [new("synthetic row", "synthetic fixture", "SYNTHETIC-DEPOSIT", "SYNTHETIC-DEPOSIT", "0012345",
-                    "synthetic deposit", "UGX", -50_000m, 950_000m, BankingScenario.Now, null, null, true)]);
-            // The import's verified coverage must be in the past.
-            app.Clock.Now = BankingScenario.Now.AddHours(5);
-            await File.WriteAllBytesAsync(sourcePath, JsonSerializer.SerializeToUtf8Bytes(source));
-            await device.CommandAsync("push", sourcePath, "/sdcard/Download/agenti-synthetic-statement.csv");
-            await device.ClickTextAsync("Choose statement file");
-            await device.OpenDownloadsAsync();
-            await device.ClickTextAsync("agenti-synthetic-statement.csv");
-            await device.ClickTextAsync("Upload selected file (or retry)");
-            await device.WaitTextAsync("Uploaded:");
-            await device.ClickTextAsync("Start staged import");
-            for (var attempt = 0; attempt < 12; attempt++)
-            {
-                if (await db.BankStatementImports.AnyAsync(i => i.Status == StatementImportStatus.ReadyForReview)) break;
-                await Task.Delay(1000);
-            }
-            await device.ClickTextAsync("Refresh processing status");
-            var import = await db.BankStatementImports.AsNoTracking().SingleAsync();
-            Assert.Equal(StatementImportStatus.ReadyForReview, import.Status);
-            await device.ClickTextAsync($"Preview import {import.Id}");
-            await device.ClickTextAsync("Commit reviewed statement");
-            await device.WaitTextAsync("Committed");
-            await device.MenuAsync("Bank reconciliation");
-            await device.ClickTextAsync("Test bank - SYNTHETIC-ACCOUNT");
-            await device.ClickTextAsync("Start date-range review");
-            await device.FillAsync("banking-from", "2026-11-02");
-            await device.FillAsync("banking-to", "2026-11-02");
-            await device.ClickTextAsync("Create review");
-            await device.ClickTextAsync("Match unique exact candidates");
-            await device.ClickTextAsync("Approve this frozen closing");
-            await device.ClickTextAsync("Approve");
-            await device.WaitTextAsync("approval Approved");
 
             await using var final = database.CreateContext();
             Assert.Equal(1, await final.CustomerTransactions.CountAsync());
-            Assert.Equal(1, await final.BankReconciliationResults.CountAsync());
+            Assert.Equal(CashCountStatus.PendingApproval, (await final.CashCounts.AsNoTracking().SingleAsync(c => !c.IsOpening)).Status);
             Assert.Equal(1, await final.SessionFloatSettlements.CountAsync(s => s.Stage == FloatSettlementStage.Closing));
             Assert.Equal(1_100_000m, (await final.Vaults.SingleAsync()).CurrentBalance);
             Assert.All(await final.Wallets.ToListAsync(), wallet => Assert.Equal(0m, wallet.Balance));
@@ -169,7 +122,6 @@ public sealed class ReconciliationAndroidTests(DatabaseFixture database) : IClas
         }
         finally
         {
-            File.Delete(sourcePath);
             await device.CommandAsync("shell", "am", "force-stop", Package);
             await device.CommandAsync("uninstall", Package);
             await device.CommandAsync("reverse", "--remove", "tcp:58731");
@@ -301,13 +253,5 @@ internal sealed class BankingTestDevice(string adb, string serial)
             scroll: false);
         await TapAsync(menu);
         await ClickTextAsync(item);
-    }
-
-    public async Task OpenDownloadsAsync()
-    {
-        var roots = await FindAsync(n => n.Attribute("content-desc")?.Value is "Show roots" or "Open navigation drawer",
-            scroll: false);
-        await TapAsync(roots);
-        await ClickTextAsync("Downloads");
     }
 }

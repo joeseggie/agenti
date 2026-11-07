@@ -9,6 +9,7 @@
 @inject IBankAccountService Accounts
 @inject IBankStatementService Statements
 @inject IBankEvidenceService Evidence
+@inject IBusinessClock Clock
 @inject Microsoft.Extensions.Options.IOptions<BankEvidenceOptions> EvidenceOptions
 
 <PageTitle>Bank Statements - Agenti</PageTitle>
@@ -76,8 +77,8 @@
             <MudText Typo="Typo.h6">Upload a bank statement CSV</MudText>
             <MudText Typo="Typo.body2">Download the <a href="/templates/agenti-bank-statement-v1.csv" download>blank CSV template</a> and <a href="/templates/agenti-bank-statement-v1-guide.txt" target="_blank">column guide</a>. Convert the bank export outside Agenti, then upload one CSV for the selected date range. The app checks daily balances and movements; date-only rows do not certify exact session cutoff balances.</MudText>
             <MudGrid Class="my-2">
-                <MudItem xs="12" sm="4"><MudDatePicker Label="Start date" @bind-Date="_fromDate" Disabled="Busy" /></MudItem>
-                <MudItem xs="12" sm="4"><MudDatePicker Label="End date" @bind-Date="_toDate" Disabled="Busy" /></MudItem>
+                <MudItem xs="12" sm="4"><MudDatePicker Label="Start date" @bind-Date="_fromDate" Editable="true" DateFormat="yyyy-MM-dd" Disabled="Busy" /></MudItem>
+                <MudItem xs="12" sm="4"><MudDatePicker Label="End date" @bind-Date="_toDate" Editable="true" DateFormat="yyyy-MM-dd" Disabled="Busy" /></MudItem>
                 @if (!_imports.Any(i => i.Status == StatementImportStatus.Committed && i.CoverageVerified))
                 {
                     <MudItem xs="12" sm="4"><MudNumericField T="decimal?" Label="Initial opening balance (first empty period only)" @bind-Value="_openingBaseline" Min="0" /></MudItem>
@@ -179,8 +180,8 @@
     private List<BankStatementImportDto> _imports = [];
     private BankStatementPreviewDto? _preview;
     private IBrowserFile? _file;
-    private DateTime? _fromDate = DateTime.Today;
-    private DateTime? _toDate = DateTime.Today;
+    private DateTime? _fromDate;
+    private DateTime? _toDate;
     private decimal? _openingBaseline;
     private string? _openingBaselineReason;
     private Guid _uploadKey = Guid.NewGuid();
@@ -196,7 +197,12 @@
         public string Reason { get; set; } = string.Empty;
     }
 
-    protected override Task OnInitializedAsync() => LoadAsync();
+    protected override Task OnInitializedAsync()
+    {
+        _fromDate = _toDate = Clock.Today.ToDateTime(TimeOnly.MinValue);
+        return LoadAsync();
+    }
+
     private Task LoadAsync() => RunAsync(async () =>
     {
         _accounts = await Accounts.GetAccountsAsync(UserId);
