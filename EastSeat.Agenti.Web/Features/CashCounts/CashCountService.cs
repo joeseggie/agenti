@@ -522,6 +522,11 @@ public class CashCountService(
         if (cashCount.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
             return await RunBankWorkflowAsync(() => bankWorkflow.SubmitAsync(userId, cashCountId));
 
+        if (cashCount.Status is CashCountStatus.PendingApproval or CashCountStatus.Approved)
+        {
+            return CashCountSaveResult.Ok(cashCount.Id, cashCount.CashSessionId);
+        }
+
         if (cashCount.Status != CashCountStatus.Draft)
         {
             return CashCountSaveResult.Error("Cash count has already been submitted.");

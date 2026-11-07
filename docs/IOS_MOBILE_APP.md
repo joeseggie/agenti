@@ -122,11 +122,19 @@ server. Legacy counts retain the existing behavior. The UI limits amount entry
 to 12 whole digits and 2 decimals to avoid unsafe JavaScript number serialization;
 financial calculations and persistence remain .NET `decimal`.
 
+Each editing visit waits for a successful fresh form fetch before initializing
+the editor; a failed refresh cannot expose an editable cached form. Subsequent
+cache refreshes preserve unsaved input in the active editor.
+
 Save and submit are separate API operations. The returned count ID is retained
-before submitting, allowing retry of a failed submission without blindly creating
-another count. Drafts remain editable after errors. Vault request timeouts are
-ambiguous: the app requires checking recent activity before enabling another
-request, because the existing adjustment API has no idempotency key.
+before submitting. A definitive submission validation failure (`400`) preserves
+the draft and restores editing so the user can correct it. An ambiguous failure
+locks editing and retries submission using the saved ID without saving again.
+Both legacy and bank-reconciliation submission replays return the existing result
+for pending or approved counts without repeating financial postings or audit
+entries. Vault request timeouts are ambiguous too: the app requires checking recent
+activity before enabling another request, because the existing adjustment API has
+no idempotency key.
 
 ## Configuration and infrastructure
 

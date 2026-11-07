@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Alert, Keyboard, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Keyboard, Text, View } from 'react-native';
 import { Button, Column, Host } from '@expo/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
@@ -15,6 +15,7 @@ import { createDrafts, prepareCount, WalletDraft } from './form';
 
 export function CashCountScreen({ id, isOpening }: { id: number | null; isOpening: boolean }) {
   const api = useApi();
+  const [hasFreshForm, setHasFreshForm] = useState(false);
   const query = useQuery({
     queryKey: ['cash-count', id, isOpening],
     queryFn: ({ signal }) => (id ? api.count(id, signal) : api.initializeCount(isOpening, signal)),
@@ -22,6 +23,31 @@ export function CashCountScreen({ id, isOpening }: { id: number | null; isOpenin
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
   });
+
+  // Once initialized, cache refreshes must not unmount the editor and discard its draft.
+  if (!hasFreshForm && query.isFetchedAfterMount && query.isSuccess && !query.isFetching) {
+    setHasFreshForm(true);
+  }
+
+  if (!hasFreshForm) {
+    return (
+      <Screen>
+        {query.isFetchedAfterMount && query.error ? (
+          <ErrorNotice
+            error={query.error.message}
+            onRetry={() => {
+              void query.refetch();
+            }}
+          />
+        ) : (
+          <>
+            <ActivityIndicator accessibilityLabel="Loading cash count" />
+            <Text style={type.caption}>Loading the latest cash count...</Text>
+          </>
+        )}
+      </Screen>
+    );
+  }
   return <QueryState query={query}>{(form) => <CashCountEditor initial={form} />}</QueryState>;
 }
 
@@ -82,6 +108,9 @@ export function CashCountEditor({ initial }: { initial: CashCountForm }) {
         await queries.invalidateQueries({ queryKey: ['current-count'] });
       }
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 400) {
+        setSubmissionRetryId(null);
+      }
       setError(
         cause instanceof ApiError || cause instanceof Error
           ? cause.message
@@ -168,7 +197,7 @@ export function CashCountEditor({ initial }: { initial: CashCountForm }) {
                 <Button
                   variant="outlined"
                   label={`Observed ${wallet.walletName} now`}
-                  disabled={pending}
+                  disabled={pending || submissionRetryId !== null}
                   onPress={() => update(wallet.walletId, { observedAt: new Date().toISOString() })}
                 />
               </Host>

@@ -13,5 +13,11 @@ export default function Route() {
       </Screen>
     );
   }
-  return <CashCountScreen id={countId} isOpening={opening === 'true'} />;
+  return (
+    <CashCountScreen
+      key={countId ?? `new-${opening}`}
+      id={countId}
+      isOpening={opening === 'true'}
+    />
+  );
 }

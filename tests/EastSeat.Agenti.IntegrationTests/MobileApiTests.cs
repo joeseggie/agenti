@@ -222,8 +222,18 @@ public sealed class MobileApiTests(DatabaseFixture fixture) : IntegrationTestBas
         Assert.Equal(HttpStatusCode.OK, submitted.StatusCode);
         var count = await DbContext.CashCounts.SingleAsync();
         Assert.Equal(CashCountStatus.PendingApproval, count.Status);
+        var auditCount = await DbContext.CashCountAuditLogs.CountAsync();
+        using var pendingReplay = await client.PostAsync($"/api/cash-counts/{count.Id}/submit", null);
+        Assert.Equal(HttpStatusCode.OK, pendingReplay.StatusCode);
+        var replayResult = await pendingReplay.Content.ReadFromJsonAsync<ApiResponse<CashCountSaveResult>>();
+        Assert.Equal(count.Id, replayResult!.Data!.CashCountId);
+        Assert.Equal(auditCount, await DbContext.CashCountAuditLogs.CountAsync());
+
         count.Status = CashCountStatus.Approved;
         await DbContext.SaveChangesAsync();
+        using var approvedReplay = await client.PostAsync($"/api/cash-counts/{count.Id}/submit", null);
+        Assert.Equal(HttpStatusCode.OK, approvedReplay.StatusCode);
+        Assert.Equal(auditCount, await DbContext.CashCountAuditLogs.CountAsync());
         var readOnly = await client.GetFromJsonAsync<ApiResponse<CashCountFormModel>>($"/api/cash-counts/{count.Id}");
         Assert.True(readOnly!.Data!.IsReadOnly);
     }
