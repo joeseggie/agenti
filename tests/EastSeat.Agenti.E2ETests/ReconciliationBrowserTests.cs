@@ -27,7 +27,10 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
     {
         await using var db = database.CreateContext();
         using var scenario = new BankingScenario(db);
-        scenario.AddApprovedOpening(withSettlement: true);
+        var secondBank = scenario.AddWallet("ABSA", WalletTypeEnum.Bank, 200_000m);
+        var secondAccount = scenario.BindBankAccount(secondBank);
+        var mobile = scenario.AddWallet("Airtel", WalletTypeEnum.MobileMoney, 300_000m);
+        scenario.AddApprovedOpening(withSettlement: true, additionalWallets: [secondBank, mobile]);
         scenario.Account.WorkflowEnabled = true;
         scenario.Account.ImportProfileVerified = true;
         scenario.Account.ImportProfileKey = SyntheticStatementProfile.ProfileKey;
@@ -48,6 +51,7 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await Expect(page.GetByRole(AriaRole.Heading, new() { Name = "Customer transactions", Exact = true })).ToBeVisibleAsync();
         // Banking controls stay disabled until the Blazor circuit is interactive; wait so input is not lost to prerendered markup.
         await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Save transaction", Exact = true })).ToBeEnabledAsync(new() { Timeout = 30_000 });
+        await SelectAsync(page, "Bank wallet", $"{scenario.Account.BankName} - {scenario.BankWallet.Name} ({scenario.Account.Currency})");
         await page.GetByLabel("Amount", new() { Exact = true }).FillAsync("50000");
         await page.GetByLabel("Customer account / phone", new() { Exact = true }).FillAsync("0012345");
         await page.GetByLabel("Bank transaction number", new() { Exact = true }).FillAsync("SYNTHETIC-DEPOSIT");
@@ -80,7 +84,9 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         var opening = await GetAsync<CashCountFormModel>(client, "/api/banking/counts/initialize?isOpening=true");
         foreach (var wallet in opening.WalletEntries)
         {
-            wallet.CountedAmount = wallet.WalletId == scenario.CashWallet.Id ? 150_000m : 950_000m;
+            wallet.CountedAmount = wallet.WalletId == scenario.CashWallet.Id ? 150_000m :
+                wallet.WalletId == scenario.BankWallet.Id ? 950_000m :
+                wallet.WalletId == secondBank.Id ? 200_000m : 300_000m;
             wallet.Denominations = null;
             wallet.ObservedAt = app.Clock.Now;
         }
@@ -90,11 +96,12 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.Admin));
         using (var approved = await client.PostAsync($"/api/banking/counts/{laterOpening.CashCountId}/approve", null))
             Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
+        await scenario.ImportStatementAsync(secondAccount, new BusinessClock(app.Clock), [], 200_000m, 200_000m);
 
         await using var administrator = await browser.NewContextAsync();
         await AddCookieAsync(administrator, app, scenario.Admin, root);
         var adminPage = await administrator.NewPageAsync();
-        await adminPage.GotoAsync(root + "/bank-statements");
+        await adminPage.GotoAsync($"{root}/bank-statements?accountId={scenario.Account.Id}");
         await Expect(adminPage.Locator("input[type=file]")).ToBeEnabledAsync(new() { Timeout = 30_000 });
         await Expect(adminPage.GetByText("Register a bank account", new() { Exact = true })).ToHaveCountAsync(0);
         await Expect(adminPage.GetByText("Account configuration", new() { Exact = true })).ToHaveCountAsync(0);
@@ -143,9 +150,18 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await Expect(adminPage.GetByRole(AriaRole.Heading, new() { NameRegex = new("Import #.*Committed") })).ToBeVisibleAsync();
 
         await adminPage.GotoAsync($"{root}/bank-reconciliation?sessionId={scenario.Session.Id}");
+        await Expect(adminPage.GetByRole(AriaRole.Button, new() { Name = "Start review", Exact = true })).ToBeEnabledAsync();
+        await SelectAsync(adminPage, "Account", $"{scenario.Account.BankName} - {scenario.Account.AccountIdentifier}");
         await adminPage.GetByRole(AriaRole.Button, new() { Name = "Start review", Exact = true }).ClickAsync();
         await adminPage.GetByRole(AriaRole.Button, new() { Name = "Match unique exact entries", Exact = true }).ClickAsync();
-        var approve = adminPage.GetByRole(AriaRole.Button, new() { Name = "Approve against this evidence", Exact = true });
+        var approve = adminPage.GetByRole(AriaRole.Button, new() { Name = "Approve this bank wallet", Exact = true });
+        await Expect(approve).ToBeEnabledAsync();
+        await approve.ClickAsync();
+        await Expect(adminPage.GetByText("Selected bank approval: Current", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(adminPage.GetByText("Closing approval: PendingApproval; reconciliation: Reconciled", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(adminPage.GetByText("Bank wallets awaiting current approval: ABSA", new() { Exact = true })).ToBeVisibleAsync();
+        await SelectAsync(adminPage, "Account", $"{secondAccount.BankName} - {secondAccount.AccountIdentifier}");
+        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Start review", Exact = true }).ClickAsync();
         await Expect(approve).ToBeEnabledAsync();
         await approve.ClickAsync();
         await Expect(adminPage.GetByText("Closing approval: Approved; reconciliation: Reconciled", new() { Exact = true })).ToBeVisibleAsync();
@@ -153,10 +169,12 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await using var final = database.CreateContext();
         Assert.Equal(150_000m, (await final.Wallets.FindAsync(scenario.CashWallet.Id))!.Balance);
         Assert.Equal(950_000m, (await final.Wallets.FindAsync(scenario.BankWallet.Id))!.Balance);
+        Assert.Equal(200_000m, (await final.Wallets.FindAsync(secondBank.Id))!.Balance);
+        Assert.Equal(300_000m, (await final.Wallets.FindAsync(mobile.Id))!.Balance);
         Assert.Equal(0m, (await final.Vaults.SingleAsync(v => v.BranchId == scenario.Agent.BranchId)).CurrentBalance);
         Assert.Equal(CashCountStatus.Approved, (await final.CashCounts.FindAsync(saved.CashCountId))!.Status);
         Assert.Equal(1, await final.SessionFloatSettlements.CountAsync(s => s.Stage == FloatSettlementStage.Closing));
-        Assert.Equal(1, await final.BankReconciliationResults.CountAsync());
+        Assert.Equal(2, await final.BankReconciliationResults.CountAsync());
     }
 
     [Fact]

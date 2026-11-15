@@ -1,6 +1,10 @@
+using System.Data;
 using EastSeat.Agenti.Shared.Domain.Entities;
+using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace EastSeat.Agenti.Web.Features.WalletTypes;
 
@@ -85,30 +89,57 @@ public class WalletTypeService(ApplicationDbContext dbContext) : IWalletTypeServ
             return WalletTypeSaveResult.Error("Wallet type ID is required for update.");
         }
 
-        var walletType = await dbContext.WalletTypes.FindAsync(model.Id.Value);
-        if (walletType == null)
+        IDbContextTransaction? transaction = null;
+        try
         {
-            return WalletTypeSaveResult.Error("Wallet type not found.");
-        }
+            transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+            var walletType = await dbContext.WalletTypes.FindAsync(model.Id.Value);
+            if (walletType == null)
+            {
+                return WalletTypeSaveResult.Error("Wallet type not found.");
+            }
 
-        // Check for duplicate name (excluding current type)
-        var duplicateExists = await dbContext.WalletTypes
-            .AnyAsync(wt => wt.Name == model.Name && wt.Id != model.Id);
-        if (duplicateExists)
+            // Check for duplicate name (excluding current type)
+            var duplicateExists = await dbContext.WalletTypes
+                .AnyAsync(wt => wt.Name == model.Name && wt.Id != model.Id);
+            if (duplicateExists)
+            {
+                return WalletTypeSaveResult.Error($"Wallet type '{model.Name}' already exists.");
+            }
+
+            if (model.Type == WalletTypeEnum.Cash &&
+                await dbContext.Wallets.AnyAsync(w => w.WalletTypeId == walletType.Id &&
+                    dbContext.Wallets.Any(other => other.AgentId == w.AgentId &&
+                        other.Id != w.Id && other.WalletType!.Type == WalletTypeEnum.Cash)))
+            {
+                return WalletTypeSaveResult.Error("Changing this type to Cash would give an agent more than one Cash wallet.");
+            }
+
+            walletType.Name = model.Name;
+            walletType.Description = model.Description;
+            walletType.Type = model.Type;
+            walletType.SupportsDenominations = model.SupportsDenominations;
+            walletType.IsActive = model.IsActive;
+            walletType.UpdatedAt = DateTimeOffset.UtcNow;
+
+            await dbContext.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            return WalletTypeSaveResult.Ok(walletType.Id);
+        }
+        catch (Exception exception) when (BankingConcurrency.IsConflict(exception))
         {
-            return WalletTypeSaveResult.Error($"Wallet type '{model.Name}' already exists.");
+            await BankingConcurrency.RollbackAfterConflictAsync(transaction);
+            dbContext.ChangeTracker.Clear();
+            return WalletTypeSaveResult.Error("A concurrent change occurred. Refresh and retry.");
         }
-
-        walletType.Name = model.Name;
-        walletType.Description = model.Description;
-        walletType.Type = model.Type;
-        walletType.SupportsDenominations = model.SupportsDenominations;
-        walletType.IsActive = model.IsActive;
-        walletType.UpdatedAt = DateTimeOffset.UtcNow;
-
-        await dbContext.SaveChangesAsync();
-
-        return WalletTypeSaveResult.Ok(walletType.Id);
+        finally
+        {
+            if (transaction is not null)
+            {
+                await transaction.DisposeAsync();
+            }
+        }
     }
 
     /// <inheritdoc />

@@ -223,7 +223,7 @@ public sealed partial class BankReconciliationService
             }
             if (review.Version != expectedVersion)
                 throw new BankingConflictException("This review changed. Refresh and verify the current evidence before approving.");
-            var report = await EvaluateAsync(review, cancellationToken);
+            var report = await EvaluateAsync(review, cancellationToken, synchronizeAggregateStatus: false);
             var session = report.Sessions.SingleOrDefault(s => s.CashSessionId == cashSessionId)
                 ?? throw new BankingRuleException("The session is not part of this review.");
             if (!session.CanApprove || !session.ClosingCountId.HasValue || !session.ClosingSnapshotId.HasValue)
@@ -231,6 +231,7 @@ public sealed partial class BankReconciliationService
             if (session.BasisHash != basisHash)
                 throw new BankingConflictException("The evidence changed after it was reviewed. Refresh before approving.");
             var count = await db.CashCounts.Include(c => c.Agent).SingleAsync(c => c.Id == session.ClosingCountId, cancellationToken);
+            await db.Entry(count).ReloadAsync(cancellationToken);
             if (count.Agent!.UserId == userId)
                 throw new UnauthorizedAccessException("You cannot certify your own closing.");
             var previousStatus = count.Status;
@@ -239,9 +240,6 @@ public sealed partial class BankReconciliationService
             var previous = await db.BankReconciliationResults.AsNoTracking()
                 .Where(r => r.CashSessionId == cashSessionId && r.Review!.BankAccountId == accountId)
                 .OrderByDescending(r => r.Id).FirstOrDefaultAsync(cancellationToken);
-            count.Status = CashCountStatus.Approved;
-            count.ApprovedAt ??= clock.UtcNow;
-            count.ApprovedByUserId ??= userId;
             db.BankReconciliationResults.Add(new BankReconciliationResult
             {
                 ReviewId = reviewId, CashSessionId = cashSessionId, SnapshotId = session.ClosingSnapshotId.Value,
@@ -249,25 +247,41 @@ public sealed partial class BankReconciliationService
                 CommandId = commandId, ReportJson = JsonSerializer.Serialize(session),
                 SupersedesResultId = previous?.Id, ReviewedByUserId = userId, ReviewedAt = clock.UtcNow
             });
-            db.CashCountAuditLogs.Add(new CashCountAuditLog
-            {
-                CashCountId = count.Id, CashSessionId = cashSessionId, AgentId = count.AgentId,
-                Action = CashCountAuditAction.Approved, PreviousStatus = previousStatus, NewStatus = CashCountStatus.Approved,
-                TotalAmount = count.TotalAmount, PerformedByUserId = userId, PerformedAt = clock.UtcNow,
-                Notes = "Closing approved by an administrator. No operational float movement was repeated."
-            });
             AddDecision(review, userId, ReconciliationDecisionKind.Approved,
-                "Closing certified against current immutable observations and bank evidence.",
+                "This bank wallet was certified against its own observations and bank evidence.",
                 new { session.ClosingSnapshotId, session.RegisterVersion, BasisHash = basisHash, CommandId = commandId },
                 sessionId: cashSessionId);
-            WorkflowNotifications.AddForUser(db, count.Agent!.UserId, "Closing count approved",
-                "Your submitted closing count has been approved.", NotificationType.CountApproved,
-                "/cashcount-history", clock.UtcNow);
             review.Version++;
             var account = await db.BankAccounts.SingleAsync(a => a.Id == accountId, cancellationToken);
             account.Version++;
             await db.SaveChangesAsync(cancellationToken);
-            var result = await EvaluateAsync(review, cancellationToken);
+            var result = await EvaluateAsync(review, cancellationToken, synchronizeAggregateStatus: false);
+            var closing = result.Sessions.Single(s => s.CashSessionId == cashSessionId);
+            var fullyApproved = closing.BankApprovalCurrent && closing.PendingBankWallets.Count == 0;
+            count.Status = fullyApproved ? CashCountStatus.Approved : CashCountStatus.PendingApproval;
+            if (fullyApproved)
+            {
+                count.ApprovedAt ??= clock.UtcNow;
+                count.ApprovedByUserId ??= userId;
+            }
+            if (count.Status != previousStatus)
+            {
+                db.CashCountAuditLogs.Add(new CashCountAuditLog
+                {
+                    CashCountId = count.Id, CashSessionId = cashSessionId, AgentId = count.AgentId,
+                    Action = fullyApproved ? CashCountAuditAction.Approved : CashCountAuditAction.Unapproved,
+                    PreviousStatus = previousStatus, NewStatus = count.Status,
+                    TotalAmount = count.TotalAmount, PerformedByUserId = userId, PerformedAt = clock.UtcNow,
+                    Notes = fullyApproved
+                        ? "Closing approved after every bank wallet's current evidence was certified. No float movement was repeated."
+                        : "Closing requires renewed approval of the remaining bank wallets."
+                });
+                if (fullyApproved)
+                    WorkflowNotifications.AddForUser(db, count.Agent!.UserId, "Closing count approved",
+                        "Every bank wallet in your submitted closing has been approved.", NotificationType.CountApproved,
+                        "/cashcount-history", clock.UtcNow);
+            }
+            closing.ApprovalStatus = count.Status;
             review.Status = AggregateStatus(result);
             result.Status = review.Status;
             await db.SaveChangesAsync(cancellationToken);
@@ -276,7 +290,7 @@ public sealed partial class BankReconciliationService
         }
         catch
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            // Disposal rolls back if needed without masking a commit-time serialization failure.
             db.ChangeTracker.Clear();
             throw;
         }

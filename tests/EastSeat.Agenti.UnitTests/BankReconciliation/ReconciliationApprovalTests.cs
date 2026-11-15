@@ -623,7 +623,10 @@ public class ReconciliationApprovalTests
         Assert.Empty(changed.Matches);
         var closing = await fixture.Db.CashCounts.AsNoTracking().SingleAsync(c => c.Id == closingId);
         Assert.Equal(1_100_000m, closing.TotalAmount);
+        Assert.Equal(CashCountStatus.PendingApproval, closing.Status);
         Assert.Equal(approvedAt, closing.ApprovedAt);
+        Assert.Equal(1, await fixture.Db.CashCountAuditLogs.CountAsync(
+            a => a.CashCountId == closingId && a.Action == CashCountAuditAction.Unapproved));
         Assert.Equal(1, await fixture.Db.BankReconciliationResults.CountAsync());
         await Assert.ThrowsAnyAsync<InvalidOperationException>(() => reconciliation.ApproveClosingAsync(fixture.Admin.Id,
             review.Id, fixture.Session.Id, Guid.NewGuid(), oldVersion, oldBasis));

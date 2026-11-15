@@ -13,6 +13,7 @@ namespace EastSeat.Agenti.UnitTests.Services;
 [Trait("Feature", "AgentManagement")]
 public class AgentServiceTests : IDisposable
 {
+    private readonly ConcurrencyExceptionInterceptor _concurrencyExceptionInterceptor = new();
     private readonly ApplicationDbContext _dbContext;
     private readonly AgentService _sut;
     private readonly Branch _testBranch;
@@ -22,6 +23,7 @@ public class AgentServiceTests : IDisposable
         // Setup in-memory database
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .AddInterceptors(_concurrencyExceptionInterceptor)
             .ConfigureWarnings(x => x.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
@@ -44,6 +46,25 @@ public class AgentServiceTests : IDisposable
     {
         _dbContext.Database.EnsureDeleted();
         _dbContext.Dispose();
+    }
+
+    private sealed class ConcurrencyExceptionInterceptor : SaveChangesInterceptor
+    {
+        public bool ThrowOnNextSave { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (ThrowOnNextSave)
+            {
+                ThrowOnNextSave = false;
+                throw new DbUpdateConcurrencyException("Simulated concurrent update.");
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
     }
 
     #region GetAgentsAsync Tests
@@ -794,6 +815,41 @@ public class AgentServiceTests : IDisposable
         result.ErrorMessage.Should().Contain("already has a wallet of type");
     }
 
+    [Fact]
+    public async Task AddWalletAsync_WhenConcurrentChangeOccurs_ReturnsRetryErrorAndClearsTrackedChanges()
+    {
+        var user = UserBuilder.Default().Build();
+        _dbContext.Users.Add(user);
+        await _dbContext.SaveChangesAsync();
+
+        var agent = AgentBuilder.Default()
+            .WithUserId(user.Id)
+            .WithBranchId(_testBranch.Id)
+            .Build();
+        _dbContext.Agents.Add(agent);
+        var walletType = WalletTypeBuilder.Default()
+            .WithId(1)
+            .WithType(WalletTypeEnum.Bank)
+            .Build();
+        _dbContext.WalletTypes.Add(walletType);
+        await _dbContext.SaveChangesAsync();
+
+        _concurrencyExceptionInterceptor.ThrowOnNextSave = true;
+        var result = await _sut.AddWalletAsync(new WalletFormModel
+        {
+            AgentId = agent.Id,
+            WalletTypeId = walletType.Id,
+            Name = "Bank Wallet",
+            Currency = "UGX",
+            IsActive = true
+        });
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Refresh and retry");
+        _dbContext.ChangeTracker.Entries().Should().BeEmpty();
+        (await _dbContext.Wallets.CountAsync()).Should().Be(0);
+    }
+
     #endregion
 
     #region UpdateWalletAsync Tests
@@ -855,6 +911,50 @@ public class AgentServiceTests : IDisposable
         updatedWallet.Currency.Should().Be("USD");
         updatedWallet.IsActive.Should().BeFalse();
         updatedWallet.Balance.Should().Be(1000m); // Balance unchanged
+    }
+
+    [Fact]
+    public async Task UpdateWalletAsync_WhenConcurrentChangeOccurs_ReturnsRetryErrorAndClearsTrackedChanges()
+    {
+        var user = UserBuilder.Default().Build();
+        _dbContext.Users.Add(user);
+        await _dbContext.SaveChangesAsync();
+
+        var agent = AgentBuilder.Default()
+            .WithUserId(user.Id)
+            .WithBranchId(_testBranch.Id)
+            .Build();
+        _dbContext.Agents.Add(agent);
+        var walletType = WalletTypeBuilder.Default()
+            .WithId(1)
+            .WithType(WalletTypeEnum.Bank)
+            .Build();
+        _dbContext.WalletTypes.Add(walletType);
+        await _dbContext.SaveChangesAsync();
+
+        var wallet = WalletBuilder.Default()
+            .WithAgentId(agent.Id)
+            .WithWalletTypeId(walletType.Id)
+            .WithName("Original Name")
+            .Build();
+        _dbContext.Wallets.Add(wallet);
+        await _dbContext.SaveChangesAsync();
+
+        _concurrencyExceptionInterceptor.ThrowOnNextSave = true;
+        var result = await _sut.UpdateWalletAsync(new WalletFormModel
+        {
+            Id = wallet.Id,
+            AgentId = agent.Id,
+            WalletTypeId = walletType.Id,
+            Name = "Changed Name",
+            Currency = "UGX",
+            IsActive = true
+        });
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Refresh and retry");
+        _dbContext.ChangeTracker.Entries().Should().BeEmpty();
+        (await _dbContext.Wallets.AsNoTracking().SingleAsync()).Name.Should().Be("Original Name");
     }
 
     [Fact]

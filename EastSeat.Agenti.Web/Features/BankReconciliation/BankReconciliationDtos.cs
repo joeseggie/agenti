@@ -69,6 +69,8 @@ public sealed class SessionReconciliationDto
     public BankReconciliationStatus Status { get; set; }
     public string BasisHash { get; set; } = string.Empty;
     public bool CanApprove { get; set; }
+    public bool BankApprovalCurrent { get; set; }
+    public List<string> PendingBankWallets { get; set; } = [];
     public DateTimeOffset? OpeningObservedAt { get; set; }
     public DateTimeOffset? ClosingObservedAt { get; set; }
     public decimal? StatementOpeningBalance { get; set; }

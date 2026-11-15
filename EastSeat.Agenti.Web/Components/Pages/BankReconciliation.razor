@@ -40,7 +40,7 @@
                 <MudItem xs="12" sm="2"><MudButton OnClick="CreateAsync" Disabled="@(Busy || _accountId == 0)" Color="Color.Primary" Variant="Variant.Filled">Start review</MudButton></MudItem>
             }
         </MudGrid>
-        <MudText Typo="Typo.caption">Choose a daily, weekly, or monthly date range. Each included session keeps its own approval and exceptions.</MudText>
+        <MudText Typo="Typo.caption">Review each Bank wallet against its own account statement. Whole-closing approval requires current approvals for every Bank wallet. Mobile Money statement reconciliation is not included.</MudText>
         <MudSelect T="long" Label="Existing review" Value="_reviewId" ValueChanged="OpenReviewAsync" Disabled="Busy">
             @foreach (var review in _reviews)
             {
@@ -87,6 +87,11 @@
             <MudPaper Class="pa-4 my-3" Outlined="true">
                 <MudText Typo="Typo.h6">@session.SessionDate - session #@session.CashSessionId</MudText>
                 <MudText>Closing approval: @session.ApprovalStatus; reconciliation: @session.Status</MudText>
+                <MudText>Selected bank approval: @(session.BankApprovalCurrent ? "Current" : "Not yet approved against current evidence")</MudText>
+                @if (session.PendingBankWallets.Count > 0)
+                {
+                    <MudText Color="Color.Warning">Bank wallets awaiting current approval: @string.Join(", ", session.PendingBankWallets)</MudText>
+                }
                 <MudText Typo="Typo.body2">Statement bank closing: @(session.StatementClosingBalance?.ToString("N2") ?? "Not established"); reported bank closing: @(session.ReportedBankClosingBalance?.ToString("N2") ?? "-"); explained timing difference: @session.ExplainedBankDifference.ToString("N2"); unexplained: @(session.UnexplainedBankDifference?.ToString("N2") ?? "-")</MudText>
                 @foreach (var issue in session.BlockingReasons) { <MudText Color="Color.Error">@issue</MudText> }
                 @foreach (var note in session.Notes) { <MudText Color="Color.Warning">@note</MudText> }
@@ -105,8 +110,8 @@
                 }
                 @if (_isAdmin)
                 {
-                    <MudButton OnClick="@(() => ApproveAsync(session))" Disabled="@(Busy || !session.CanApprove)" Color="Color.Success" Variant="Variant.Filled" Class="mr-2">
-                        Approve against this evidence
+                    <MudButton OnClick="@(() => ApproveAsync(session))" Disabled="@(Busy || !session.CanApprove || session.BankApprovalCurrent)" Color="Color.Success" Variant="Variant.Filled" Class="mr-2">
+                        Approve this bank wallet
                     </MudButton>
                     <MudButton OnClick="@(() => SelectCorrection(session))" Disabled="@(Busy || !session.ClosingCountId.HasValue)">Request historical correction</MudButton>
                 }

@@ -10,7 +10,8 @@ namespace EastSeat.Agenti.Web.Features.BankReconciliation;
 public sealed partial class BankReconciliationService
 {
     private async Task<BankReconciliationReviewDto> EvaluateAsync(
-        BankReconciliationReview review, CancellationToken cancellationToken)
+        BankReconciliationReview review, CancellationToken cancellationToken, bool includeClosingApprovals = true,
+        bool synchronizeAggregateStatus = true)
     {
         var facts = await LoadFactsAsync(review, cancellationToken);
         var chain = new CoverageChain(facts.Coverage);
@@ -68,6 +69,8 @@ public sealed partial class BankReconciliationService
         if (result.Status is BankReconciliationStatus.Reconciled or BankReconciliationStatus.WithExceptions &&
             (result.Sessions.Any(s => !s.CanApprove) || result.PeriodIssues.Count > 0))
             result.Status = BankReconciliationStatus.NeedsReview;
+        if (includeClosingApprovals)
+            await PopulateClosingApprovalsAsync(result, facts, cancellationToken, synchronizeAggregateStatus);
         return result;
     }
 
@@ -272,6 +275,8 @@ public sealed partial class BankReconciliationService
             dto.BlockingReasons.Add("The mapped bank wallet is missing from this session's snapshots.");
             return dto;
         }
+        if (bankOpening.BankAccountId != facts.Account.Id || bankClosing.BankAccountId != facts.Account.Id)
+            dto.BlockingReasons.Add("This bank account must be bound to its wallet in both the opening and closing snapshots.");
         dto.OpeningObservedAt = bankOpening.ObservedAt;
         dto.ClosingObservedAt = bankClosing.ObservedAt;
         dto.ReportedBankClosingBalance = bankClosing.Amount;
@@ -370,6 +375,8 @@ public sealed partial class BankReconciliationService
         }
         foreach (var wallet in closing)
         {
+            if (wallet.WalletType == WalletTypeEnum.Bank && wallet.WalletId != facts.Account.WalletId)
+                continue;
             var position = positions.SingleOrDefault(p => p.WalletId == wallet.WalletId);
             if (position == null)
             {

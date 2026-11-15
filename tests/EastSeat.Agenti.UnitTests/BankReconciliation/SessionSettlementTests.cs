@@ -2,6 +2,7 @@ using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.UnitTests.Helpers;
+using EastSeat.Agenti.Web.Features.CashCounts;
 using EastSeat.Agenti.Web.Features.Vaults;
 using Microsoft.EntityFrameworkCore;
 using Moq;
@@ -10,6 +11,55 @@ namespace EastSeat.Agenti.UnitTests.BankReconciliation;
 
 public class SessionSettlementTests
 {
+    [Fact]
+    public async Task MultipleBankAndMobileWallets_OpenAndCloseWithOneSettlementAndSeparateBindings()
+    {
+        using var fixture = new BankingTestContext();
+        var secondBank = fixture.AddWallet("ABSA", WalletTypeEnum.Bank, 200_000m);
+        var secondAccount = fixture.BindBankAccount(secondBank);
+        var mobile = fixture.AddWallet("Airtel", WalletTypeEnum.MobileMoney, 300_000m);
+        var initial = await fixture.Db.Wallets.ToDictionaryAsync(w => w.Id, w => w.Balance);
+        var (settlements, vault) = CreateService(fixture);
+        var clock = new BusinessClock(new FixedTimeProvider());
+        var workflow = new BankSessionWorkflow(fixture.Db, new BankingAccessService(fixture.Db, clock),
+            clock, new SessionBalanceService(fixture.Db, clock), settlements);
+        (await fixture.Db.Vaults.SingleAsync()).CurrentBalance = initial.Values.Sum();
+        await fixture.Db.SaveChangesAsync();
+        var opening = await workflow.InitializeFormAsync(fixture.User.Id, true);
+        foreach (var wallet in opening.WalletEntries)
+        {
+            wallet.CountedAmount = initial[wallet.WalletId];
+            wallet.ObservedAt = clock.UtcNow;
+            wallet.Denominations = null;
+        }
+        var savedOpening = await workflow.SaveAsync(fixture.User.Id, opening);
+        await workflow.SubmitAsync(fixture.User.Id, savedOpening.CashCountId!.Value);
+        await workflow.ApproveOpeningAsync(fixture.Admin.Id, savedOpening.CashCountId.Value);
+        var closing = await workflow.InitializeFormAsync(fixture.User.Id, false);
+        Assert.Equal(4, closing.WalletEntries.Count);
+        foreach (var wallet in closing.WalletEntries)
+        {
+            Assert.Equal(initial[wallet.WalletId], wallet.ExpectedBalance);
+            wallet.CountedAmount = wallet.ExpectedBalance;
+            wallet.ObservedAt = clock.UtcNow;
+            wallet.Denominations = null;
+        }
+        var savedClosing = await workflow.SaveAsync(fixture.User.Id, closing);
+
+        await workflow.SubmitAsync(fixture.User.Id, savedClosing.CashCountId!.Value);
+        await workflow.SubmitAsync(fixture.User.Id, savedClosing.CashCountId.Value);
+
+        var snapshot = await fixture.Db.CashCountSnapshots.SingleAsync(s => s.CashCountId == savedClosing.CashCountId);
+        var wallets = CountSnapshotCodec.Deserialize(snapshot.WalletsJson);
+        Assert.Equal(fixture.Account.Id, wallets.Single(w => w.WalletId == fixture.BankWallet.Id).BankAccountId);
+        Assert.Equal(secondAccount.Id, wallets.Single(w => w.WalletId == secondBank.Id).BankAccountId);
+        Assert.Null(wallets.Single(w => w.WalletId == mobile.Id).BankAccountId);
+        Assert.All(await fixture.Db.Wallets.ToListAsync(), w => Assert.Equal(0m, w.Balance));
+        Assert.Equal(initial.Values.Sum(), (await fixture.Db.Vaults.SingleAsync()).CurrentBalance);
+        vault.Verify(v => v.DepositForSessionAsync(fixture.Session.Id, fixture.Account.BranchId,
+            initial.Values.Sum(), fixture.User.Id, false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task Closing_ReplayDoesNotMoveFundsOrApproveTheClosing()
     {

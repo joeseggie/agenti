@@ -2,7 +2,10 @@ using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
+using EastSeat.Agenti.Web.Features.BankStatements;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace EastSeat.Agenti.UnitTests.Helpers;
 
@@ -82,18 +85,23 @@ internal class BankingScenario : IDisposable
         return transaction;
     }
 
-    public void AddApprovedOpening(bool withSettlement = false, decimal bankAmount = 1_000_000m)
+    public void AddApprovedOpening(bool withSettlement = false, decimal bankAmount = 1_000_000m,
+        IReadOnlyList<Wallet>? additionalWallets = null)
     {
+        var wallets = new List<Wallet> { CashWallet, BankWallet };
+        wallets.AddRange(additionalWallets ?? []);
+        var bindings = Db.BankAccounts.ToDictionary(a => a.WalletId, a => a.Id);
+        var snapshots = wallets.Select(w => new CountedWalletSnapshot(
+            w.Id, w.Name, Db.WalletTypes.Find(w.WalletTypeId)!.Type, w.Currency,
+            w.Id == BankWallet.Id ? bankAmount : w.Balance, Session.OpenedAt,
+            bindings.TryGetValue(w.Id, out var accountId) ? accountId : null)).ToList();
         var opening = new CashCount
         {
             CashSessionId = Session.Id, AgentId = Agent.Id, IsOpening = true,
             Status = CashCountStatus.Approved, CountDate = Session.SessionDate,
-            TotalAmount = 100_000m + bankAmount, CreatedAt = Session.OpenedAt,
-            Details =
-            [
-                new() { WalletId = CashWallet.Id, Amount = 100_000m, ObservedAt = Session.OpenedAt },
-                new() { WalletId = BankWallet.Id, Amount = bankAmount, ObservedAt = Session.OpenedAt }
-            ]
+            TotalAmount = snapshots.Sum(w => w.Amount), CreatedAt = Session.OpenedAt,
+            Details = snapshots.Select(w => new CashCountDetail
+                { WalletId = w.WalletId, Amount = w.Amount, ObservedAt = w.ObservedAt }).ToList()
         };
         Db.CashCounts.Add(opening);
         Db.SaveChanges();
@@ -101,11 +109,7 @@ internal class BankingScenario : IDisposable
         {
             CashCountId = opening.Id, TotalAmount = opening.TotalAmount,
             CapturedByUserId = Admin.Id, CapturedAt = Session.OpenedAt,
-            WalletsJson = CountSnapshotCodec.Serialize(
-            [
-                new(CashWallet.Id, "Test cash", WalletTypeEnum.Cash, "UGX", 100_000m, Session.OpenedAt, null),
-                new(BankWallet.Id, "Test bank", WalletTypeEnum.Bank, "UGX", bankAmount, Session.OpenedAt, Account.Id)
-            ])
+            WalletsJson = CountSnapshotCodec.Serialize(snapshots)
         };
         Db.CashCountSnapshots.Add(snapshot);
         Db.SaveChanges();
@@ -119,6 +123,111 @@ internal class BankingScenario : IDisposable
             });
             Db.SaveChanges();
         }
+    }
+
+    public Wallet AddWallet(string name, WalletTypeEnum category, decimal balance = 0m)
+    {
+        var type = new WalletType { Name = $"{name}-{Guid.NewGuid():N}", Type = category, IsActive = true, CreatedAt = Now };
+        Db.WalletTypes.Add(type);
+        Db.SaveChanges();
+        var wallet = new Wallet
+        {
+            AgentId = Agent.Id, WalletTypeId = type.Id, Name = name, Currency = "UGX",
+            Balance = balance, IsActive = true, CreatedAt = Now
+        };
+        Db.Wallets.Add(wallet);
+        Db.SaveChanges();
+        return wallet;
+    }
+
+    public BankAccount BindBankAccount(Wallet wallet)
+    {
+        var account = new BankAccount
+        {
+            BranchId = Account.BranchId, WalletId = wallet.Id, BankName = wallet.Name,
+            AccountIdentifier = $"SYNTHETIC-{wallet.Id}", BalanceBasis = BankBalanceBasis.Ledger,
+            CreatedAt = Now
+        };
+        Db.BankAccounts.Add(account);
+        Db.SaveChanges();
+        return account;
+    }
+
+    public CashCount AddSubmittedClosing(IReadOnlyDictionary<long, decimal>? amounts = null)
+    {
+        var opening = Db.CashCountSnapshots.Include(s => s.CashCount)
+            .Single(s => s.CashCount!.CashSessionId == Session.Id && s.CashCount.IsOpening);
+        var wallets = CountSnapshotCodec.Deserialize(opening.WalletsJson)
+            .Select(w => w with { Amount = amounts?.GetValueOrDefault(w.WalletId, w.Amount) ?? w.Amount,
+                ObservedAt = Now.AddMinutes(30) }).ToList();
+        var count = new CashCount
+        {
+            CashSessionId = Session.Id, AgentId = Agent.Id, CountDate = Session.SessionDate,
+            Status = CashCountStatus.PendingApproval, TotalAmount = wallets.Sum(w => w.Amount),
+            CreatedAt = Now.AddMinutes(30)
+        };
+        Db.CashCounts.Add(count);
+        Db.SaveChanges();
+        var snapshot = new CashCountSnapshot
+        {
+            CashCountId = count.Id, TotalAmount = count.TotalAmount, RegisterVersion = Session.RegisterVersion,
+            CapturedByUserId = User.Id, CapturedAt = count.CreatedAt, WalletsJson = CountSnapshotCodec.Serialize(wallets)
+        };
+        Db.CashCountSnapshots.Add(snapshot);
+        Db.SaveChanges();
+        Db.SessionFloatSettlements.Add(new SessionFloatSettlement
+        {
+            CashCountId = count.Id, SnapshotId = snapshot.Id, Stage = FloatSettlementStage.Closing,
+            ReportedAmount = count.TotalAmount, VaultAmount = 0, PostedAt = snapshot.CapturedAt, PostedByUserId = User.Id
+        });
+        Session.Status = CashSessionStatus.Closed;
+        Session.OperationalClosedAt = snapshot.CapturedAt;
+        Db.SaveChanges();
+        return count;
+    }
+
+    public async Task<BankStatementImportDto> ImportStatementAsync(
+        BankAccount account, IBusinessClock clock, IReadOnlyList<ParsedStatementEntry> rows,
+        decimal opening, decimal closing, bool acceptRevisions = false)
+    {
+        account = await Db.BankAccounts.SingleAsync(a => a.Id == account.Id);
+        var from = new DateTimeOffset(Session.SessionDate.ToDateTime(TimeOnly.MinValue), TimeSpan.FromHours(3));
+        var profile = new FixtureStatementProfile(new ParsedStatement(account.AccountIdentifier, "UGX",
+            BankBalanceBasis.Ledger, from, from.AddDays(1), opening, closing, true, rows));
+        account.ImportProfileKey = profile.Key;
+        account.ImportProfileVerified = true;
+        account.BankIdentifier = profile.BankIdentifier;
+        await Db.SaveChangesAsync();
+        var access = new BankingAccessService(Db, clock);
+        var evidence = new BankEvidenceService(Db, access, clock, Options.Create(new BankEvidenceOptions()));
+        var file = await evidence.UploadAsync(Admin.Id, account.Id, Guid.NewGuid(), "synthetic.csv", true,
+            new MemoryStream(Guid.NewGuid().ToByteArray()));
+        var imports = new BankStatementService(Db, access, clock, new StatementProfileCatalog([profile]),
+            Options.Create(new BankStatementOptions()), NullLogger<BankStatementService>.Instance);
+        var import = await imports.StartAsync(Admin.Id, account.Id, file.Id);
+        await imports.ProcessNextAsync();
+        var preview = await imports.GetPreviewAsync(Admin.Id, import.Id);
+        return await imports.CommitAsync(Admin.Id, import.Id, new CommitStatementForm
+        {
+            ExpectedVersion = preview.Import.Version,
+            Resolutions = acceptRevisions ? preview.Rows.Where(r => r.RequiresIdentityDecision).Select(r =>
+                new StatementRowResolution(r.Id, StatementRowResolutionKind.AcceptRevision, r.PossibleExistingTransactionIds.Single(),
+                    "Corrected synthetic bank evidence for this occurrence.")).ToList() : []
+        });
+    }
+
+    private sealed class FixtureStatementProfile(ParsedStatement statement) : IStatementImportProfile
+    {
+        public string Key => "multi-wallet-test-only";
+        public string BankIdentifier => "synthetic-multi-wallet";
+        public string DisplayName => "Synthetic multi-wallet fixture";
+        public int Version => 1;
+        public bool IsVerified => true;
+        public BankBalanceBasis BalanceBasis => BankBalanceBasis.Ledger;
+        public IReadOnlyList<string> SupportedContentTypes => ["text/csv"];
+        public string? GetReliableIdentity(ParsedStatementEntry entry) => entry.TransactionNumber;
+        public Task<ParsedStatement> ParseAsync(Stream source, string contentType, StatementAccountContext account,
+            CancellationToken cancellationToken) => Task.FromResult(statement);
     }
 
     public BankStatementImport AddImport()

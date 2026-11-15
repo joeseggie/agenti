@@ -14,6 +14,7 @@ namespace EastSeat.Agenti.UnitTests.Services;
 /// </summary>
 public class WalletTypeServiceTests : IDisposable
 {
+    private readonly ConcurrencyExceptionInterceptor _concurrencyExceptionInterceptor = new();
     private readonly ApplicationDbContext _dbContext;
     private readonly WalletTypeService _walletTypeService;
 
@@ -21,6 +22,7 @@ public class WalletTypeServiceTests : IDisposable
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .AddInterceptors(_concurrencyExceptionInterceptor)
             .ConfigureWarnings(x => x.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
@@ -32,6 +34,25 @@ public class WalletTypeServiceTests : IDisposable
     {
         _dbContext.Database.EnsureDeleted();
         _dbContext.Dispose();
+    }
+
+    private sealed class ConcurrencyExceptionInterceptor : SaveChangesInterceptor
+    {
+        public bool ThrowOnNextSave { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (ThrowOnNextSave)
+            {
+                ThrowOnNextSave = false;
+                throw new DbUpdateConcurrencyException("Simulated concurrent update.");
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
     }
 
     #region GetWalletTypesAsync Tests
@@ -337,6 +358,31 @@ public class WalletTypeServiceTests : IDisposable
         updatedType.Type.Should().Be(WalletTypeEnum.Bank);
         updatedType.SupportsDenominations.Should().BeTrue();
         updatedType.IsActive.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WhenConcurrentChangeOccurs_ReturnsRetryErrorAndClearsTrackedChanges()
+    {
+        var walletType = WalletTypeBuilder.Default()
+            .WithId(1)
+            .WithName("Original Name")
+            .Build();
+        _dbContext.WalletTypes.Add(walletType);
+        await _dbContext.SaveChangesAsync();
+
+        _concurrencyExceptionInterceptor.ThrowOnNextSave = true;
+        var result = await _walletTypeService.UpdateAsync(new WalletTypeFormModel
+        {
+            Id = walletType.Id,
+            Name = "Changed Name",
+            Description = "Changed Description",
+            Type = WalletTypeEnum.Bank
+        });
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Refresh and retry");
+        _dbContext.ChangeTracker.Entries().Should().BeEmpty();
+        (await _dbContext.WalletTypes.AsNoTracking().SingleAsync()).Name.Should().Be("Original Name");
     }
 
     [Fact]
