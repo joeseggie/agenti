@@ -339,10 +339,7 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
         }
         catch (Exception exception) when (BankingConcurrency.IsConflict(exception))
         {
-            if (transaction is not null)
-            {
-                await transaction.RollbackAsync(CancellationToken.None);
-            }
+            await BankingConcurrency.RollbackAfterConflictAsync(transaction);
             dbContext.ChangeTracker.Clear();
             return SaveResult.Error("A concurrent change occurred. Refresh and retry.");
         }
@@ -406,10 +403,7 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
         }
         catch (Exception exception) when (BankingConcurrency.IsConflict(exception))
         {
-            if (transaction is not null)
-            {
-                await transaction.RollbackAsync(CancellationToken.None);
-            }
+            await BankingConcurrency.RollbackAfterConflictAsync(transaction);
             dbContext.ChangeTracker.Clear();
             return SaveResult.Error("A concurrent change occurred. Refresh and retry.");
         }

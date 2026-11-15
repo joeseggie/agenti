@@ -1,3 +1,4 @@
+using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
 using Microsoft.EntityFrameworkCore;
@@ -7,7 +8,8 @@ namespace EastSeat.Agenti.Web.Features.BankReconciliation;
 public sealed partial class BankReconciliationService
 {
     private async Task PopulateClosingApprovalsAsync(
-        BankReconciliationReviewDto report, ReviewFacts facts, CancellationToken cancellationToken)
+        BankReconciliationReviewDto report, ReviewFacts facts, CancellationToken cancellationToken,
+        bool synchronizeAggregateStatus)
     {
         var sessionIds = report.Sessions.Select(s => s.CashSessionId).ToList();
         var approvals = await db.BankReconciliationResults.AsNoTracking().Include(r => r.Review)
@@ -23,7 +25,8 @@ public sealed partial class BankReconciliationService
             if (snapshot == null)
                 continue;
             var banks = CountSnapshotCodec.Deserialize(snapshot.WalletsJson)
-                .Where(w => w.WalletType == WalletTypeEnum.Bank);
+                .Where(w => w.WalletType == WalletTypeEnum.Bank).ToList();
+            var currentApprovals = new List<BankReconciliationResult>();
             foreach (var bank in banks)
             {
                 var approval = approvals.FirstOrDefault(a => a.CashSessionId == session.CashSessionId &&
@@ -42,15 +45,54 @@ public sealed partial class BankReconciliationService
                         accountSession.ClosingSnapshotId == snapshot.Id &&
                         accountSession.BasisHash == approval.BasisHash;
                 }
+                if (current)
+                    currentApprovals.Add(approval!);
                 if (bank.BankAccountId == report.BankAccountId)
                     session.BankApprovalCurrent = current;
                 if (!current)
                     session.PendingBankWallets.Add(bank.BankAccountId.HasValue
                         ? bank.WalletName : $"{bank.WalletName} (missing account binding in the closing snapshot)");
             }
-            // Historical approvals remain recorded; the displayed status must reflect current evidence.
-            if (session.PendingBankWallets.Count > 0 && session.ApprovalStatus == CashCountStatus.Approved)
-                session.ApprovalStatus = CashCountStatus.PendingApproval;
+            if (banks.Count == 0 || !synchronizeAggregateStatus || !session.ClosingCountId.HasValue)
+                continue;
+
+            var count = await db.CashCounts.SingleAsync(c => c.Id == session.ClosingCountId.Value, cancellationToken);
+            await db.Entry(count).ReloadAsync(cancellationToken);
+            if (count.Status is CashCountStatus.Approved or CashCountStatus.PendingApproval)
+            {
+                var previousStatus = count.Status;
+                var newStatus = session.PendingBankWallets.Count == 0
+                    ? CashCountStatus.Approved
+                    : CashCountStatus.PendingApproval;
+                if (newStatus != previousStatus)
+                {
+                    count.Status = newStatus;
+                    if (newStatus == CashCountStatus.Approved)
+                    {
+                        var latestApproval = currentApprovals.MaxBy(a => a.Id)!;
+                        count.ApprovedAt = latestApproval.ReviewedAt;
+                        count.ApprovedByUserId = latestApproval.ReviewedByUserId;
+                    }
+                    db.CashCountAuditLogs.Add(new CashCountAuditLog
+                    {
+                        CashCountId = count.Id,
+                        CashSessionId = count.CashSessionId,
+                        AgentId = count.AgentId,
+                        Action = newStatus == CashCountStatus.Approved
+                            ? CashCountAuditAction.Approved
+                            : CashCountAuditAction.Unapproved,
+                        PreviousStatus = previousStatus,
+                        NewStatus = newStatus,
+                        TotalAmount = count.TotalAmount,
+                        PerformedAt = clock.UtcNow,
+                        Notes = newStatus == CashCountStatus.Approved
+                            ? "Closing approval was restored because every captured bank wallet again has current evidence."
+                            : $"Closing approval was invalidated; current approval is required for: {string.Join(", ", session.PendingBankWallets)}."
+                    });
+                    await db.SaveChangesAsync(cancellationToken);
+                }
+                session.ApprovalStatus = count.Status;
+            }
         }
     }
 }

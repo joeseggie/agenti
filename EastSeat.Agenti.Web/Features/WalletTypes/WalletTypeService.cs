@@ -129,10 +129,7 @@ public class WalletTypeService(ApplicationDbContext dbContext) : IWalletTypeServ
         }
         catch (Exception exception) when (BankingConcurrency.IsConflict(exception))
         {
-            if (transaction is not null)
-            {
-                await transaction.RollbackAsync(CancellationToken.None);
-            }
+            await BankingConcurrency.RollbackAfterConflictAsync(transaction);
             dbContext.ChangeTracker.Clear();
             return WalletTypeSaveResult.Error("A concurrent change occurred. Refresh and retry.");
         }

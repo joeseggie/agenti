@@ -92,6 +92,49 @@ public class MultiBankReconciliationTests
     }
 
     [Fact]
+    public async Task ResolvingFlag_RecordsAggregateUnapprovalAndRestorationWithoutChangingBankDecisions()
+    {
+        using var fixture = new BankingTestContext();
+        var (service, first, second, closingId) = await PrepareAsync(fixture);
+        first = await ApproveAsync(service, fixture, first);
+        second = await ApproveAsync(service, fixture, second);
+
+        var closing = await fixture.Db.CashCounts.SingleAsync(c => c.Id == closingId);
+        Assert.Equal(CashCountStatus.Approved, closing.Status);
+        Assert.NotNull(closing.ApprovedAt);
+        var approvalAuditCount = await fixture.Db.CashCountAuditLogs.CountAsync(
+            a => a.CashCountId == closingId && a.Action == CashCountAuditAction.Approved);
+
+        var admin = await fixture.Db.Users.SingleAsync(u => u.Id == fixture.Admin.Id);
+        admin.Role = UserRole.Supervisor;
+        await fixture.Db.SaveChangesAsync();
+        var flagged = await service.FlagAsync(fixture.Admin.Id, first.Id, first.Version,
+            "The account evidence needs an additional review.");
+
+        closing = await fixture.Db.CashCounts.SingleAsync(c => c.Id == closingId);
+        Assert.Equal(CashCountStatus.PendingApproval, closing.Status);
+        Assert.NotNull(closing.ApprovedAt);
+        Assert.Equal(1, await fixture.Db.CashCountAuditLogs.CountAsync(
+            a => a.CashCountId == closingId && a.Action == CashCountAuditAction.Unapproved));
+
+        admin.Role = UserRole.Admin;
+        await fixture.Db.SaveChangesAsync();
+        var restored = await service.RespondToFlagAsync(fixture.Admin.Id, flagged.Id,
+            new BankFlagResponseForm(flagged.Version, flagged.Flags.Single().Id,
+                "The evidence was reviewed and no discrepancy remains.", Void: false));
+
+        closing = await fixture.Db.CashCounts.SingleAsync(c => c.Id == closingId);
+        Assert.Equal(CashCountStatus.Approved, closing.Status);
+        Assert.NotNull(closing.ApprovedAt);
+        Assert.Equal(approvalAuditCount + 1, await fixture.Db.CashCountAuditLogs.CountAsync(
+            a => a.CashCountId == closingId && a.Action == CashCountAuditAction.Approved));
+        Assert.Equal(CashCountStatus.Approved, restored.Sessions.Single().ApprovalStatus);
+        Assert.Equal(2, await fixture.Db.BankReconciliationResults.CountAsync());
+        Assert.Equal(1, await fixture.Db.SessionFloatSettlements.CountAsync(
+            s => s.Stage == FloatSettlementStage.Closing));
+    }
+
+    [Fact]
     public async Task MissingStatementOrUnboundBank_CannotBeSkippedByApprovingAnotherBank()
     {
         using var fixture = new BankingTestContext();

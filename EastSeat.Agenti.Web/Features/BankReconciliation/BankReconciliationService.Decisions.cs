@@ -223,7 +223,7 @@ public sealed partial class BankReconciliationService
             }
             if (review.Version != expectedVersion)
                 throw new BankingConflictException("This review changed. Refresh and verify the current evidence before approving.");
-            var report = await EvaluateAsync(review, cancellationToken);
+            var report = await EvaluateAsync(review, cancellationToken, synchronizeAggregateStatus: false);
             var session = report.Sessions.SingleOrDefault(s => s.CashSessionId == cashSessionId)
                 ?? throw new BankingRuleException("The session is not part of this review.");
             if (!session.CanApprove || !session.ClosingCountId.HasValue || !session.ClosingSnapshotId.HasValue)
@@ -255,7 +255,7 @@ public sealed partial class BankReconciliationService
             var account = await db.BankAccounts.SingleAsync(a => a.Id == accountId, cancellationToken);
             account.Version++;
             await db.SaveChangesAsync(cancellationToken);
-            var result = await EvaluateAsync(review, cancellationToken);
+            var result = await EvaluateAsync(review, cancellationToken, synchronizeAggregateStatus: false);
             var closing = result.Sessions.Single(s => s.CashSessionId == cashSessionId);
             var fullyApproved = closing.BankApprovalCurrent && closing.PendingBankWallets.Count == 0;
             count.Status = fullyApproved ? CashCountStatus.Approved : CashCountStatus.PendingApproval;

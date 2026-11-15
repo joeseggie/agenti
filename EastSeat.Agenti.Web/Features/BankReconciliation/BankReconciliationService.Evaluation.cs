@@ -10,7 +10,8 @@ namespace EastSeat.Agenti.Web.Features.BankReconciliation;
 public sealed partial class BankReconciliationService
 {
     private async Task<BankReconciliationReviewDto> EvaluateAsync(
-        BankReconciliationReview review, CancellationToken cancellationToken, bool includeClosingApprovals = true)
+        BankReconciliationReview review, CancellationToken cancellationToken, bool includeClosingApprovals = true,
+        bool synchronizeAggregateStatus = true)
     {
         var facts = await LoadFactsAsync(review, cancellationToken);
         var chain = new CoverageChain(facts.Coverage);
@@ -69,7 +70,7 @@ public sealed partial class BankReconciliationService
             (result.Sessions.Any(s => !s.CanApprove) || result.PeriodIssues.Count > 0))
             result.Status = BankReconciliationStatus.NeedsReview;
         if (includeClosingApprovals)
-            await PopulateClosingApprovalsAsync(result, facts, cancellationToken);
+            await PopulateClosingApprovalsAsync(result, facts, cancellationToken, synchronizeAggregateStatus);
         return result;
     }
 
