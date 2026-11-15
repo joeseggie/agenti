@@ -1,4 +1,6 @@
+using System.Data;
 using EastSeat.Agenti.Shared.Domain.Entities;
+using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -85,6 +87,7 @@ public class WalletTypeService(ApplicationDbContext dbContext) : IWalletTypeServ
             return WalletTypeSaveResult.Error("Wallet type ID is required for update.");
         }
 
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
         var walletType = await dbContext.WalletTypes.FindAsync(model.Id.Value);
         if (walletType == null)
         {
@@ -99,6 +102,14 @@ public class WalletTypeService(ApplicationDbContext dbContext) : IWalletTypeServ
             return WalletTypeSaveResult.Error($"Wallet type '{model.Name}' already exists.");
         }
 
+        if (model.Type == WalletTypeEnum.Cash &&
+            await dbContext.Wallets.AnyAsync(w => w.WalletTypeId == walletType.Id &&
+                dbContext.Wallets.Any(other => other.AgentId == w.AgentId &&
+                    other.Id != w.Id && other.WalletType!.Type == WalletTypeEnum.Cash)))
+        {
+            return WalletTypeSaveResult.Error("Changing this type to Cash would give an agent more than one Cash wallet.");
+        }
+
         walletType.Name = model.Name;
         walletType.Description = model.Description;
         walletType.Type = model.Type;
@@ -107,6 +118,7 @@ public class WalletTypeService(ApplicationDbContext dbContext) : IWalletTypeServ
         walletType.UpdatedAt = DateTimeOffset.UtcNow;
 
         await dbContext.SaveChangesAsync();
+        await transaction.CommitAsync();
 
         return WalletTypeSaveResult.Ok(walletType.Id);
     }

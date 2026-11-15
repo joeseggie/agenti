@@ -27,7 +27,7 @@ The agent records what actually happened to customer cash and bank float during 
 | Milestone | Meaning | What it does not mean |
 |---|---|---|
 | Operational closing submitted | The agent's trading is locked, observations are frozen, and reported float is returned internally once. | The bank statement is complete, the customer cases are resolved, or an admin has approved the closing. |
-| Closing financially approved | An independent admin has certified the frozen closing against the current reviewed evidence. | There are necessarily no outstanding documented bank exceptions. |
+| Closing financially approved | An independent admin has certified every Bank wallet in the frozen closing against that wallet's own current bank evidence, with existing internal amount controls satisfied. | Approving one bank alone certifies another bank, or there are necessarily no outstanding documented bank exceptions. |
 | Reconciled / WithExceptions | The review establishes agreement, or agreement with explicitly verified outstanding exceptions. | A calculated eligible result replaces the admin's explicit approval action. |
 
 Use Uganda business dates and actual observation/transaction times. Daily reconciliation after closing is the recommended procedure; daily, weekly and monthly review ranges are supported. A range still produces a decision for each session, not one blanket approval.
@@ -60,6 +60,8 @@ An approver cannot approve their own modern opening, review their own modern wal
 For the detailed enrollment procedure, prerequisites, enable gates and troubleshooting, see [Bank workflow enrollment guide](bank-workflow-enrollment-guide.md).
 
 Use **Open statements** on Bank accounts to work with the selected account's statements. Bank statements keeps account selection and a read-only summary/status; **Manage account** returns to the selected account's setup and enrollment controls.
+
+Each agent has one Cash wallet and zero or more distinct Bank/Mobile Money wallet types; duplicate assignments of a catalog type are not allowed. Multiple Bank accounts for the same agent can enroll, but each must remain bound to its own wallet and use its own statements. The current one-active-agent branch limit remains. Agents without a Bank account keep the existing non-bank session process. Mobile Money statement reconciliation is outside this workflow; existing Mobile Money counts and internal settlement are unchanged.
 
 ## 4. Daily agent workflow
 
@@ -103,6 +105,8 @@ This is a next-business-day process, not an unrestricted same-day reopening. Do 
 ## 6. Administrator's end-of-day reconciliation
 
 Run this process after the teller's session is closed and the bank has published the complete daily export. It is an account-level, transaction-date control. It does **not** certify intraday cutoff balances: a row without a bank-provided time remains date-only, and Agenti never invents a time.
+
+Repeat the process separately for each Bank wallet/account in the closing. The selected bank's **Approve this bank wallet** action records only that bank's certification. Whole-closing approval waits for current approvals for every captured Bank wallet, including accounts later paused. Missing bindings, missing evidence, stale approvals and unresolved flags remain visible obligations. No statement or external reconciliation is required for Mobile Money wallets.
 
 | Step / actor | Input | Action | Validation | Output / status | Next decision |
 |---|---|---|---|---|---|

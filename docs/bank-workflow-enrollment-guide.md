@@ -43,7 +43,7 @@ The detailed teller/customer journey is in [Agenti: customer banking and bank-st
 3. Select the teller's active **Bank wallet**. Cash and Mobile Money wallets are not eligible.
 4. Enter the bank name, account identifier exactly as printed, statement timezone (normally `Africa/Kampala`), and the confirmed balance basis (Ledger, Available or Float).
 5. Select **Save account binding**. Currency comes from the wallet.
-6. Confirm the selected account and wallet in the page. A bank wallet can have only one account binding. After financial history exists, account identity/timezone/basis are protected against casual edits.
+6. Confirm the selected account and wallet in the page. A bank wallet can have only one account binding: bind the Cente wallet to its Centenary account, the ABSA wallet to its ABSA account, and so on. Repeat for every Bank wallet; do not combine banks or reuse another account's statement. After financial history exists, account identity/timezone/basis are protected against casual edits.
 7. Use **Account configuration** for settings and **Open statements** to upload statements for the selected account. On Bank statements, **Manage account** returns to that same account's settings. Unsubmitted files and unsaved forms are not retained when navigating between pages.
 
 The universal CSV parser ships with Agenti. There is no profile upload, per-bank code registration, or Admin schema edit. New statement uploads must use the CSV contract described below. Old profile metadata on historical imports remains historical only.
@@ -87,7 +87,9 @@ The app rejects future ranges, any selected date with an open session, missing s
 
 ## E4-E5: enable operations and close the day
 
-If the branch uses the modern workflow, open **Bank accounts** (`/bank-accounts`) and satisfy the existing enrollment gates: active account/wallets, confirmed matching balance basis/currency, required wallet configuration, and no active legacy session. Use **Enable new-session workflow** or **Pause new enrollment** there. Enrollment controls new cash sessions, not CSV uploads. The initial workflow supports one active agent and one enrolled account per branch. These are session-enrollment limits, not a reason to merge multiple bank wallets into one statement account.
+If the branch uses the modern workflow, open **Bank accounts** (`/bank-accounts`) and satisfy the enrollment gates: active account/wallets, confirmed matching balance basis/currency, exactly one active Cash wallet, and no active legacy session. Use **Enable new-session workflow** or **Pause new enrollment** for each Bank account. Multiple distinct Bank wallets/accounts for the same agent may be enrolled; the initial one-active-agent-per-branch limit remains. Enrollment controls new cash sessions, not CSV uploads.
+
+An agent has one Cash wallet and zero or more Bank/Mobile Money wallets, with at most one wallet per catalog type (for example, one ABSA and one Airtel Money wallet). The Bank and Mobile Money categories are not themselves limited to one wallet. Agents without a Bank account retain the existing non-bank session process. Mobile Money wallets remain part of counts and internal settlement; Mobile Money statement reconciliation is not implemented.
 
 The teller uses the normal opening/count process. Admin or Supervisor opening approval and vault funding safeguards are unchanged. During the day, the teller records customer movements, bank runs and cases in their normal screens. At closing, the teller submits actual wallet observations; Agenti freezes the snapshot, ends trading and performs the existing operational settlement once. A later bank review never deposits or zeros wallets a second time.
 
@@ -100,6 +102,8 @@ The teller uses the normal opening/count process. Admin or Supervisor opening ap
 5. Run unique exact matching. Auto-match is allowed only for a unique one-to-one amount/direction/currency/date candidate (and uses the reference when both sides provide it). Manually resolve ambiguous candidates with a reason.
 6. Classify fees, interest, transfers, reversals or other bank-only movements only with evidence and explanation. `Unknown` is an explicit unresolved classification and keeps the date open.
 7. Leave all unexplained differences visible. Do not invent a customer transaction or a bank reference to force agreement.
+
+Repeat statement intake and review separately for every Bank wallet included in the closing. **Approve this bank wallet** records an explicit decision for the selected account only. The page shows that bank's current approval and the Bank wallets still awaiting approval. The whole closing remains pending until every captured Bank wallet has a current approved review; another bank's fees or adjustments are not applied to this wallet. A missing account binding, missing statement, changed evidence or unresolved flag cannot be skipped by approving another bank. Pausing an account after closing does not remove its captured review obligation.
 
 The **Daily control** result is distinct from session certification. Even a daily status of `Reconciled` does not prove whether a date-only bank posting preceded a session's close. Exact cutoff certification remains unavailable unless the statement provides usable timestamps at the recorded observation points.
 
@@ -122,6 +126,7 @@ The **Daily control** result is distinct from session certification. Even a dail
 | Unmatched or ambiguous row | Check the register/reference/date, then manually match or classify with evidence; do not accept a guessed match. |
 | `Unknown`, `NeedsReview`, or `NeedsCorrection` | Investigate the row/flag/difference and record the appropriate Admin decision. |
 | Exact closing approval remains blocked | Date-only evidence cannot certify intraday cutoff balances. Keep the daily control result separate; do not add a fabricated timestamp. |
+| Selected bank approved but whole closing pending | Review the listed remaining Bank wallets using each wallet's own account statement. Renew approvals whose evidence changed. Mobile Money statements are not required. |
 | A later source contradicts a committed result | Create and review a new source revision. Confirm affected matches/results are re-evaluated. |
 
 ## Go-live checklist

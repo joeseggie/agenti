@@ -4,6 +4,8 @@ using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.UnitTests.Helpers;
 using EastSeat.Agenti.Web.Data;
+using EastSeat.Agenti.Web.Features.Agents;
+using EastSeat.Agenti.Web.Features.BankReconciliation;
 using EastSeat.Agenti.Web.Features.CashCounts;
 using EastSeat.Agenti.Web.Features.CustomerTransactions;
 using EastSeat.Agenti.Web.Features.Vaults;
@@ -16,6 +18,106 @@ namespace EastSeat.Agenti.IntegrationTests;
 
 public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : IntegrationTestBase(fixture)
 {
+    [Fact]
+    public async Task ConcurrentBankApprovals_CertifyEveryBankBeforeApprovingTheClosingOnce()
+    {
+        using var scenario = new BankingScenario(DbContext);
+        var otherBank = scenario.AddWallet("ABSA", WalletTypeEnum.Bank, 200_000m);
+        var account = scenario.BindBankAccount(otherBank);
+        var mobile = scenario.AddWallet("Airtel", WalletTypeEnum.MobileMoney, 300_000m);
+        scenario.AddApprovedOpening(withSettlement: true, additionalWallets: [otherBank, mobile]);
+        var closing = scenario.AddSubmittedClosing();
+        var clock = new BusinessClock(new BankingTestClock { Now = BankingScenario.Now.AddDays(1) });
+        await scenario.ImportStatementAsync(scenario.Account, clock, [], 1_000_000m, 1_000_000m);
+        await scenario.ImportStatementAsync(account, clock, [], 200_000m, 200_000m);
+        BankReconciliationService Service(ApplicationDbContext db) =>
+            new(db, new BankingAccessService(db, clock), clock, new SessionBalanceService(db, clock));
+        var service = Service(DbContext);
+        var firstReview = await service.CreateAsync(scenario.Admin.Id, scenario.Account.Id,
+            scenario.Session.SessionDate, scenario.Session.SessionDate);
+        var secondReview = await service.CreateAsync(scenario.Admin.Id, account.Id,
+            scenario.Session.SessionDate, scenario.Session.SessionDate);
+        var balances = await DbContext.Wallets.ToDictionaryAsync(w => w.Id, w => w.Balance);
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task Approve(BankReconciliationReviewDto review)
+        {
+            await using var db = Fixture.CreateContext();
+            var command = Guid.NewGuid();
+            await start.Task;
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    await Service(db).ApproveClosingAsync(scenario.Admin.Id, review.Id, scenario.Session.Id,
+                        command, review.Version, review.Sessions.Single().BasisHash);
+                    return;
+                }
+                catch (Exception exception) when (attempt < 3 && BankingConcurrency.IsConflict(exception))
+                {
+                    db.ChangeTracker.Clear();
+                }
+            }
+        }
+        var first = Approve(firstReview);
+        var second = Approve(secondReview);
+        start.SetResult();
+
+        await Task.WhenAll(first, second);
+
+        await using var verify = Fixture.CreateContext();
+        Assert.Equal(2, await verify.BankReconciliationResults.CountAsync());
+        Assert.Equal(CashCountStatus.Approved, (await verify.CashCounts.FindAsync(closing.Id))!.Status);
+        Assert.Equal(1, await verify.CashCountAuditLogs.CountAsync(a => a.CashCountId == closing.Id && a.Action == CashCountAuditAction.Approved));
+        Assert.Equal(1, await verify.Notifications.CountAsync(n => n.Type == NotificationType.CountApproved));
+        Assert.Equal(1, await verify.SessionFloatSettlements.CountAsync(s => s.Stage == FloatSettlementStage.Closing));
+        Assert.Empty(await verify.VaultTransactions.ToListAsync());
+        foreach (var wallet in await verify.Wallets.ToListAsync()) Assert.Equal(balances[wallet.Id], wallet.Balance);
+    }
+
+    [Fact]
+    public async Task ConcurrentCashAssignments_CannotCreateTwoCashCategoryWallets()
+    {
+        using var scenario = new BankingScenario(DbContext);
+        DbContext.Wallets.Remove(scenario.CashWallet);
+        var types = new[]
+        {
+            new WalletType { Name = $"Cash A-{Guid.NewGuid():N}", Type = WalletTypeEnum.Cash, IsActive = true },
+            new WalletType { Name = $"Cash B-{Guid.NewGuid():N}", Type = WalletTypeEnum.Cash, IsActive = true }
+        };
+        DbContext.WalletTypes.AddRange(types);
+        await DbContext.SaveChangesAsync();
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<bool> Assign(long typeId)
+        {
+            await using var db = Fixture.CreateContext();
+            await start.Task;
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    return (await new AgentService(db).AddWalletAsync(new WalletFormModel
+                    {
+                        AgentId = scenario.Agent.Id, WalletTypeId = typeId, Name = "Cash", Currency = "UGX", IsActive = true
+                    })).Success;
+                }
+                catch (Exception exception) when (attempt < 3 && BankingConcurrency.IsConflict(exception))
+                {
+                    db.ChangeTracker.Clear();
+                }
+            }
+        }
+        var first = Assign(types[0].Id);
+        var second = Assign(types[1].Id);
+        start.SetResult();
+
+        var results = await Task.WhenAll(first, second);
+
+        Assert.Single(results, r => r);
+        await using var verify = Fixture.CreateContext();
+        Assert.Equal(1, await verify.Wallets.CountAsync(w => w.AgentId == scenario.Agent.Id &&
+            w.WalletType!.Type == WalletTypeEnum.Cash));
+    }
+
     [Fact]
     public async Task ConcurrentCaptures_ReplayOneCommandWithoutChangingWallets()
     {

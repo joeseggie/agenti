@@ -105,8 +105,9 @@ entity.HasIndex(e => new { e.AgentId, e.WalletTypeId }).IsUnique();
 ```
 
 **Characteristics:**
-- Each agent has multiple wallets (one per wallet type maximum)
+- Each agent has one Cash wallet and zero or more Bank/Mobile Money wallets
 - Unique constraint: `(AgentId, WalletTypeId)` ensures one wallet per type per agent
+- This uniqueness is per catalog type (ABSA, Cente, Airtel Money, etc.), not per broad Bank/Mobile Money category; Cash is limited to one wallet across all Cash-category types
 - Wallets store balances for: Cash, Mobile Money (MTN, Airtel), Bank accounts
 - `DeleteBehavior.Restrict`: Cannot delete agent with wallets
 
@@ -333,6 +334,7 @@ await _dbContext.SaveChangesAsync();
 **Success Flow:**
 1. Validate agent and wallet type exist and are active
 2. Check for duplicate wallet type (unique constraint)
+   and reject an additional Cash-category wallet even when it uses a different catalog type
 3. Create Wallet entity with initial balance
 4. Return `AgentWalletDto`
 

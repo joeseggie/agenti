@@ -141,14 +141,11 @@ public sealed class BankAccountService(
                     account.BalanceBasis == BankBalanceBasis.Unverified ||
                     (profile.Key != UniversalBankCsvStatementProfile.ProfileKey && profile.BalanceBasis != account.BalanceBasis))
                     throw new BankingRuleException("Enrollment requires the universal Agenti CSV parser and a confirmed matching balance basis.");
-                if (await db.Agents.CountAsync(a => a.BranchId == scope.BranchId && a.IsActive, cancellationToken) != 1 ||
-                    await db.BankAccounts.AnyAsync(a => a.BranchId == scope.BranchId && a.WorkflowEnabled && a.Id != accountId, cancellationToken))
-                    throw new BankingRuleException("This release supports one active agent and one enrolled bank account per branch.");
+                if (await db.Agents.CountAsync(a => a.BranchId == scope.BranchId && a.IsActive, cancellationToken) != 1)
+                    throw new BankingRuleException("This release supports one active agent per branch for new-session enrollment.");
                 if (await db.Wallets.CountAsync(w => w.AgentId == scope.AgentId && w.IsActive &&
-                        w.WalletType!.Type == WalletTypeEnum.Bank, cancellationToken) != 1 ||
-                    await db.Wallets.CountAsync(w => w.AgentId == scope.AgentId && w.IsActive &&
                         w.WalletType!.Type == WalletTypeEnum.Cash, cancellationToken) != 1)
-                    throw new BankingRuleException("Initial enrollment requires one active bank wallet and one active cash wallet.");
+                    throw new BankingRuleException("Enrollment requires exactly one active Cash wallet for this agent.");
                 if (await db.CashSessions.AnyAsync(s => s.BranchId == scope.BranchId &&
                     s.WorkflowVersion == SessionWorkflowVersion.Legacy && s.Status != CashSessionStatus.Closed, cancellationToken))
                     throw new BankingRuleException("Finish active legacy sessions before enabling the new workflow.");

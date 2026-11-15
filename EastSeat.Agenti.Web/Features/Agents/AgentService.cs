@@ -1,4 +1,6 @@
+using System.Data;
 using EastSeat.Agenti.Shared.Domain.Entities;
+using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -281,13 +283,15 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
     /// <inheritdoc />
     public async Task<SaveResult> AddWalletAsync(WalletFormModel model)
     {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
         var agent = await dbContext.Agents.FindAsync(model.AgentId);
         if (agent == null)
         {
             return SaveResult.Error("Agent not found.");
         }
 
-        var walletType = await dbContext.WalletTypes.FindAsync(model.WalletTypeId);
+        var walletType = await dbContext.WalletTypes.AsNoTracking()
+            .SingleOrDefaultAsync(wt => wt.Id == model.WalletTypeId);
         if (walletType == null)
         {
             return SaveResult.Error("Wallet type not found.");
@@ -305,6 +309,11 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
         {
             return SaveResult.Error($"Agent already has a wallet of type '{walletType.Name}'.");
         }
+        if (walletType.Type == WalletTypeEnum.Cash &&
+            await dbContext.Wallets.AnyAsync(w => w.AgentId == model.AgentId && w.WalletType!.Type == WalletTypeEnum.Cash))
+        {
+            return SaveResult.Error("An agent can have only one Cash wallet.");
+        }
 
         var wallet = new Wallet
         {
@@ -319,6 +328,7 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
 
         dbContext.Wallets.Add(wallet);
         await dbContext.SaveChangesAsync();
+        await transaction.CommitAsync();
 
         return SaveResult.Ok(wallet.Id);
     }
@@ -331,10 +341,29 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
             return SaveResult.Error("Wallet ID is required for update.");
         }
 
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
         var wallet = await dbContext.Wallets.FindAsync(model.Id.Value);
         if (wallet == null)
         {
             return SaveResult.Error("Wallet not found.");
+        }
+
+        var walletType = await dbContext.WalletTypes.AsNoTracking()
+            .SingleOrDefaultAsync(wt => wt.Id == model.WalletTypeId);
+        if (walletType == null)
+        {
+            return SaveResult.Error("Wallet type not found.");
+        }
+        if (await dbContext.Wallets.AnyAsync(w => w.AgentId == wallet.AgentId &&
+            w.Id != wallet.Id && w.WalletTypeId == model.WalletTypeId))
+        {
+            return SaveResult.Error($"Agent already has a wallet of type '{walletType.Name}'.");
+        }
+        if (walletType.Type == WalletTypeEnum.Cash &&
+            await dbContext.Wallets.AnyAsync(w => w.AgentId == wallet.AgentId &&
+                w.Id != wallet.Id && w.WalletType!.Type == WalletTypeEnum.Cash))
+        {
+            return SaveResult.Error("An agent can have only one Cash wallet.");
         }
 
         wallet.Name = model.Name;
@@ -346,6 +375,7 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
         // Note: Balance is not updated here - it should only change via transactions/counts
 
         await dbContext.SaveChangesAsync();
+        await transaction.CommitAsync();
 
         return SaveResult.Ok(wallet.Id);
     }
@@ -434,10 +464,13 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
             .Where(w => w.AgentId == agentId)
             .Select(w => w.WalletTypeId)
             .ToListAsync();
+        var hasCashWallet = await dbContext.Wallets
+            .AnyAsync(w => w.AgentId == agentId && w.WalletType!.Type == WalletTypeEnum.Cash);
 
         // Return active wallet types not yet assigned
         return await dbContext.WalletTypes
-            .Where(wt => wt.IsActive && !assignedTypeIds.Contains(wt.Id))
+            .Where(wt => wt.IsActive && !assignedTypeIds.Contains(wt.Id) &&
+                (!hasCashWallet || wt.Type != WalletTypeEnum.Cash))
             .OrderBy(wt => wt.Name)
             .Select(wt => new WalletTypeDto
             {
