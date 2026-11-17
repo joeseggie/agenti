@@ -45,9 +45,6 @@ public sealed class BankSessionWorkflow(
         {
             WorkflowVersion = SessionWorkflowVersion.BankReconciliation, ServerTime = clock.UtcNow
         };
-        result.CorrectionRequestId = await db.CashCountCorrectionRequests.AsNoTracking()
-            .Where(r => r.AgentId == actor.AgentId && r.IsOpen)
-            .OrderByDescending(r => r.Id).Select(r => (long?)r.Id).FirstOrDefaultAsync(cancellationToken);
         result.HasPendingApproval = await db.CashCounts.AnyAsync(c =>
             c.AgentId == actor.AgentId && c.Status == CashCountStatus.PendingApproval, cancellationToken);
         var unfinished = await db.CashSessions.AsNoTracking().Where(s => s.BranchId == actor.BranchId &&
@@ -110,7 +107,7 @@ public sealed class BankSessionWorkflow(
             hasApprovedOpening ? "Session open" : "Opening count awaiting approval";
         result.StatusColor = hasApprovedOpening && unfinished == null ? "success" : "warning";
         if (unfinished != null)
-            result.BlockReason = "Submit the previous session's closing count. Its later bank review does not need to be complete.";
+            result.BlockReason = "Submit the previous session's closing count. Its later approval does not need to be complete.";
         return result;
     }
 
@@ -197,6 +194,12 @@ public sealed class BankSessionWorkflow(
                 throw new BankingRuleException("New opening counts must use today's business date; future counts are not permitted.");
             var session = await db.CashSessions.Include(s => s.CashCounts.Where(c => c.AgentId == actor.AgentId))
                 .SingleOrDefaultAsync(s => s.BranchId == actor.BranchId && s.SessionDate == date, cancellationToken);
+            if (session != null)
+            {
+                await db.Entry(session).ReloadAsync(cancellationToken);
+                foreach (var existingCount in session.CashCounts)
+                    await db.Entry(existingCount).ReloadAsync(cancellationToken);
+            }
             if (form.CashSessionId.HasValue && form.CashSessionId != session?.Id)
                 throw new UnauthorizedAccessException("The selected session does not match this count's branch and business date.");
             if (session == null)
@@ -224,7 +227,7 @@ public sealed class BankSessionWorkflow(
                 throw new UnauthorizedAccessException("The cash count identity does not match this session.");
             if (count != null && (count.Status == CashCountStatus.Approved ||
                 await db.CashCountSnapshots.AnyAsync(s => s.CashCountId == count.Id, cancellationToken)))
-                throw new BankingRuleException("Submitted observations are immutable. Use the administrator's correction workflow.");
+                throw new BankingRuleException("Submitted observations are locked. Contact an administrator about a disputed balance.");
             if (await db.CashCountSnapshots.AnyAsync(s => s.CashCount!.CashSessionId == session.Id &&
                     s.CashCount.AgentId == actor.AgentId && !s.CashCount.IsOpening, cancellationToken))
                 throw new BankingRuleException("This agent's session has ended. New trading and count edits are not permitted.");

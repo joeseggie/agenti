@@ -41,16 +41,19 @@ rules Copilot must not miss.
 
 - New statement imports use the shipped, versioned universal CSV schema.
   Do not restore bank-specific executable parsers or Admin-editable schemas.
-- Import, matching/classification, and Admin responses are Web Admin workflows.
-  Supervisors may read and flag; do not add Android statement-import pages or
-  routes.
-- Date-only statements support transaction-date daily control, not exact
-  session-cutoff certification. Never invent statement times or bypass the
-  evaluator's cutoff guard.
-- Preserve import revisions and append-only baseline, match, classification,
-  flag, and response decisions. Unknown or unexplained rows remain unresolved.
-- An unresolved daily control warns but does not block the next session opening.
-  Preserve existing session, opening-approval, and vault safeguards.
+- Admin uploads complete, non-empty single-day statements and reconciles all Bank
+  wallets together once. Cash/Mobile Money require no statements.
+- Compare approved opening plus credits minus debits with submitted closing and
+  statement anchors. This is daily arithmetic, not matching or exact-cutoff
+  certification; never fabricate times.
+- Preserve immutable revisions/results and read-only legacy archives. No
+  matching/classification, baseline wizard, historical correction grant or rerun.
+- Approval is separate. Supervisors may ordinarily approve Success; only Admin
+  may exception-approve Failed with acknowledgement and a reason. Failed remains
+  Failed. Missing prerequisites cannot be overridden.
+- Outstanding review does not block next-day opening or replay settlement.
+  Preserve session, opening-approval and vault safeguards. Do not add Android,
+  API or MCP reconciliation workflows. See `docs/closing-reconciliation-business-process.md`.
 
 ## Security and MCP
 

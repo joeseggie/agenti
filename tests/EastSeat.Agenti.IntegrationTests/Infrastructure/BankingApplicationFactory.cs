@@ -51,7 +51,6 @@ public sealed class BankingApplicationFactory(
             services.AddDbContextFactory<ApplicationDbContext>(options => options.UseNpgsql(connectionString), ServiceLifetime.Scoped);
             services.RemoveAll<TimeProvider>();
             services.AddSingleton<TimeProvider>(Clock);
-            services.AddSingleton<IStatementImportProfile, SyntheticStatementProfile>();
             foreach (var descriptor in services.Where(d => d.ServiceType == typeof(IHostedService) &&
                 d.ImplementationType?.Name is "VaultExpirationService" or "UserAuditCleanupService").ToList())
                 services.Remove(descriptor);
@@ -86,20 +85,4 @@ public sealed class BankingTestClock : TimeProvider
 {
     public DateTimeOffset Now { get; set; } = new(2026, 11, 2, 10, 0, 0, TimeSpan.Zero);
     public override DateTimeOffset GetUtcNow() => Now;
-}
-
-public sealed class SyntheticStatementProfile : IStatementImportProfile
-{
-    public const string ProfileKey = "synthetic-test-json-not-bank-format";
-    public string Key => ProfileKey;
-    public string BankIdentifier => "synthetic-test-bank";
-    public string DisplayName => "Synthetic fixture only - not a production bank format";
-    public int Version => 1;
-    public bool IsVerified => true;
-    public BankBalanceBasis BalanceBasis => BankBalanceBasis.Ledger;
-    public IReadOnlyList<string> SupportedContentTypes => ["text/csv"];
-    public string? GetReliableIdentity(ParsedStatementEntry entry) => entry.TransactionNumber;
-    public async Task<ParsedStatement> ParseAsync(Stream source, string contentType, StatementAccountContext account, CancellationToken cancellationToken) =>
-        await JsonSerializer.DeserializeAsync<ParsedStatement>(source, cancellationToken: cancellationToken)
-        ?? throw new StatementParsingException("The synthetic test fixture is empty.");
 }

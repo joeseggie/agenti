@@ -33,8 +33,8 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
         if (!string.Equals(contentType, CsvContentType, StringComparison.Ordinal))
             throw new StatementParsingException("The Agenti universal profile accepts CSV files only.");
         if (!account.CoverageFromDate.HasValue || !account.CoverageToDate.HasValue ||
-            account.CoverageFromDate > account.CoverageToDate)
-            throw new StatementParsingException("Select a valid statement start and end date.");
+            account.CoverageFromDate != account.CoverageToDate)
+            throw new StatementParsingException("Select exactly one statement date. Multi-day statements are not supported.");
         if (account.BalanceBasis == BankBalanceBasis.Unverified)
             throw new StatementParsingException("Confirm the bank account's balance basis before importing statements.");
 
@@ -123,7 +123,7 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
 
             if (date < account.CoverageFromDate || date > account.CoverageToDate)
             {
-                errors.Add($"Row {rowNumber}, TransactionDate: date is outside the selected period.");
+                errors.Add($"Row {rowNumber}, TransactionDate: must match the selected statement date exactly. Multi-day files are not supported.");
                 continue;
             }
             if ((fields[debitIndex].Length == 0) == (fields[creditIndex].Length == 0))
@@ -165,13 +165,9 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
         if (errors.Count > 0)
             throw new StatementParsingException(string.Join(Environment.NewLine, errors));
 
-        var firstDateHasTransactions = entries.Any(entry => entry.ValueDate == account.CoverageFromDate);
-        if (!firstDateHasTransactions && !account.OpeningBaseline.HasValue)
-            throw new StatementParsingException("This first empty statement period requires the audited opening baseline.");
-        var openingBalance = opening ?? account.OpeningBaseline
-            ?? throw new StatementParsingException("This first empty statement period requires the audited opening baseline.");
-        if (opening.HasValue && account.OpeningBaseline.HasValue && opening.Value != account.OpeningBaseline.Value)
-            throw new StatementParsingException("The first running-balance-derived opening does not match the supplied continuity balance.");
+        if (entries.Count == 0 || !opening.HasValue)
+            throw new StatementParsingException("Empty statements are not supported. Upload a complete single-day statement with transactions.");
+        var openingBalance = opening.Value;
         var closingBalance = priorBalance ?? openingBalance;
         var from = AtLocalMidnight(account.CoverageFromDate.Value, zone);
         if (account.CoverageToDate.Value == DateOnly.MaxValue)

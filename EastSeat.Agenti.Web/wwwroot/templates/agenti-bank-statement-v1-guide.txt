@@ -11,10 +11,14 @@ Debit: positive amount with exactly two decimal places. Leave blank for a credit
 Credit: positive amount with exactly two decimal places. Leave blank for a debit.
 RunningBalance: balance after this row, exactly two decimal places; negative balances are allowed.
 
-Exactly one of Debit and Credit must be populated in each transaction row. Amounts may use plain digits (1234.50) or comma thousands separators (1,234.50); values with comma thousands separators must be quoted as CSV fields. Do not include currency symbols, spaces, formulas, extra columns, or totals rows. Dates in the file must fall inside the date range selected in Agenti.
+Exactly one of Debit and Credit must be populated in each transaction row. Amounts may use plain digits (1234.50) or comma thousands separators (1,234.50); values with comma thousands separators must be quoted as CSV fields. Do not include currency symbols, spaces, formulas, extra columns, or totals rows. Every TransactionDate must equal the single statement date selected in Agenti. Multi-day files and date ranges are not supported.
 
 Save the file as UTF-8 text. In Excel, use "CSV UTF-8 (Comma delimited)"; other CSV encodings are rejected.
 
-Rows must be in bank ledger order. Each running balance must equal the prior balance plus the signed transaction amount. For a first non-empty upload, Agenti derives the opening balance from the first running balance and movement. For a first empty period, Admin must enter an audited opening baseline. Later empty dates carry forward the prior committed closing balance.
+Rows must be in bank ledger order. Each running balance must equal the prior balance plus the signed transaction amount. Agenti derives the statement opening balance from the first running balance and movement, then compares it with the approved opening count during reconciliation.
+
+Empty/header-only statements are rejected, including genuine no-activity days. Do not fabricate a zero-value row. Upload one complete statement per Bank account/day; Cash and Mobile Money do not need statements. Admin must confirm the selected account and full-day coverage because this CSV has no account identifier.
+
+A changed file before reconciliation requires a replacement reason; earlier evidence is retained. Used statements and recorded reports are locked. Reconcile all Bank wallets together from the closing approval page, then perform a separate approval. Failed reconciliation cannot be rerun or changed to Success by exception approval.
 
 Daily control only: date-only rows cannot prove whether a bank posting occurred before or after a cash session closed. The result is not an exact intraday session-cutoff certification.

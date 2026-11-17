@@ -5,7 +5,8 @@ using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.UnitTests.Helpers;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Agents;
-using EastSeat.Agenti.Web.Features.BankReconciliation;
+using EastSeat.Agenti.Web.Features.ClosingReconciliation;
+using EastSeat.Agenti.Web.Features.BankStatements;
 using EastSeat.Agenti.Web.Features.CashCounts;
 using EastSeat.Agenti.Web.Features.CustomerTransactions;
 using EastSeat.Agenti.Web.Features.Vaults;
@@ -13,13 +14,15 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace EastSeat.Agenti.IntegrationTests;
 
 public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : IntegrationTestBase(fixture)
 {
     [Fact]
-    public async Task ConcurrentBankApprovals_CertifyEveryBankBeforeApprovingTheClosingOnce()
+    public async Task ConcurrentRunsAndApprovals_ProduceOneWholeClosingReportAndDecision()
     {
         using var scenario = new BankingScenario(DbContext);
         var otherBank = scenario.AddWallet("ABSA", WalletTypeEnum.Bank, 200_000m);
@@ -28,28 +31,26 @@ public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : Integ
         scenario.AddApprovedOpening(withSettlement: true, additionalWallets: [otherBank, mobile]);
         var closing = scenario.AddSubmittedClosing();
         var clock = new BusinessClock(new BankingTestClock { Now = BankingScenario.Now.AddDays(1) });
-        await scenario.ImportStatementAsync(scenario.Account, clock, [], 1_000_000m, 1_000_000m);
-        await scenario.ImportStatementAsync(account, clock, [], 200_000m, 200_000m);
-        BankReconciliationService Service(ApplicationDbContext db) =>
-            new(db, new BankingAccessService(db, clock), clock, new SessionBalanceService(db, clock));
-        var service = Service(DbContext);
-        var firstReview = await service.CreateAsync(scenario.Admin.Id, scenario.Account.Id,
-            scenario.Session.SessionDate, scenario.Session.SessionDate);
-        var secondReview = await service.CreateAsync(scenario.Admin.Id, account.Id,
-            scenario.Session.SessionDate, scenario.Session.SessionDate);
+        await scenario.UploadStatementAsync(scenario.Account, clock, BankingScenario.StatementCsv(scenario.Session.SessionDate, 1_000_000m));
+        await scenario.UploadStatementAsync(account, clock, BankingScenario.StatementCsv(scenario.Session.SessionDate, 200_000m));
+        ClosingReconciliationService Service(ApplicationDbContext db)
+        {
+            var access = new BankingAccessService(db, clock);
+            var balances = new SessionBalanceService(db, clock);
+            return new(db, access, clock, balances, new SessionSettlementService(db, new VaultService(db), access, balances, clock));
+        }
         var balances = await DbContext.Wallets.ToDictionaryAsync(w => w.Id, w => w.Balance);
         var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        async Task Approve(BankReconciliationReviewDto review)
+        async Task Approve()
         {
             await using var db = Fixture.CreateContext();
-            var command = Guid.NewGuid();
             await start.Task;
             for (var attempt = 0; ; attempt++)
             {
                 try
                 {
-                    await Service(db).ApproveClosingAsync(scenario.Admin.Id, review.Id, scenario.Session.Id,
-                        command, review.Version, review.Sessions.Single().BasisHash);
+                    await Service(db).ReconcileAsync(scenario.Admin.Id, closing.Id);
+                    await Service(db).ApproveAsync(scenario.Admin.Id, closing.Id, false);
                     return;
                 }
                 catch (Exception exception) when (attempt < 3 && BankingConcurrency.IsConflict(exception))
@@ -58,20 +59,92 @@ public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : Integ
                 }
             }
         }
-        var first = Approve(firstReview);
-        var second = Approve(secondReview);
+        var first = Approve();
+        var second = Approve();
         start.SetResult();
 
         await Task.WhenAll(first, second);
 
         await using var verify = Fixture.CreateContext();
-        Assert.Equal(2, await verify.BankReconciliationResults.CountAsync());
+        Assert.Equal(1, await verify.ClosingReconciliationRuns.CountAsync());
+        Assert.Equal(2, await verify.ClosingWalletResults.CountAsync());
+        Assert.Equal(1, await verify.ClosingApprovalDecisions.CountAsync());
         Assert.Equal(CashCountStatus.Approved, (await verify.CashCounts.FindAsync(closing.Id))!.Status);
         Assert.Equal(1, await verify.CashCountAuditLogs.CountAsync(a => a.CashCountId == closing.Id && a.Action == CashCountAuditAction.Approved));
         Assert.Equal(1, await verify.Notifications.CountAsync(n => n.Type == NotificationType.CountApproved));
         Assert.Equal(1, await verify.SessionFloatSettlements.CountAsync(s => s.Stage == FloatSettlementStage.Closing));
         Assert.Empty(await verify.VaultTransactions.ToListAsync());
         foreach (var wallet in await verify.Wallets.ToListAsync()) Assert.Equal(balances[wallet.Id], wallet.Balance);
+    }
+
+    [Fact]
+    public async Task ConcurrentReplacementAndRun_FreezeExactlyTheAcceptedRevision()
+    {
+        using var scenario = new BankingScenario(DbContext);
+        scenario.AddApprovedOpening();
+        var closing = scenario.AddSubmittedClosing();
+        var clock = new BusinessClock(new BankingTestClock { Now = BankingScenario.Now.AddDays(1) });
+        var first = await scenario.UploadStatementAsync(scenario.Account, clock,
+            BankingScenario.StatementCsv(scenario.Session.SessionDate, 1_000_000m, 1m));
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<bool> Replace()
+        {
+            await using var db = Fixture.CreateContext();
+            var uploads = new DailyBankStatementService(db, new BankingAccessService(db, clock), clock,
+                new UniversalBankCsvStatementProfile(), Options.Create(new BankEvidenceOptions()));
+            using var content = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(
+                BankingScenario.StatementCsv(scenario.Session.SessionDate, 1_000_000m)));
+            await start.Task;
+            try
+            {
+                await uploads.UploadAsync(scenario.Admin.Id,
+                    new DailyStatementUpload(scenario.Account.Id, scenario.Session.SessionDate, true, first.Id,
+                        "Corrected complete synthetic export."), "replacement.csv", content);
+                return true;
+            }
+            catch (BankingRuleException error) when (error.Message.Contains("already been used"))
+            {
+                return false;
+            }
+            catch (Exception error) when (BankingConcurrency.IsConflict(error))
+            {
+                return false;
+            }
+        }
+        async Task Reconcile()
+        {
+            await using var db = Fixture.CreateContext();
+            var access = new BankingAccessService(db, clock);
+            var balances = new SessionBalanceService(db, clock);
+            var service = new ClosingReconciliationService(db, access, clock, balances,
+                new SessionSettlementService(db, new VaultService(db), access, balances, clock));
+            await start.Task;
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    await service.ReconcileAsync(scenario.Admin.Id, closing.Id);
+                    return;
+                }
+                catch (Exception error) when (attempt < 3 && BankingConcurrency.IsConflict(error))
+                {
+                    db.ChangeTracker.Clear();
+                }
+            }
+        }
+        var replacement = Replace();
+        var reconciliation = Reconcile();
+        start.SetResult();
+
+        await Task.WhenAll(replacement, reconciliation);
+
+        await using var verify = Fixture.CreateContext();
+        var run = await verify.ClosingReconciliationRuns.Include(r => r.Wallets).SingleAsync();
+        var latest = await verify.DailyBankStatements.OrderByDescending(s => s.Revision).FirstAsync();
+        Assert.Equal(latest.Id, Assert.Single(run.Wallets).StatementId);
+        Assert.Equal(await replacement, run.Succeeded);
+        Assert.Equal(await replacement ? 2 : 1, await verify.DailyBankStatements.CountAsync());
+        Assert.Empty(await verify.ClosingApprovalDecisions.ToListAsync());
     }
 
     [Fact]
@@ -289,6 +362,149 @@ public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : Integ
         var access = new BankingAccessService(db, clock);
         var balances = new SessionBalanceService(db, clock);
         return new(db, access, clock, balances, new SessionSettlementService(db, new VaultService(db), access, balances, clock));
+    }
+
+    [Theory]
+    [InlineData(CashCountStatus.Draft)]
+    [InlineData(CashCountStatus.PendingApproval)]
+    public async Task LegacyBankClosing_RequiresWholeReport_AndSettlesExactlyOnce(CashCountStatus initialStatus)
+    {
+        using var scenario = new BankingScenario(DbContext);
+        scenario.Session.WorkflowVersion = SessionWorkflowVersion.Legacy;
+        scenario.Account.WorkflowEnabled = false;
+        (await DbContext.AppConfigs.SingleAsync(c => c.Key == "SetupComplete")).Value = "true";
+        CashCount Count(bool opening) => new()
+        {
+            CashSessionId = scenario.Session.Id, AgentId = scenario.Agent.Id,
+            IsOpening = opening, CountDate = scenario.Session.SessionDate,
+            Status = opening ? CashCountStatus.Approved : initialStatus,
+            TotalAmount = 1_100_000m, CreatedAt = BankingScenario.Now,
+            SubmittedAt = !opening && initialStatus == CashCountStatus.PendingApproval ? BankingScenario.Now : null,
+            Details =
+            [
+                new() { WalletId = scenario.CashWallet.Id, Amount = 100_000m },
+                new() { WalletId = scenario.BankWallet.Id, Amount = 1_000_000m }
+            ]
+        };
+        var closing = Count(false);
+        DbContext.CashCounts.AddRange(Count(true), closing);
+        await DbContext.SaveChangesAsync();
+        await using var app = new BankingApplicationFactory(Fixture.ConnectionString);
+        using var scope = app.Services.CreateScope();
+        var counts = scope.ServiceProvider.GetRequiredService<ICashCountService>();
+        var reconciliation = scope.ServiceProvider.GetRequiredService<IClosingReconciliationService>();
+        if (initialStatus == CashCountStatus.Draft)
+        {
+            var submitted = await counts.SubmitCashCountAsync(scenario.User.Id, closing.Id);
+            Assert.True(submitted.Success, submitted.ErrorMessage);
+            Assert.Equal(CashCountStatus.PendingApproval, (await reconciliation.GetAsync(scenario.Admin.Id, closing.Id)).Status);
+        }
+        Assert.False((await counts.ApproveCashCountAsync(scenario.Admin.Id, closing.Id)).Success);
+        var frozen = await counts.GetCashCountFormAsync(scenario.User.Id, closing.Id);
+        Assert.True(frozen!.IsReadOnly);
+        Assert.False((await counts.SaveCashCountAsync(scenario.User.Id, frozen)).Success);
+        await scenario.UploadStatementAsync(scenario.Account, new BusinessClock(app.Clock),
+            BankingScenario.StatementCsv(scenario.Session.SessionDate, 1_000_000m));
+        var run = await reconciliation.ReconcileAsync(scenario.Admin.Id, closing.Id);
+        Assert.True(run.Report!.Succeeded);
+        await reconciliation.ApproveAsync(scenario.Admin.Id, closing.Id, false);
+        await reconciliation.ApproveAsync(scenario.Admin.Id, closing.Id, false);
+        await using var verify = Fixture.CreateContext();
+        Assert.Equal(CashCountStatus.Approved, (await verify.CashCounts.FindAsync(closing.Id))!.Status);
+        Assert.Equal(CashSessionStatus.Closed, (await verify.CashSessions.FindAsync(scenario.Session.Id))!.Status);
+        Assert.Single(await verify.SessionFloatSettlements.Where(s => s.CashCountId == closing.Id).ToListAsync());
+        Assert.Single(await verify.VaultTransactions.Where(v => v.CashSessionId == scenario.Session.Id).ToListAsync());
+        Assert.Equal(1_100_000m, (await verify.Vaults.SingleAsync(v => v.BranchId == scenario.Agent.BranchId)).CurrentBalance);
+        Assert.All(await verify.Wallets.Where(w => w.AgentId == scenario.Agent.Id).ToListAsync(), w => Assert.Equal(0m, w.Balance));
+        if (initialStatus == CashCountStatus.PendingApproval)
+            Assert.Equal(BankingScenario.Now, (await verify.CashCounts.FindAsync(closing.Id))!.SubmittedAt);
+    }
+
+    [Fact]
+    public async Task ArchiveMigration_PreservesEvidenceAndCrossSchemaHistory_AndRejectsWritesAndRollback()
+    {
+        var connectionString = new NpgsqlConnectionStringBuilder(Fixture.ConnectionString);
+        var databaseName = "agenti_archive_" + Guid.NewGuid().ToString("N");
+        await using var admin = new NpgsqlConnection(Fixture.ConnectionString);
+        await admin.OpenAsync();
+        await using (var create = new NpgsqlCommand($"CREATE DATABASE \"{databaseName}\"", admin))
+            await create.ExecuteNonQueryAsync();
+        connectionString.Database = databaseName;
+        try
+        {
+            await using var db = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>()
+                .UseNpgsql(connectionString.ConnectionString).Options);
+            var migrations = db.Database.GetMigrations().ToList();
+            var cutover = migrations.FindIndex(m => m.EndsWith("_ReplaceClosingReconciliation", StringComparison.Ordinal));
+            await db.GetService<IMigrator>().MigrateAsync(migrations[cutover - 1]);
+            using var scenario = new BankingScenario(db);
+            scenario.AddApprovedOpening();
+            var closing = scenario.AddSubmittedClosing();
+            closing.Status = CashCountStatus.Approved;
+            var evidence = new BankEvidenceFile
+            {
+                BankAccountId = scenario.Account.Id, UploadKey = Guid.NewGuid(), IsStatement = true,
+                FileName = "archived-synthetic.csv", ContentType = "text/csv", Content = [1, 2, 3],
+                ContentHash = new string('a', 64), UploadedByUserId = scenario.Admin.Id, UploadedAt = BankingScenario.Now
+            };
+            db.BankEvidenceFiles.Add(evidence);
+            await db.SaveChangesAsync();
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "BankStatementImports"
+                ("Id", "BankAccountId", "EvidenceFileId", "Status", "ProfileKey", "ProfileVersion", "Version", "Revision",
+                 "CoverageVerified", "CoverageDeclaredComplete", "BalanceBasis", "ReportedAccountIdentifier", "Currency",
+                 "UploadedByUserId", "CreatedAt", "OpeningBalance", "ClosingBalance")
+                VALUES (900001, {scenario.Account.Id}, {evidence.Id}, 'Committed', 'archived-synthetic', 1, 1, 1,
+                 true, true, 'Ledger', {scenario.Account.AccountIdentifier}, 'UGX', {scenario.Admin.Id},
+                 {BankingScenario.Now}, 1000000.00, 950000.00);
+                INSERT INTO "CashCountCorrectionRequests"
+                ("Id", "CashCountId", "AgentId", "Reason", "AllowedMovementIdsJson", "AllowMissingTransactions",
+                 "IsOpen", "Version", "RequestedByUserId", "RequestedAt")
+                VALUES (900002, {closing.Id}, {scenario.Agent.Id}, 'Historical synthetic instruction', '[]',
+                 true, false, 1, {scenario.Admin.Id}, {BankingScenario.Now});
+                """);
+            var customer = scenario.AddCustomerTransaction();
+            var movement = new CustomerMovement
+            {
+                CustomerTransactionId = customer.Id, CashSessionId = scenario.Session.Id,
+                CorrectionRequestId = 900002, Kind = CustomerMovementKind.Completed, Amount = 50_000m,
+                CashEffect = 50_000m, BankEffect = -50_000m, CommandId = Guid.NewGuid(),
+                RecordedByUserId = scenario.User.Id, OccurredAt = BankingScenario.Now,
+                OccurrenceDate = scenario.Session.SessionDate, RecordedAt = BankingScenario.Now
+            };
+            db.CustomerMovements.Add(movement);
+            await db.SaveChangesAsync();
+            var originalSettlements = await db.SessionFloatSettlements.CountAsync();
+            await db.Database.MigrateAsync();
+            db.ChangeTracker.Clear();
+            var archived = await db.BankStatementImports.Include(i => i.EvidenceFile).SingleAsync();
+            Assert.Equal(950_000m, archived.ClosingBalance);
+            Assert.Equal(new byte[] { 1, 2, 3 }, archived.EvidenceFile!.Content);
+            Assert.Equal("Historical synthetic instruction",
+                (await db.CustomerMovements.Include(m => m.CorrectionRequest).SingleAsync()).CorrectionRequest!.Reason);
+            Assert.Equal(CashCountStatus.Approved, (await db.CashCounts.FindAsync(closing.Id))!.Status);
+            Assert.Equal(originalSettlements, await db.SessionFloatSettlements.CountAsync());
+            Assert.Empty(await db.ClosingReconciliationRuns.ToListAsync());
+            foreach (var sql in new[]
+            {
+                """UPDATE reconciliation_archive."BankStatementImports" SET "Version" = "Version" + 1""",
+                """DELETE FROM reconciliation_archive."BankStatementImports" WHERE "Id" = 900001""",
+                """INSERT INTO reconciliation_archive."BankStatementImports" SELECT * FROM reconciliation_archive."BankStatementImports" WHERE "Id" = 900001""",
+                """TRUNCATE reconciliation_archive."BankStatementImports" CASCADE"""
+            })
+            {
+                var error = await Assert.ThrowsAsync<PostgresException>(() => db.Database.ExecuteSqlRawAsync(sql));
+                Assert.Equal(PostgresErrorCodes.RaiseException, error.SqlState);
+            }
+            await Assert.ThrowsAsync<NotSupportedException>(() => db.GetService<IMigrator>().MigrateAsync(migrations[cutover - 1]));
+            Assert.Equal(1, await db.BankStatementImports.CountAsync());
+            Assert.False(db.Database.HasPendingModelChanges());
+        }
+        finally
+        {
+            await using var drop = new NpgsqlCommand($"DROP DATABASE \"{databaseName}\" WITH (FORCE)", admin);
+            await drop.ExecuteNonQueryAsync();
+        }
     }
 
     internal static CustomerTransactionForm Capture(BankingScenario scenario) => new()

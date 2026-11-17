@@ -97,14 +97,9 @@
                     <MudText Typo="Typo.caption">@context.SubmittedAt.ToLocalTime().ToString("HH:mm")</MudText>
                 </MudTd>
                 <MudTd DataLabel="Actions" Style="text-align: center;">
-                    @if (!context.IsOpening && context.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+                    @if (!context.IsOpening)
                     {
-                        <AuthorizeView Policy="BankReconciliation">
-                            <Authorized Context="bankApprover">
-                                <MudButton Href="@($"/bank-reconciliation?sessionId={context.CashSessionId}")">Reconcile closing</MudButton>
-                            </Authorized>
-                            <NotAuthorized Context="bankObserver"><MudText Typo="Typo.caption">Administrator bank review required</MudText></NotAuthorized>
-                        </AuthorizeView>
+                        <MudButton Href="@($"/closing-approvals/{context.CashCountId}")">Review closing</MudButton>
                     }
                     else
                     {

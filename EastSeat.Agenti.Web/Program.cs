@@ -28,7 +28,7 @@ using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Features.CustomerTransactions;
 using EastSeat.Agenti.Web.Features.BankStatements;
-using EastSeat.Agenti.Web.Features.BankReconciliation;
+using EastSeat.Agenti.Web.Features.ClosingReconciliation;
 using MudBlazor.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
@@ -173,12 +173,12 @@ builder.Services.AddScoped<IBankEvidenceService, BankEvidenceService>();
 builder.Services.AddScoped<ICustomerTransactionService, CustomerTransactionService>();
 builder.Services.Configure<BankEvidenceOptions>(builder.Configuration.GetSection("Banking:Evidence"));
 builder.Services.Configure<BankStatementOptions>(builder.Configuration.GetSection("Banking:Statements"));
-builder.Services.AddSingleton<IStatementImportProfile, UniversalBankCsvStatementProfile>();
+builder.Services.AddSingleton<UniversalBankCsvStatementProfile>();
+builder.Services.AddSingleton<IStatementImportProfile>(services => services.GetRequiredService<UniversalBankCsvStatementProfile>());
 builder.Services.AddSingleton<StatementProfileCatalog>();
 builder.Services.AddScoped<IBankAccountService, BankAccountService>();
-builder.Services.AddScoped<IBankStatementService, BankStatementService>();
-builder.Services.AddScoped<IBankReconciliationService, BankReconciliationService>();
-builder.Services.AddHostedService<StatementImportProcessor>();
+builder.Services.AddScoped<IDailyBankStatementService, DailyBankStatementService>();
+builder.Services.AddScoped<IClosingReconciliationService, ClosingReconciliationService>();
 
 // Add vault background service
 builder.Services.AddHostedService<VaultExpirationService>();

@@ -1,7 +1,6 @@
 using EastSeat.Agenti.Android.Services;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
-using EastSeat.Agenti.Web.Features.BankReconciliation;
 using EastSeat.Agenti.Web.Features.CashCounts;
 using EastSeat.Agenti.Web.Features.CustomerTransactions;
 using Microsoft.Extensions.Logging;
@@ -16,7 +15,6 @@ public sealed class CustomerBankingPage(
     {
         var session = await Api.GetAsync<CurrentSessionDto>("current");
         var cases = await Api.GetAsync<List<CustomerTransactionDto>>("transactions/cases");
-        var corrections = await Api.GetAsync<List<BankCorrectionRequestDto>>("corrections");
         var entries = session.SessionId.HasValue
             ? await Api.GetAsync<List<CustomerTransactionDto>>($"transactions/session/{session.SessionId}") : [];
         Title = "Customer banking";
@@ -30,13 +28,6 @@ public sealed class CustomerBankingPage(
         Text("Cases across sessions");
         if (cases.Count == 0) Text("No open customer cases.");
         foreach (var entry in cases) Transaction(entry);
-        Text("Requested historical corrections");
-        if (corrections.Count == 0) Text("No correction requests.");
-        foreach (var request in corrections)
-        {
-            Text($"Session {request.CashSessionId}: {request.Reason}");
-            Action("Open correction request", () => CorrectionAsync(request));
-        }
         if (session.SessionId.HasValue)
             Action("View a historical session", async () =>
             {
@@ -57,16 +48,15 @@ public sealed class CustomerBankingPage(
         Action($"Open transaction {entry.Id}", () => DetailAsync(entry.Id));
     }
 
-    private async Task CaptureAsync(long sessionId, BankCorrectionRequestDto? correction = null)
+    private async Task CaptureAsync(long sessionId)
     {
-        var options = await Api.GetAsync<CustomerCaptureOptionsDto>(correction == null
-            ? $"customer-options/{sessionId}" : $"corrections/{correction.Id}/options");
-        Reset(correction == null ? "Capture receipt" : "Record missing historical receipt");
+        var options = await Api.GetAsync<CustomerCaptureOptionsDto>($"customer-options/{sessionId}");
+        Reset("Capture receipt");
         Text("This changes the expected tally, not stored wallet balances. Use the actual receipt time.");
-        var key = $"capture-{sessionId}-{correction?.Id}";
+        var key = $"capture-{sessionId}";
         var draft = await EditAsync(key, () => new CustomerTransactionForm
         {
-            CommandId = Guid.NewGuid(), CashSessionId = sessionId, CorrectionRequestId = correction?.Id,
+            CommandId = Guid.NewGuid(), CashSessionId = sessionId,
             BankAccountId = options.BankAccounts.FirstOrDefault()?.Id ?? 0,
             CashWalletId = options.CashWallets.FirstOrDefault()?.Id ?? 0
         });
@@ -159,62 +149,4 @@ public sealed class CustomerBankingPage(
         Action("Keep draft and return", () => DetailAsync(entry.Id));
     }
 
-    private async Task CorrectionAsync(BankCorrectionRequestDto request)
-    {
-        var entries = await Api.GetAsync<List<CustomerTransactionDto>>($"transactions/session/{request.CashSessionId}");
-        Reset($"Correction request {request.Id}");
-        Text(request.Reason);
-        Text("This never reopens trading or rewrites the submitted count.");
-        Action("Back", LoadAsync);
-        if (request.AllowMissingTransactions)
-            Action("Add missing original receipt", () => CaptureAsync(request.CashSessionId, request));
-        foreach (var entry in entries)
-        foreach (var movement in entry.Movements.Where(m => !m.IsSuperseded && m.CashSessionId == request.CashSessionId))
-            Action($"Correct #{movement.Id} {movement.Kind} ({entry.CustomerIdentifier})", () => CorrectMovementAsync(request, entry, movement));
-        Action("Resubmit corrections", async () =>
-        {
-            var current = (await Api.GetAsync<List<BankCorrectionRequestDto>>("corrections")).Single(r => r.Id == request.Id);
-            await Api.PostAsync<ResubmitBankCorrectionsRequest, string>($"corrections/{request.Id}/submit", new(current.Version));
-            await LoadAsync();
-        });
-    }
-
-    private async Task CorrectMovementAsync(BankCorrectionRequestDto request, CustomerTransactionDto entry, CustomerMovementDto movement)
-    {
-        Reset($"Correct movement {movement.Id}");
-        var key = $"correct-{request.Id}-{movement.Id}";
-        var draft = await EditAsync(key, () => new CustomerMovementCorrectionForm
-        {
-            CommandId = Guid.NewGuid(), CorrectionRequestId = request.Id, MovementId = movement.Id,
-            TransactionKind = entry.Kind, Amount = movement.Amount, CustomerIdentifier = entry.CustomerIdentifier,
-            Outcome = movement.Kind == CustomerMovementKind.FailedAttempt ? CustomerCaptureOutcome.Failed :
-                movement.Kind == CustomerMovementKind.PendingAttempt ? CustomerCaptureOutcome.Pending : CustomerCaptureOutcome.Completed,
-            CashExchanged = movement.CashEffect != 0, BankMoved = movement.BankEffect != 0,
-            BankReference = movement.BankReference, ReferenceUnavailable = movement.ReferenceUnavailable, OccurredAt = movement.OccurredAt
-        });
-        var form = draft.Form;
-        Toggle("Void an incorrect record", form.Void, value => form.Void = value);
-        SelectEnum("Transaction direction", form.TransactionKind, value => form.TransactionKind = value);
-        SelectEnum("Original outcome", form.Outcome, value => form.Outcome = value);
-        Field(draft, "amount", "Corrected amount", Number(form.Amount), value => form.Amount = Money(value), true);
-        Field(draft, "customer", "Customer account/phone", form.CustomerIdentifier, value => form.CustomerIdentifier = value);
-        Field(draft, "reference", "Bank reference", form.BankReference ?? "", value => form.BankReference = value);
-        Toggle("Reference unavailable", form.ReferenceUnavailable, value => form.ReferenceUnavailable = value);
-        Toggle("Actual cash movement", form.CashExchanged, value => form.CashExchanged = value);
-        Toggle("Actual bank movement", form.BankMoved, value => form.BankMoved = value);
-        Field(draft, "time", "Original occurrence (Uganda: yyyy-MM-dd HH:mm:ss)", Time(form.OccurredAt), value => form.OccurredAt = BusinessTimeText.Parse(value));
-        Field(draft, "reason", "Correction reason", form.Reason, value => form.Reason = value);
-        if (form.EvidenceFileId > 0) Original(form.EvidenceFileId);
-        Evidence(draft, () => entry.BankAccountId, false, evidence => form.EvidenceFileId = evidence);
-        Action("Append correction", async () =>
-        {
-            await ReadFormAsync();
-            if (form.ReferenceUnavailable) form.BankReference = null;
-            await SaveDraftAsync();
-            await Api.PostAsync<CustomerMovementCorrectionForm, CustomerTransactionDto>("transactions/correct", form);
-            Drafts.Remove(UserId, key);
-            await CorrectionAsync(request);
-        });
-        Action("Keep draft and return", () => CorrectionAsync(request));
-    }
 }

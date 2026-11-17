@@ -46,27 +46,6 @@ public sealed partial class CustomerTransactionService(
         return entries.Select(Map).ToList();
     }
 
-    public async Task<CustomerCaptureOptionsDto> GetCorrectionOptionsAsync(
-        string userId, long correctionRequestId, CancellationToken cancellationToken = default)
-    {
-        var actor = await access.GetActorAsync(userId, cancellationToken);
-        var request = await db.CashCountCorrectionRequests.AsNoTracking().Include(r => r.CashCount).ThenInclude(c => c!.CashSession)
-            .SingleOrDefaultAsync(r => r.Id == correctionRequestId && r.IsOpen &&
-                r.AgentId == actor.AgentId && r.CashCount!.CashSession!.BranchId == actor.BranchId, cancellationToken)
-            ?? throw new UnauthorizedAccessException("No open correction request is available to this agent.");
-        var walletIds = await db.CashCountDetails.Where(d => d.CashCount!.CashSessionId == request.CashCount!.CashSessionId &&
-            d.CashCount.AgentId == actor.AgentId).Select(d => d.WalletId).Distinct().ToListAsync(cancellationToken);
-        var accounts = await db.BankAccounts.AsNoTracking().Where(a => a.BranchId == actor.BranchId &&
-                a.Wallet!.AgentId == actor.AgentId && walletIds.Contains(a.WalletId))
-            .OrderBy(a => a.BankName).Select(a => new CustomerBankOptionDto(a.Id, a.BankName, a.Wallet!.Name, a.Currency))
-            .ToListAsync(cancellationToken);
-        var cash = await db.Wallets.AsNoTracking().Where(w => w.AgentId == actor.AgentId &&
-                walletIds.Contains(w.Id) && w.WalletType!.Type == WalletTypeEnum.Cash)
-            .OrderBy(w => w.Name).Select(w => new CustomerCashWalletOptionDto(w.Id, w.Name, w.Currency))
-            .ToListAsync(cancellationToken);
-        return new CustomerCaptureOptionsDto(request.CashCount!.CashSessionId, clock.UtcNow, accounts, cash);
-    }
-
     public async Task<List<CustomerTransactionDto>> GetOpenCasesAsync(
         string userId, CancellationToken cancellationToken = default)
     {
@@ -117,19 +96,15 @@ public sealed partial class CustomerTransactionService(
                     VerifyReplay(replay.RequestHash, hash);
                     return Map(replay);
                 }
-                if (!account.IsActive && !form.CorrectionRequestId.HasValue)
+                if (!account.IsActive)
                     throw new BankingRuleException("The selected bank account is inactive.");
                 var cashWallet = await db.Wallets.AsNoTracking().SingleOrDefaultAsync(
-                    w => w.Id == form.CashWalletId && w.AgentId == actor.AgentId && (w.IsActive || form.CorrectionRequestId.HasValue) &&
+                    w => w.Id == form.CashWalletId && w.AgentId == actor.AgentId && w.IsActive &&
                          w.WalletType!.Type == WalletTypeEnum.Cash, cancellationToken)
                     ?? throw new BankingRuleException("Select an active cash wallet belonging to this agent.");
                 if (cashWallet.Currency != account.Currency)
                     throw new BankingRuleException("Cash and bank wallets must use the same currency.");
-                if (form.CorrectionRequestId.HasValue)
-                    await RequireCorrectionAsync(actor, form.CorrectionRequestId.Value, form.CashSessionId,
-                        null, cancellationToken);
-                else
-                    await access.RequireTradingSessionAsync(actor, form.CashSessionId, cancellationToken);
+                await access.RequireTradingSessionAsync(actor, form.CashSessionId, cancellationToken);
                 await ValidateOccurrenceAsync(form.CashSessionId, form.OccurredAt, cancellationToken);
                 await ValidateEvidenceAsync(form.EvidenceFileId, account.Id, cancellationToken);
                 var opening = await db.CashCountSnapshots.AsNoTracking()
@@ -142,7 +117,7 @@ public sealed partial class CustomerTransactionService(
                         !openingWallets.Any(w => w.WalletId == account.WalletId && w.BankAccountId == account.Id))
                         throw new BankingRuleException("The selected wallets were not allocated to this session.");
                 }
-                else if (!form.CorrectionRequestId.HasValue)
+                else
                 {
                     throw new BankingRuleException("An approved opening snapshot is required.");
                 }
@@ -230,42 +205,6 @@ public sealed partial class CustomerTransactionService(
             throw new UnauthorizedAccessException("Select receipt evidence for this bank account, not an admin statement.");
     }
 
-    private async Task<CashCountCorrectionRequest> RequireCorrectionAsync(
-        BankingActor actor, long requestId, long sessionId, long? movementId, CancellationToken cancellationToken)
-    {
-        var request = await db.CashCountCorrectionRequests.Include(r => r.CashCount).ThenInclude(c => c!.CashSession)
-            .SingleOrDefaultAsync(r => r.Id == requestId, cancellationToken)
-            ?? throw new BankingRuleException("Correction request not found.");
-        if (request.AgentId != actor.AgentId || request.CashCount!.CashSession!.BranchId != actor.BranchId ||
-            request.CashCount.CashSessionId != sessionId)
-            throw new UnauthorizedAccessException("This correction request does not cover the selected session.");
-        if (!request.IsOpen)
-            throw new BankingRuleException("This correction request is already closed.");
-        if (movementId.HasValue)
-        {
-            var allowed = JsonSerializer.Deserialize<List<long>>(request.AllowedMovementIdsJson)
-                ?? throw new BankingRuleException("The correction request scope is invalid.");
-            var cursor = (long?)movementId.Value;
-            var visited = new HashSet<long>();
-            while (cursor.HasValue && !allowed.Contains(cursor.Value))
-            {
-                if (!visited.Add(cursor.Value))
-                    throw new BankingRuleException("The correction lineage is invalid.");
-                cursor = await db.CustomerMovements.Where(m => m.Id == cursor.Value &&
-                    m.CashSessionId == sessionId && m.CustomerTransaction!.AgentId == actor.AgentId)
-                    .Select(m => m.SupersedesMovementId).SingleOrDefaultAsync(cancellationToken);
-            }
-            if (!cursor.HasValue)
-                throw new UnauthorizedAccessException("This movement is outside the administrator's correction request.");
-        }
-        else if (!request.AllowMissingTransactions)
-        {
-            throw new UnauthorizedAccessException("This request does not permit adding missing transactions.");
-        }
-        request.Version++;
-        return request;
-    }
-
     private async Task EnsurePendingCaseAsync(CustomerTransaction entry, string notes, CancellationToken cancellationToken)
     {
         var pending = await db.PendingTransactions.SingleOrDefaultAsync(p => p.CustomerTransactionId == entry.Id, cancellationToken);
@@ -298,32 +237,12 @@ public sealed partial class CustomerTransactionService(
         session.Version++;
         var account = await db.BankAccounts.SingleAsync(a => a.Id == entry.BankAccountId, cancellationToken);
         account.Version++;
-        var date = clock.GetBusinessDate(occurredAt);
-        var reviews = await db.BankReconciliationReviews.Where(r => r.BankAccountId == entry.BankAccountId &&
-                ((r.FromDate <= date && r.ToDate >= date) ||
-                 db.BankReconciliationResults.Any(result => result.ReviewId == r.Id &&
-                     result.CashSessionId == entry.OriginatingSessionId)))
-            .ToListAsync(cancellationToken);
-        foreach (var review in reviews)
-        {
-            review.Version++;
-            if (review.Status is BankReconciliationStatus.Reconciled or BankReconciliationStatus.WithExceptions)
-            {
-                review.Status = BankReconciliationStatus.NeedsReview;
-                db.BankReconciliationDecisions.Add(new BankReconciliationDecision
-                {
-                    BankAccountId = account.Id, ReviewId = review.Id, CashSessionId = recordedSessionId,
-                    Kind = ReconciliationDecisionKind.ReviewInvalidated,
-                    DetailsJson = JsonSerializer.Serialize(new { CustomerTransactionId = entry.Id, session.RegisterVersion }),
-                    Reason = "Customer register or case evidence changed.",
-                    PerformedByUserId = userId, PerformedAt = clock.UtcNow
-                });
-            }
-        }
     }
 
     private static void ValidateInitial(CustomerTransactionForm form)
     {
+        if (form.CorrectionRequestId.HasValue)
+            throw new BankingRuleException("The historical reconciliation correction workflow has been retired.");
         ValidateCommand(form.CommandId);
         ValidateAmount(form.Amount);
         if (!Enum.IsDefined(form.Kind) || !Enum.IsDefined(form.Outcome))

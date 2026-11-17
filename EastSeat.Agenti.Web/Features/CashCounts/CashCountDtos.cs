@@ -115,6 +115,7 @@ public class CurrentSessionDto
 /// </summary>
 public class PendingApprovalDto
 {
+    public bool HasBankWallets { get; set; }
     public SessionWorkflowVersion WorkflowVersion { get; set; } = SessionWorkflowVersion.Legacy;
     public long CashCountId { get; set; }
     public long CashSessionId { get; set; }

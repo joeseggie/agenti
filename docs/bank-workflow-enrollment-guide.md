@@ -1,150 +1,136 @@
-# Agenti bank workflow enrollment guide
+# Bank account setup and closing reconciliation
 
-## Purpose and limits
+Use this guide for account setup and statement preparation. The complete approval
+procedure is [Closing balance reconciliation: business process](closing-reconciliation-business-process.md).
+These documents describe the replacement implementation, not a production deployment.
 
-This guide covers account binding and enabling the modern session workflow, then the Web Admin process for daily bank control. The statement intake contract is the release-shipped universal CSV schema (`agenti-bank-statement-v1`); there is no bank-specific profile picker and no executable parser uploaded by an Admin.
+**Important:** only complete, non-empty, single-day universal CSV statements are
+supported. Cash and Mobile Money need no statement. A Bank wallet with genuinely
+no transactions cannot complete this release's reconciliation; do not invent a
+transaction or use exception approval to bypass missing evidence.
 
-The teller can capture transactions and complete session counts in web or Android. Bank statement upload, matching, classification, flags, and daily review are Web workflows. Android statement-import/reconciliation screens and their admin API routes are removed. A CSV date-only row supports a transaction-date daily control only; it cannot prove the bank balance at an intraday session cutoff. The daily-control result does not replace existing opening approval, vault safeguards, or a separately eligible closing certification.
+## 1. Bind each Bank wallet
 
-No production database was accessed. Enabling or deploying this workflow remains subject to your normal reviewed release process.
+1. Sign in as Admin and open **Bank accounts** (`/bank-accounts`).
+2. Expand **Register a bank account** and select the teller's active Bank wallet.
+3. Enter the bank name, exact account identifier, statement timezone (normally
+   `Africa/Kampala`), and confirmed balance basis: Ledger, Available, or Float.
+   Currency comes from the wallet.
+4. Select **Save account binding**. Repeat for every Bank wallet. One bank's
+   statement cannot cover another wallet.
+5. Use **Account configuration** for permitted settings changes. Financial
+   history protects the account's identity, currency, timezone, and balance basis.
 
-## Roles
+There is no bank-specific parser selector, uploaded parser, or editable schema.
+Use **Open statements** for the selected account. **Manage account** on the
+statement page returns to that account's settings.
 
-| Actor | Responsibility |
-|---|---|
-| Finance / account owner | Confirms bank-account identity, currency, timezone, balance basis, and source for any opening baseline. |
-| Admin | Binds accounts, uploads and commits CSVs, reviews/matches/classifies rows, records corrections, responds to flags, and manages workflow enrollment. |
-| Teller / Agent | Uses the existing wallet, captures customer activity, submits opening/closing observations, and continues next-day operations. |
-| Supervisor | Performs existing opening/adjustment approvals, reviews branch daily controls, and can raise an audited flag for Admin response. |
-| Application | Checks CSV schema, range coverage, row and balance arithmetic, access, revisions, and audit history. It never fabricates statement times. |
+An agent has one Cash wallet and zero or more distinct Bank/Mobile Money wallet
+types, with at most one wallet per catalog type. Cash and Mobile Money are not
+eligible for bank-account binding.
 
-## Enrollment and daily process at a glance
+## 2. Understand enrollment versus reconciliation
 
-| Step | Actor | Input/action | Validation/output |
-|---|---|---|---|
-| E0 | Finance + Admin | Confirm the branch, agent, Bank wallet, account identity, currency, timezone and balance basis. | The account owner confirms what the statement balance represents. |
-| E1 | Admin | In `/bank-accounts`, register the existing Bank wallet and account details. | One active bank-account binding per Bank wallet; no money moves. |
-| E2 | Admin | Download the CSV template and guide; convert the bank export outside Agenti. | Exact schema and data rules below; source XLSX/PDF is not uploaded as a statement. |
-| E3 | Admin + Finance | For a first-ever empty date period, provide the opening baseline and its source/reason. | Baseline, evidence, actor, time and reason are audited; later periods use the prior committed closing balance. |
-| E4 | Admin | Finish active legacy sessions; enable new-session workflow on Bank accounts if needed. | Existing session/vault safeguards remain. Enrollment does not rewrite legacy history. |
-| E5 | Teller + opening approver | Operate the day: approve opening, capture customer activity, submit closing. | Closing locks trading and performs only the existing operational settlement once. |
-| E6 | Admin | Upload CSV, inspect diagnostics/preview, commit rows and open `/bank-reconciliation`. | Durable import/revision, private CSV evidence and a daily status per covered date. |
-| E7 | Admin | Match unique entries, manually resolve ambiguous rows, classify evidenced bank-only activity. | Unknown rows and unexplained differences keep the day open. |
-| E8 | Supervisor | Inspect the control and submit a reasoned flag if needed. | Immutable flag; the Admin must respond with a note or void reason. |
-| E9 | Admin | Correct by a retained revision when source facts change; re-review affected days. | Prior evidence/decisions remain auditable; no old wallet/vault movement is replayed. |
-| E10 | Teller + Admin | Start the next day and finish any outstanding prior daily review. | Unresolved bank control warns but does not by itself block the next session opening. |
+**Enable new-session workflow** and **Pause new enrollment** remain on Bank
+accounts. Modern-session enrollment requires active accounts/wallets, matching
+currency and balance basis, exactly one active Cash wallet, no active legacy
+session, and the existing one-active-agent-per-branch gates.
 
-The detailed teller/customer journey is in [Agenti: customer banking and bank-statement reconciliation](agenti-banking-business-workflow.md).
+Enrollment governs new operating sessions, not whether an already-submitted
+Bank closing needs reconciliation. All captured Bank wallets must be covered,
+including paused accounts and eligible legacy closings. Existing sessions are
+not rewritten when enrollment changes.
 
-## E0-E1: confirm and bind the account
+Opening approval, funding, trading, customer follow-ups, bank runs, and wallet
+adjustments retain their existing safeguards. Closing submission returns the
+reported allocation once. Later reconciliation and approval never repeat that
+settlement.
 
-1. Sign in as an Admin and open **Bank accounts** (`/bank-accounts`). If Bank statements has no account yet, follow its setup link.
-2. Expand **Register a bank account**.
-3. Select the teller's active **Bank wallet**. Cash and Mobile Money wallets are not eligible.
-4. Enter the bank name, account identifier exactly as printed, statement timezone (normally `Africa/Kampala`), and the confirmed balance basis (Ledger, Available or Float).
-5. Select **Save account binding**. Currency comes from the wallet.
-6. Confirm the selected account and wallet in the page. A bank wallet can have only one account binding: bind the Cente wallet to its Centenary account, the ABSA wallet to its ABSA account, and so on. Repeat for every Bank wallet; do not combine banks or reuse another account's statement. After financial history exists, account identity/timezone/basis are protected against casual edits.
-7. Use **Account configuration** for settings and **Open statements** to upload statements for the selected account. On Bank statements, **Manage account** returns to that same account's settings. Unsubmitted files and unsaved forms are not retained when navigating between pages.
+## 3. Prepare one day's CSV
 
-The universal CSV parser ships with Agenti. There is no profile upload, per-bank code registration, or Admin schema edit. New statement uploads must use the CSV contract described below. Old profile metadata on historical imports remains historical only.
+Download the [blank template](../EastSeat.Agenti.Web/wwwroot/templates/agenti-bank-statement-v1.csv)
+and [column guide](../EastSeat.Agenti.Web/wwwroot/templates/agenti-bank-statement-v1-guide.txt).
+Convert the bank export outside Agenti, using approved local tools. Never send
+customer statements to public repositories or unapproved conversion services.
 
-## E2: prepare a CSV
-
-Download:
-
-- [Blank universal CSV template](../EastSeat.Agenti.Web/wwwroot/templates/agenti-bank-statement-v1.csv)
-- [Column guide](../EastSeat.Agenti.Web/wwwroot/templates/agenti-bank-statement-v1-guide.txt)
-
-Convert the bank export outside Agenti and upload the resulting `.csv`. Do not upload the original XLSX/PDF, screenshots, macros, or formulas as a statement. Do not send customer statements to outside conversion services.
-
-Required exact header and order:
+The exact header and order are:
 
 ```csv
 TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance
 ```
 
-| Column | Format / rule |
+| Column | Rule |
 |---|---|
-| `TransactionDate` | Required `yyyy-MM-dd`; this is the bank transaction date used for daily partitioning. |
-| `TransactionTime` | Optional real bank-provided `HH:mm:ss`. Leave blank if the source has date only; never add a guessed midnight/closing time. |
-| `Reference` | Bank transaction reference as text; preserve leading zeroes. Blank when the bank did not provide one. |
-| `Description` | Required narration. |
-| `Debit` / `Credit` | Exactly one positive amount per transaction row, two decimals. The other field is blank. Quoted thousands separators are supported. |
-| `RunningBalance` | Required balance after the row; debit decreases and credit increases the balance. May be negative if the account legitimately permits it. |
+| TransactionDate | `yyyy-MM-dd`; every row must equal the single date selected in Agenti. |
+| TransactionTime | Optional actual bank-provided `HH:mm:ss`. Leave blank when absent; never guess a time. |
+| Reference | Optional bank reference as text; preserve leading zeroes. |
+| Description | Required bank narration. |
+| Debit / Credit | Exactly one positive amount per row, with two decimals; leave the opposite column blank. |
+| RunningBalance | Balance after this row, with two decimals. Debits decrease and credits increase it. |
 
-Do not reorder, rename, add, or remove columns. Agenti accumulates row/column diagnostics and rejects the whole invalid import; it does not commit partial entries.
+Save UTF-8 CSV. Preserve bank ledger order. Quote fields containing commas,
+including thousands separators. Remove headings, subtotals and non-transaction
+rows, but retain all genuine transactions for the selected day. Do not upload
+XLSX, PDF, images, formulas, extra columns, or multi-day files.
 
-## E3: select dates and baseline
+## 4. Upload on the separate statement page
 
-1. Open **Bank statements** (`/bank-statements`), select the Bank account and enter the period's inclusive start and end dates. The account summary and enrollment status are read-only here; use **Manage account** for settings.
-2. Upload one complete CSV for that range. Multi-day files are partitioned into daily controls.
-3. For the account's first imported period, if the first selected date has no transactions, enter the opening balance independently obtained from the bank and a source/reason. This baseline is a trust anchor and is audited with the Admin identity/time and retained statement evidence.
-4. If the first date contains rows, Agenti derives the range opening from the first running balance and movement. A supplied baseline must agree with that derived opening.
-5. Later imports must start on the day after the last committed range and must carry the previous committed closing balance. Do not re-enter a new baseline.
-6. Empty days carry the prior closing balance and display zero movements. A date with no statement coverage is not considered an empty day.
+1. Open **Bank statements** (`/bank-statements`).
+2. Select the bound account and **Statement date**.
+3. Select its complete CSV and confirm that it belongs to that account and covers
+   the complete selected day. The CSV itself cannot prove either fact.
+4. Select **Upload statement**. Correct any row/date/balance diagnostics and
+   retry. Invalid files create no accepted statement or partial rows.
+5. Repeat for every Bank wallet in the closing.
 
-The app rejects future ranges, any selected date with an open session, missing sequential dates, broken running-balance chains, and conflicting account/currency/balance-basis facts. An identical file replay is idempotent. Conflicting overlaps require explicit review; separate identical-looking bank transactions are not automatically deduplicated.
+Accepted files and rows are stored immediately in the database with account,
+date, schema identity, uploader/time and revision. There is no background import
+processor, preview/commit stage, baseline wizard, date range, or sequential-gap
+requirement.
 
-## E4-E5: enable operations and close the day
+An identical file safely returns the current revision. A different file before
+use requires a replacement reason of 10-2,000 characters; older evidence remains
+available. Once used in a recorded run, that account/day cannot be replaced.
+Switching accounts/dates clears the unsubmitted file and confirmation.
 
-If the branch uses the modern workflow, open **Bank accounts** (`/bank-accounts`) and satisfy the enrollment gates: active account/wallets, confirmed matching balance basis/currency, exactly one active Cash wallet, and no active legacy session. Use **Enable new-session workflow** or **Pause new enrollment** for each Bank account. Multiple distinct Bank wallets/accounts for the same agent may be enrolled; the initial one-active-agent-per-branch limit remains. Enrollment controls new cash sessions, not CSV uploads.
+## 5. Reconcile and separately approve
 
-An agent has one Cash wallet and zero or more Bank/Mobile Money wallets, with at most one wallet per catalog type (for example, one ABSA and one Airtel Money wallet). The Bank and Mobile Money categories are not themselves limited to one wallet. Agents without a Bank account retain the existing non-bank session process. Mobile Money wallets remain part of counts and internal settlement; Mobile Money statement reconciliation is not implemented.
+Open the approval notification or **Closing approvals**, then **Review closing**.
+Admin selects **Reconcile closing** once all Bank statements are uploaded. A
+missing binding, approved opening, or same-day statement blocks the entire run.
 
-The teller uses the normal opening/count process. Admin or Supervisor opening approval and vault funding safeguards are unchanged. During the day, the teller records customer movements, bank runs and cases in their normal screens. At closing, the teller submits actual wallet observations; Agenti freezes the snapshot, ends trading and performs the existing operational settlement once. A later bank review never deposits or zeros wallets a second time.
+The saved report compares each Bank wallet independently:
 
-## E6-E7: commit and reconcile
+```text
+Approved opening + statement credits - statement debits = submitted closing
+```
 
-1. Wait until the bank's statement is complete for the selected period; do not treat an early partial export as full-day coverage.
-2. On **Bank statements**, inspect every parser error and each preview row before **Commit reviewed bank entries**.
-3. On **Bank reconciliation**, select the account/date range and start a review.
-4. Review each date's opening/closing balance, statement movement total, register movement total, classified bank-only movements, difference and unaccounted row count.
-5. Run unique exact matching. Auto-match is allowed only for a unique one-to-one amount/direction/currency/date candidate (and uses the reference when both sides provide it). Manually resolve ambiguous candidates with a reason.
-6. Classify fees, interest, transfers, reversals or other bank-only movements only with evidence and explanation. `Unknown` is an explicit unresolved classification and keeps the date open.
-7. Leave all unexplained differences visible. Do not invent a customer transaction or a bank reference to force agreement.
+It also checks the statement's opening/ending anchors and running balances.
+Every Bank wallet must succeed for overall Success; differences never net across
+wallets. This is daily arithmetic, not customer-transaction matching or exact
+session-cutoff certification.
 
-Repeat statement intake and review separately for every Bank wallet included in the closing. **Approve this bank wallet** records an explicit decision for the selected account only. The page shows that bank's current approval and the Bank wallets still awaiting approval. The whole closing remains pending until every captured Bank wallet has a current approved review; another bank's fees or adjustments are not applied to this wallet. A missing account binding, missing statement, changed evidence or unresolved flag cannot be skipped by approving another bank. Pausing an account after closing does not remove its captured review obligation.
+After Success, Admin or Supervisor separately selects **Approve closing**.
+After Failed, only Admin may use **Approve with reconciliation exception**, with
+a 10-2,000 character reason and explicit acknowledgement. Failed remains Failed.
+Other approval safeguards still apply. No recorded run can be repeated.
 
-The **Daily control** result is distinct from session certification. Even a daily status of `Reconciled` does not prove whether a date-only bank posting preceded a session's close. Exact cutoff certification remains unavailable unless the statement provides usable timestamps at the recorded observation points.
-
-## E8-E10: flags, revisions, and next opening
-
-- **Supervisor flag:** A Supervisor opens the branch review, enters a 10-2,000 character concern and raises the flag. The flag is immutable and changes the review to `NeedsReview`.
-- **Admin response:** An Admin records a reasoned response note or marks the flag void with a reason. The response is linked to the flag; neither action deletes the original concern.
-- **Correction/revision:** Keep the original file and accepted rows. Upload/reprocess a corrected CSV as a new revision, provide evidence/reason for normalization corrections, then re-review affected dates and rematch. A Supervisor flag can be voided with an Admin reason; a committed statement import is not silently voided. Never overwrite source facts or report a stale result as current.
-- **Next opening:** A missing/unresolved daily bank control is a warning and follow-up item, not an opening blocker. Existing opening approval, operational-session, and vault funding checks still apply. Do not reopen yesterday's session.
+An outstanding reconciliation does not itself block the next business day's
+opening. Operational closure, opening approval and vault funding still apply.
 
 ## Troubleshooting
 
-| Symptom | Check/action |
+| Problem | Action |
 |---|---|
-| Header/schema error | Use the shipped template exactly, including order and spelling. |
-| Date/time, amount, or running-balance error | Preserve the bank's date/time, put positive amounts in only one of Debit/Credit, and verify every row's balance chain. |
-| First empty period requires baseline | Obtain the opening balance from the bank's evidence, provide source/reason, and retain the evidence. Never infer it from a later day's row alone. |
-| Range starts before/after expected date | Import missing dates first; later ranges must be sequential. |
-| Selected date has an open session | Complete that session's closing before committing the statement range. |
-| Unmatched or ambiguous row | Check the register/reference/date, then manually match or classify with evidence; do not accept a guessed match. |
-| `Unknown`, `NeedsReview`, or `NeedsCorrection` | Investigate the row/flag/difference and record the appropriate Admin decision. |
-| Exact closing approval remains blocked | Date-only evidence cannot certify intraday cutoff balances. Keep the daily control result separate; do not add a fabricated timestamp. |
-| Selected bank approved but whole closing pending | Review the listed remaining Bank wallets using each wallet's own account statement. Renew approvals whose evidence changed. Mobile Money statements are not required. |
-| A later source contradicts a committed result | Create and review a new source revision. Confirm affected matches/results are re-evaluated. |
+| Missing statement | Upload every required Bank account's complete file for the closing date, then retry. |
+| TransactionDate mismatch or multiple dates | Obtain a complete export for exactly the selected day. Do not silently discard rows. |
+| Empty statement | Unsupported this release; escalate the no-activity limitation. Never create a fake row. |
+| Bad header, amount, encoding, or balance chain | Correct the source conversion using the shipped guide. Nothing is partially accepted. |
+| Failed report | Investigate; an Admin may make a separately audited exception decision. No rerun or silent replacement. |
+| Cash/Mobile Money or pending-adjustment approval blocker | Resolve the existing independent safeguard; bank exception approval cannot override it. |
+| Concurrent change | Refresh and retry the unrecorded command, or inspect the already-recorded result. |
 
-## Go-live checklist
-
-- [ ] Admin confirmed the account identifier, branch, wallet, currency, timezone and balance basis.
-- [ ] Admin downloaded the current template/guide and successfully validated a representative prepared CSV.
-- [ ] First empty period baseline (if needed) has a documented source/reason and audit record.
-- [ ] Sequential coverage, empty days, overlaps, open-session rejection, unknown classification and date-only cutoff protection are understood.
-- [ ] Admin and Supervisor know their separate permissions and flag-response process.
-- [ ] Teller can continue the normal opening/session/closing flow while daily statement review is outstanding.
-- [ ] Migration, tests, and reviewed deployment are complete before production activation.
-- [ ] Finance signs off the bank export conversion and balance basis. Synthetic/unit tests do not verify a bank's real layout.
-
-## Implementation references
-
-- Schema: `EastSeat.Agenti.Web/Features/BankStatements/Schema/agenti-bank-statement-v1.json`
-- Parser/template: `EastSeat.Agenti.Web/Features/BankStatements/UniversalBankCsvStatementProfile.cs`, `EastSeat.Agenti.Web/wwwroot/templates/`
-- Import, baseline audit, and range validation: `EastSeat.Agenti.Web/Features/BankStatements/BankStatementService.cs`
-- Daily control and date-only cutoff guard: `EastSeat.Agenti.Web/Features/BankReconciliation/BankReconciliationService.Evaluation.cs`
-- Matching, classifications and flags: `EastSeat.Agenti.Web/Features/BankReconciliation/`
-- Web workspaces: `EastSeat.Agenti.Web/Components/Pages/BankAccounts.razor`, `BankStatements.razor`, `BankReconciliation.razor`
+Legacy reviews, matching/classification, flags/responses, cutoff certification
+and reconciliation-issued correction requests are retired. Their records remain
+in a read-only archive; already-approved closings keep their status. Pending
+closings require fresh single-day statements through this process.
