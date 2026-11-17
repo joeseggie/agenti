@@ -48,7 +48,7 @@
         <MudSelect T="long" Label="Bank account" Value="_accountId" ValueChanged="SelectAccount" Disabled="Busy">
             @foreach (var account in _accounts)
             {
-                <MudSelectItem T="long" Value="@account.Id">@account.BankName - @account.AccountIdentifier</MudSelectItem>
+                <MudSelectItem T="long" Value="@account.Id">@account.BankName - @account.AccountIdentifier - @account.WalletName - @account.AgentLabel</MudSelectItem>
             }
         </MudSelect>
     }
@@ -58,6 +58,7 @@
             <MudStack Spacing="2">
                 <MudText>@_selected.BankName / @_selected.Currency / @_selected.BalanceBasis</MudText>
                 <MudText Typo="Typo.body2">Bank wallet: @_selected.WalletName</MudText>
+                <MudText Typo="Typo.body2">Agent: @_selected.AgentLabel</MudText>
                 <MudText>New-session enrollment: @(_selected.WorkflowEnabled ? "Enabled" : "Paused")</MudText>
                 <MudText Typo="Typo.body2">Enrollment controls new cash sessions, not CSV statement uploads. Existing sessions and financial safeguards remain unchanged.</MudText>
                 <MudStack Row="true" Wrap="Wrap.Wrap">

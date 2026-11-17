@@ -242,6 +242,7 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await page.GetByLabel("Statement time zone", new() { Exact = true }).FillAsync("Africa/Kampala");
         await page.GetByRole(AriaRole.Button, new() { Name = "Save account binding", Exact = true }).ClickAsync();
         await Expect(page.GetByText("New-session enrollment: Paused", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.GetByText($"Agent: {setup.Teller.FullName} ({setup.Agent.Code})", new() { Exact = true })).ToBeVisibleAsync();
 
         await using var verify = database.CreateContext();
         var account = await verify.BankAccounts.SingleAsync(a => a.WalletId == setup.BankWallet.Id);
@@ -318,6 +319,10 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         };
         db.BankAccounts.AddRange(first, second);
         await db.SaveChangesAsync();
+        var firstAgentLabel = $"{setup.Teller.FullName} ({setup.Agent.Code})";
+        var secondAgentLabel = $"{secondTeller.FullName} ({secondAgent.Code})";
+        var firstOption = $"{first.BankName} - {first.AccountIdentifier} - {setup.BankWallet.Name} - {firstAgentLabel}";
+        var secondOption = $"{second.BankName} - {second.AccountIdentifier} - {secondWallet.Name} - {secondAgentLabel}";
         var lookupFailures = new AccountLookupFailures();
         await using var app = CreateLookupControlledApp(lookupFailures);
         app.UseKestrel(0);
@@ -331,24 +336,31 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await page.GotoAsync($"{root}/bank-statements?accountId={second.Id}");
         await Expect(page.Locator("input[type=file]")).ToBeEnabledAsync(new() { Timeout = 30_000 });
         await Expect(page.GetByText("Zulu bank / UGX / Ledger", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.GetByText($"Bank wallet: {secondWallet.Name}", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.GetByText($"Agent: {secondAgentLabel}", new() { Exact = true })).ToBeVisibleAsync();
         await page.GetByText("Manage account", new() { Exact = true }).ClickAsync();
         await Expect(page).ToHaveURLAsync($"{root}/bank-accounts?accountId={second.Id}");
         await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true })).ToBeEnabledAsync(new() { Timeout = 30_000 });
         await Expect(page.GetByText("Zulu bank / UGX / Ledger", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.GetByText($"Agent: {secondAgentLabel}", new() { Exact = true })).ToBeVisibleAsync();
         lookupFailures.FailNext();
-        await SelectAsync(page, "Bank account", "Alpha bank - ALPHA-ACCOUNT");
+        await SelectAsync(page, "Bank account", firstOption);
         await Expect(page).ToHaveURLAsync($"{root}/bank-accounts?accountId={first.Id}");
         await Expect(page.GetByText("Simulated account lookup failure.", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(page.GetByText("Open statements", new() { Exact = true })).ToHaveCountAsync(0);
         await Expect(page.GetByText("Account configuration", new() { Exact = true })).ToHaveCountAsync(0);
+        await Expect(page.GetByText($"Agent: {secondAgentLabel}", new() { Exact = true })).ToHaveCountAsync(0);
         await page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true }).ClickAsync();
         await Expect(page.GetByText("Alpha bank / UGX / Ledger", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.GetByText($"Agent: {firstAgentLabel}", new() { Exact = true })).ToBeVisibleAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true }).ClickAsync();
         await Expect(page.Locator("a").Filter(new() { HasText = "Open statements" }))
             .ToHaveAttributeAsync("href", $"/bank-statements?accountId={first.Id}");
         await page.GetByText("Open statements", new() { Exact = true }).ClickAsync();
         await Expect(page).ToHaveURLAsync($"{root}/bank-statements?accountId={first.Id}");
         await Expect(page.Locator("input[type=file]")).ToBeEnabledAsync(new() { Timeout = 30_000 });
+        await Expect(page.GetByText($"Bank wallet: {setup.BankWallet.Name}", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.GetByText($"Agent: {firstAgentLabel}", new() { Exact = true })).ToBeVisibleAsync();
         await FillDateAsync(page, "Statement date", "2026-10-28");
         await Expect(page).ToHaveURLAsync($"{root}/bank-statements?accountId={first.Id}&date=2026-10-28");
         await Expect(page.Locator("input[type=file]")).ToBeEnabledAsync();
@@ -359,12 +371,14 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         });
         await ExpectVisibleAsync(page, page.GetByText("unsubmitted.csv", new() { Exact = true }));
         lookupFailures.FailNext();
-        await SelectAsync(page, "Bank account", "Second bank wallet - Zulu bank (ZULU-ACCOUNT)");
+        await SelectAsync(page, "Bank account", secondOption);
         await Expect(page).ToHaveURLAsync($"{root}/bank-statements?accountId={second.Id}&date=2026-10-28");
         await Expect(page.GetByText("Simulated account lookup failure.", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(page.Locator("input[type=file]")).ToHaveCountAsync(0);
+        await Expect(page.GetByText($"Agent: {firstAgentLabel}", new() { Exact = true })).ToHaveCountAsync(0);
         await page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true }).ClickAsync();
         await Expect(page.GetByText("Zulu bank / UGX / Ledger", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.GetByText($"Agent: {secondAgentLabel}", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(page.GetByText("unsubmitted.csv", new() { Exact = true })).ToHaveCountAsync(0);
         await Expect(page.GetByLabel("Initial opening balance (first empty period only)", new() { Exact = true })).ToHaveCountAsync(0);
         await Expect(page.GetByLabel("Statement date", new() { Exact = true })).ToHaveValueAsync("2026-10-28");
@@ -372,6 +386,45 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await page.ReloadAsync();
         await Expect(page.Locator("a").Filter(new() { HasText = "Manage account" }))
             .ToHaveAttributeAsync("href", $"/bank-accounts?accountId={second.Id}");
+        await page.SetViewportSizeAsync(390, 844);
+        await Expect(page.GetByText($"Agent: {secondAgentLabel}", new() { Exact = true })).ToBeVisibleAsync();
+    }
+
+    [Fact]
+    public async Task BankAccounts_DeletedOwner_KeepsAccountAndShowsUnavailableName()
+    {
+        await using var db = database.CreateContext();
+        var setup = await SeedAccountSetupAsync(db);
+        var account = new BankAccount
+        {
+            BranchId = setup.Admin.BranchId!.Value, WalletId = setup.BankWallet.Id, BankName = "Retained bank",
+            AccountIdentifier = "RETAINED-ACCOUNT", BalanceBasis = BankBalanceBasis.Ledger, CreatedAt = BankingScenario.Now
+        };
+        setup.Teller.IsDeleted = true;
+        db.BankAccounts.Add(account);
+        await db.SaveChangesAsync();
+        await using var app = new BankingApplicationFactory(database.ConnectionString);
+        app.UseKestrel(0);
+        var root = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single().TrimEnd('/');
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await LaunchBrowserAsync(playwright);
+        await using var administrator = await browser.NewContextAsync();
+        await AddCookieAsync(administrator, app, setup.Admin, root);
+        var page = await administrator.NewPageAsync();
+        await page.SetViewportSizeAsync(390, 844);
+        var agentLabel = $"Agent name unavailable ({setup.Agent.Code})";
+        var option = $"{account.BankName} - {account.AccountIdentifier} - {setup.BankWallet.Name} - {agentLabel}";
+
+        foreach (var route in new[] { "bank-accounts", "bank-statements" })
+        {
+            await page.GotoAsync($"{root}/{route}?accountId={account.Id}");
+            await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true })).ToBeEnabledAsync(new() { Timeout = 30_000 });
+            await Expect(page.GetByText($"Bank wallet: {setup.BankWallet.Name}", new() { Exact = true })).ToBeVisibleAsync();
+            await Expect(page.GetByText($"Agent: {agentLabel}", new() { Exact = true })).ToBeVisibleAsync();
+            await Expect(page.GetByText(setup.Teller.FullName, new() { Exact = false })).ToHaveCountAsync(0);
+            await SelectAsync(page, "Bank account", option);
+        }
+        await Expect(page.Locator("input[type=file]")).ToBeEnabledAsync();
     }
 
     [Fact]
@@ -432,6 +485,8 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
             await page.GotoAsync($"{root}/{route}?accountId={account.Id}");
             await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true })).ToBeEnabledAsync(new() { Timeout = 30_000 });
             await Expect(page.GetByText("Own branch bank / UGX / Ledger", new() { Exact = true })).ToBeVisibleAsync();
+            await Expect(page.GetByText($"Agent: {setup.Teller.FullName} ({setup.Agent.Code})", new() { Exact = true })).ToBeVisibleAsync();
+            await Expect(page.GetByText($"{other.Teller.FullName} ({other.Agent.Code})", new() { Exact = false })).ToHaveCountAsync(0);
             foreach (var invalidId in new[] { foreignAccount.Id, long.MaxValue })
             {
                 await page.GotoAsync($"{root}/{route}?accountId={invalidId}");
@@ -440,6 +495,8 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
                 await Expect(page.GetByText("Own branch bank / UGX / Ledger", new() { Exact = true })).ToHaveCountAsync(0);
                 await Expect(page.GetByText("Open statements", new() { Exact = true })).ToHaveCountAsync(0);
                 await Expect(page.Locator("input[type=file]")).ToHaveCountAsync(0);
+                await Expect(page.GetByText($"Agent: {setup.Teller.FullName} ({setup.Agent.Code})", new() { Exact = true })).ToHaveCountAsync(0);
+                await Expect(page.GetByText($"{other.Teller.FullName} ({other.Agent.Code})", new() { Exact = false })).ToHaveCountAsync(0);
             }
             await NavigateBankPageAsync(page, route);
             await Expect(page.GetByText("Own branch bank / UGX / Ledger", new() { Exact = true })).ToBeVisibleAsync();
@@ -549,7 +606,7 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await page.Locator(".mud-popover-open").GetByText(option, new() { Exact = true }).ClickAsync();
     }
 
-    private static async Task<(ApplicationUser Admin, ApplicationUser Teller, Wallet CashWallet, Wallet BankWallet)> SeedAccountSetupAsync(ApplicationDbContext db)
+    private static async Task<(ApplicationUser Admin, ApplicationUser Teller, Agent Agent, Wallet CashWallet, Wallet BankWallet)> SeedAccountSetupAsync(ApplicationDbContext db)
     {
         var branch = new Branch { Name = "Placement branch " + Guid.NewGuid().ToString("N"), CreatedAt = BankingScenario.Now };
         db.Branches.Add(branch);
@@ -587,7 +644,7 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         db.Wallets.AddRange(cashWallet, bankWallet);
         (await db.AppConfigs.SingleAsync(c => c.Key == "SetupComplete")).Value = "true";
         await db.SaveChangesAsync();
-        return (admin, teller, cashWallet, bankWallet);
+        return (admin, teller, agent, cashWallet, bankWallet);
     }
 
     private static async Task FillDateAsync(IPage page, string label, string isoDate)

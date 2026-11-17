@@ -15,7 +15,11 @@ public sealed class BankAccountForm
 public sealed record BankAccountDto(
     long Id, long WalletId, string WalletName, string BankName, string AccountIdentifier, string Currency,
     string TimeZoneId, BankBalanceBasis BalanceBasis, string? ImportProfileKey, bool ProfileVerified,
-    bool WorkflowEnabled, bool IsActive, int Version);
+    bool WorkflowEnabled, bool IsActive, int Version, string? AgentName, string AgentCode)
+{
+    public string AgentLabel =>
+        $"{(string.IsNullOrWhiteSpace(AgentName) ? "Agent name unavailable" : AgentName.Trim())} ({AgentCode})";
+}
 
 public sealed record BankWalletOptionDto(long Id, string Name, string Currency, string AgentName);
 public sealed record StatementProfileDto(
