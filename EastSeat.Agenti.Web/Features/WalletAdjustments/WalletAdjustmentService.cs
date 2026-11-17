@@ -359,7 +359,7 @@ public class WalletAdjustmentService(
                 adjustment.RejectedAt = businessClock.UtcNow;
                 adjustment.RejectionReason = reason!.Trim();
             }
-            await TouchModernSessionAsync(adjustment.CashSessionId, adjustment.Id, actor.UserId);
+            await TouchModernSessionAsync(adjustment.CashSessionId);
             WorkflowNotifications.AddForUser(dbContext, adjustment.Agent!.UserId,
                 approve ? "Wallet adjustment approved" : "Wallet adjustment rejected",
                 approve ? "Your recorded wallet adjustment has been approved." : "Your recorded wallet adjustment was rejected; review the explanation.",
@@ -376,32 +376,13 @@ public class WalletAdjustmentService(
         }
     }
 
-    private async Task TouchModernSessionAsync(long sessionId, long adjustmentId, string userId)
+    private async Task TouchModernSessionAsync(long sessionId)
     {
         var session = await dbContext.CashSessions.SingleAsync(s => s.Id == sessionId);
         if (session.WorkflowVersion != SessionWorkflowVersion.BankReconciliation)
             return;
         session.RegisterVersion++;
         session.Version++;
-        var reviews = await dbContext.BankReconciliationReviews.Where(r =>
-                dbContext.BankReconciliationResults.Any(result => result.ReviewId == r.Id && result.CashSessionId == sessionId))
-            .ToListAsync();
-        foreach (var review in reviews)
-        {
-            review.Version++;
-            if (review.Status is BankReconciliationStatus.Reconciled or BankReconciliationStatus.WithExceptions)
-            {
-                review.Status = BankReconciliationStatus.NeedsReview;
-                dbContext.BankReconciliationDecisions.Add(new BankReconciliationDecision
-                {
-                    BankAccountId = review.BankAccountId, ReviewId = review.Id, CashSessionId = sessionId,
-                    Kind = ReconciliationDecisionKind.ReviewInvalidated,
-                    DetailsJson = System.Text.Json.JsonSerializer.Serialize(new { WalletAdjustmentId = adjustmentId }),
-                    Reason = "A wallet adjustment decision changed the session's expected positions.",
-                    PerformedByUserId = userId, PerformedAt = businessClock.UtcNow
-                });
-            }
-        }
     }
 
     /// <inheritdoc />

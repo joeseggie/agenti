@@ -104,48 +104,16 @@ public class CustomerTransactionTests
     }
 
     [Fact]
-    public async Task Correction_RequiresGrantAndPreservesOriginalMovement()
+    public async Task Capture_RejectsRetiredReconciliationCorrectionRequests()
     {
         using var fixture = new BankingTestContext();
         SessionBalanceTests.AddOpening(fixture);
         var service = CreateService(fixture);
-        var captured = await service.CaptureAsync(fixture.User.Id, CaptureForm(fixture));
-        var closing = new CashCount
-        {
-            CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id, IsOpening = false,
-            CountDate = fixture.Session.SessionDate, Status = CashCountStatus.PendingApproval,
-            TotalAmount = 1_100_000m, CreatedAt = BankingTestContext.Now
-        };
-        fixture.Db.CashCounts.Add(closing);
-        await fixture.Db.SaveChangesAsync();
-        fixture.Session.Status = CashSessionStatus.Closed;
-        fixture.Session.OperationalClosedAt = BankingTestContext.Now.AddMinutes(10);
-        var request = new CashCountCorrectionRequest
-        {
-            CashCountId = closing.Id, AgentId = fixture.Agent.Id, Reason = "Correct the receipt amount.",
-            AllowedMovementIdsJson = $"[{captured.Movements.Single().Id}]",
-            RequestedByUserId = fixture.Admin.Id, RequestedAt = BankingTestContext.Now
-        };
-        fixture.Db.CashCountCorrectionRequests.Add(request);
-        await fixture.Db.SaveChangesAsync();
-        var correction = new CustomerMovementCorrectionForm
-        {
-            CommandId = Guid.NewGuid(), CorrectionRequestId = request.Id,
-            MovementId = captured.Movements.Single().Id, Amount = 40_000m,
-            TransactionKind = CustomerTransactionKind.Deposit, Outcome = CustomerCaptureOutcome.Completed,
-            CustomerIdentifier = "SYNTHETIC-CUSTOMER", BankReference = "RECEIPT-REFERENCE",
-            OccurredAt = BankingTestContext.Now, EvidenceFileId = AddEvidence(fixture),
-            Reason = "The bank receipt confirms the corrected amount."
-        };
-
-        var corrected = await service.CorrectAsync(fixture.User.Id, correction);
-
-        Assert.Equal(40_000m, corrected.Amount);
-        Assert.Equal(2, corrected.Movements.Count);
-        Assert.Equal(50_000m, corrected.Movements.Single(m => m.IsSuperseded).Amount);
-        Assert.Equal(CashSessionStatus.Closed, (await fixture.Db.CashSessions.FindAsync(fixture.Session.Id))!.Status);
-        Assert.Equal(1_100_000m, (await fixture.Db.CashCounts.FindAsync(closing.Id))!.TotalAmount);
-        Assert.Equal(100_000m, (await fixture.Db.Wallets.FindAsync(fixture.CashWallet.Id))!.Balance);
+        var form = CaptureForm(fixture);
+        form.CorrectionRequestId = 1;
+        var error = await Assert.ThrowsAsync<BankingRuleException>(() => service.CaptureAsync(fixture.User.Id, form));
+        Assert.Contains("retired", error.Message);
+        Assert.Empty(await fixture.Db.CustomerTransactions.ToListAsync());
     }
 
     private static CustomerTransactionService CreateService(BankingTestContext fixture, DateTimeOffset? now = null)
@@ -223,92 +191,6 @@ public class CustomerTransactionTests
         }
     }
 
-    [Fact]
-    public async Task LinkedCorrection_PreservesSingleBankLegAndSupportsCorrectionDescendants()
-    {
-        using var fixture = new BankingTestContext();
-        SessionBalanceTests.AddOpening(fixture);
-        var service = CreateService(fixture);
-        var failed = CaptureForm(fixture);
-        failed.Outcome = CustomerCaptureOutcome.Failed;
-        failed.Notes = "Customer was not credited by the bank.";
-        var entry = await service.CaptureAsync(fixture.User.Id, failed);
-        entry = await service.RecordFollowUpAsync(fixture.User.Id, entry.Id,
-            FollowUp(fixture, entry.Movements.Single().Id, AddEvidence(fixture), CustomerMovementKind.BankReversal));
-        var reversal = entry.Movements.Last();
-        var request = await GrantAsync(fixture, reversal.Id);
-        var form = new CustomerMovementCorrectionForm
-        {
-            CommandId = Guid.NewGuid(), CorrectionRequestId = request.Id, MovementId = reversal.Id,
-            TransactionKind = CustomerTransactionKind.Deposit, Outcome = CustomerCaptureOutcome.Completed,
-            Amount = 50_000m, CashExchanged = false, BankMoved = true, CustomerIdentifier = entry.CustomerIdentifier,
-            BankReference = "CORRECTED-RETURN", OccurredAt = reversal.OccurredAt,
-            EvidenceFileId = AddEvidence(fixture), Reason = "Correct the bank return reference from its receipt."
-        };
-        var corrected = await service.CorrectAsync(fixture.User.Id, form);
-        form.CommandId = Guid.NewGuid();
-        form.MovementId = corrected.Movements.Last().Id;
-        form.BankReference = "VERIFIED-RETURN";
-
-        corrected = await service.CorrectAsync(fixture.User.Id, form);
-
-        var active = corrected.Movements.Where(m => !m.IsSuperseded).ToList();
-        Assert.Equal(50_000m, active.Sum(m => m.CashEffect));
-        Assert.Equal(0m, active.Sum(m => m.BankEffect));
-        Assert.Equal("VERIFIED-RETURN", active.Single(m => m.Kind == CustomerMovementKind.BankReversal).BankReference);
-    }
-
-    [Fact]
-    public async Task Correction_CannotReduceBankReturnBelowAnExistingRefund()
-    {
-        using var fixture = new BankingTestContext();
-        SessionBalanceTests.AddOpening(fixture);
-        var service = CreateService(fixture);
-        var failed = CaptureForm(fixture);
-        failed.Outcome = CustomerCaptureOutcome.Failed;
-        failed.Notes = "Customer did not receive the bank deposit.";
-        var entry = await service.CaptureAsync(fixture.User.Id, failed);
-        entry = await service.RecordFollowUpAsync(fixture.User.Id, entry.Id,
-            FollowUp(fixture, entry.Movements.Single().Id, AddEvidence(fixture), CustomerMovementKind.BankReversal));
-        var reversal = entry.Movements.Last();
-        var refund = FollowUp(fixture, reversal.Id, AddEvidence(fixture), CustomerMovementKind.Refund);
-        refund.OccurredAt = BankingTestContext.Now.AddMinutes(2);
-        await service.RecordFollowUpAsync(fixture.User.Id, entry.Id, refund);
-        var request = await GrantAsync(fixture, reversal.Id);
-
-        await Assert.ThrowsAsync<BankingRuleException>(() => service.CorrectAsync(fixture.User.Id,
-            new CustomerMovementCorrectionForm
-            {
-                CommandId = Guid.NewGuid(), CorrectionRequestId = request.Id, MovementId = reversal.Id,
-                TransactionKind = CustomerTransactionKind.Deposit, Outcome = CustomerCaptureOutcome.Completed,
-                Amount = 25_000m, CashExchanged = false, BankMoved = true, CustomerIdentifier = entry.CustomerIdentifier,
-                BankReference = "SHORT-RETURN", OccurredAt = reversal.OccurredAt,
-                EvidenceFileId = AddEvidence(fixture), Reason = "The corrected amount would not cover the paid refund."
-            }));
-        Assert.Equal(3, await fixture.Db.CustomerMovements.CountAsync());
-    }
-
-    private static async Task<CashCountCorrectionRequest> GrantAsync(BankingTestContext fixture, long movementId)
-    {
-        var closing = new CashCount
-        {
-            CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id, IsOpening = false,
-            CountDate = fixture.Session.SessionDate, Status = CashCountStatus.PendingApproval,
-            TotalAmount = 1_100_000m, CreatedAt = BankingTestContext.Now.AddMinutes(30)
-        };
-        fixture.Db.CashCounts.Add(closing);
-        await fixture.Db.SaveChangesAsync();
-        fixture.Session.Status = CashSessionStatus.Closed;
-        fixture.Session.OperationalClosedAt = BankingTestContext.Now.AddMinutes(30);
-        var request = new CashCountCorrectionRequest
-        {
-            CashCountId = closing.Id, AgentId = fixture.Agent.Id, Reason = "Correct the original receipt details.",
-            AllowedMovementIdsJson = $"[{movementId}]", RequestedByUserId = fixture.Admin.Id, RequestedAt = BankingTestContext.Now
-        };
-        fixture.Db.CashCountCorrectionRequests.Add(request);
-        await fixture.Db.SaveChangesAsync();
-        return request;
-    }
 
     private static CustomerTransactionForm CaptureForm(BankingTestContext fixture) => new()
     {

@@ -127,8 +127,8 @@ Features/{FeatureName}/
 
 - `Agents` - Agent (teller) management
 - `Api` - REST API endpoints for the Android mobile app (JWT-authenticated minimal APIs)
-- `BankStatements` - Admin web intake using the shipped universal CSV schema, private evidence and import revisions
-- `BankReconciliation` - Daily transaction-date controls, matching, classifications and audited review decisions
+- `BankStatements` - Admin single-day universal CSV intake, retained private evidence and immutable revisions
+- `ClosingReconciliation` - One whole-closing arithmetic report across all Bank wallets, followed by separate ordinary or Admin exception approval
 - `CashCounts` - Opening/closing cash count recording
 - `CashSessions` - Daily cash session lifecycle
 - `Dashboard` - Summary metrics and real-time status
@@ -492,11 +492,13 @@ The `docs/` directory contains detailed documentation:
 - `DEVELOPMENT_GUIDE.md` - Development environment setup
 - `IMPLEMENTATION_SUMMARY.md` - Implementation overview
 - `VAULT_FEATURE_SUMMARY.md` - Vault feature details
-- `agenti-banking-business-workflow.md` - Customer banking and bank-statement reconciliation user workflow (with `.excalidraw`, `.svg` and `.png` diagrams)
+- `agenti-banking-business-workflow.md` - Customer banking, session operations and closing approval workflow
+- `closing-reconciliation-business-process.md` - Canonical single-day, all-Bank-wallet reconciliation procedure
+- `closing-reconciliation-validation.md` - Executed local validation, commands, browser steps, evidence and limitations
 - `bank-workflow-enrollment-guide.md` - Account enrollment and Admin universal-CSV daily-control guide
 - `centenary-agency-float-statement-profile.md` - Superseded Centenary XLSX parser notes and XLSX-to-universal-CSV mapping
 
-Bank statement import, matching/classification and Admin responses are Web Admin workflows; Supervisors have web read/flag access. Android statement-import pages and their admin API routes are not part of the current application. Daily transaction-date control does not certify exact session cutoffs when statement timestamps are absent. Do not add bank-specific parser profiles or invent statement times.
+Admin uploads complete, non-empty single-day universal CSV statements and runs one immutable reconciliation for all Bank wallets in a submitted closing. Supervisors may read and ordinarily approve after Success; only Admin may approve a Failed report with an acknowledged, reasoned exception. Approval never changes the saved outcome or replays settlement. Missing prerequisites block the whole run, but outstanding review does not itself block next-day opening. Cash/Mobile Money require no statements. Multi-day/empty input, matching/classification, flags, baseline wizards, historical correction grants and reruns are retired. Preserve their archived history. No new Android/API/MCP reconciliation workflow is provided. Daily arithmetic is not exact-cutoff certification; never invent statement times.
 
 ## Common Development Tasks
 

@@ -3,7 +3,6 @@
 @using EastSeat.Agenti.Shared.Domain.Enums
 @using EastSeat.Agenti.Shared.Services
 @using EastSeat.Agenti.Web.Features.CustomerTransactions
-@using EastSeat.Agenti.Web.Features.BankReconciliation
 @using EastSeat.Agenti.Web.Features.BankStatements
 @using EastSeat.Agenti.Web.Features.CashCounts
 @inherits BankingPageBase
@@ -11,7 +10,6 @@
 @rendermode InteractiveServer
 @inject ICustomerTransactionService Transactions
 @inject ICashCountService CashCounts
-@inject IBankReconciliationService Reconciliation
 @inject IBankEvidenceService Evidence
 @inject Microsoft.Extensions.Options.IOptions<BankEvidenceOptions> EvidenceOptions
 @inject NavigationManager Navigation
@@ -35,19 +33,10 @@
     {
         <MudAlert Severity="Severity.Info" Class="my-3">@_current.StatusText</MudAlert>
     }
-    @foreach (var request in _corrections)
-    {
-        <MudPaper Class="pa-3 my-2" Outlined="true">
-            <MudText Typo="Typo.subtitle1">Correction request #@request.Id</MudText>
-            <MudText>@request.Reason</MudText>
-            <MudButton OnClick="@(() => SelectCorrectionAsync(request))" Disabled="Busy">Open historical register</MudButton>
-            <MudButton OnClick="@(() => ResubmitAsync(request))" Disabled="Busy" Color="Color.Primary">Resubmit corrections</MudButton>
-        </MudPaper>
-    }
-    @if (_options != null && (_selectedCorrection == null || _selectedCorrection.AllowMissingTransactions))
+    @if (_options != null)
     {
         <MudPaper Class="pa-4 my-4" Outlined="true">
-            <MudText Typo="Typo.h6">@(_selectedCorrection == null ? "Capture a receipt" : "Add a missing historical receipt")</MudText>
+            <MudText Typo="Typo.h6">Capture a receipt</MudText>
             <MudGrid Class="mt-1">
                 <MudItem xs="12" sm="6">
                     <MudSelect T="long" Label="Bank wallet" @bind-Value="_form.BankAccountId" Disabled="Busy">
@@ -105,7 +94,7 @@
             </MudGrid>
         </MudPaper>
     }
-    else if (Loaded && Error == null && _selectedCorrection == null && _current?.WorkflowVersion == SessionWorkflowVersion.Legacy)
+    else if (Loaded && Error == null && _current?.WorkflowVersion == SessionWorkflowVersion.Legacy)
     {
         <MudAlert Severity="Severity.Info">Customer capture becomes available after an administrator enrolls the verified bank workflow. Legacy cash sessions remain available.</MudAlert>
     }
@@ -141,13 +130,10 @@
 
 @code {
     [SupplyParameterFromQuery] public long? SessionId { get; set; }
-    [SupplyParameterFromQuery] public long? CorrectionId { get; set; }
     private CurrentSessionDto? _current;
     private CustomerCaptureOptionsDto? _options;
     private List<CustomerTransactionDto> _entries = [];
     private List<CustomerTransactionDto> _cases = [];
-    private List<BankCorrectionRequestDto> _corrections = [];
-    private BankCorrectionRequestDto? _selectedCorrection;
     private CustomerTransactionForm _form = new() { CommandId = Guid.NewGuid() };
     private string _occurredAt = string.Empty;
     private Guid _uploadKey = Guid.NewGuid();
@@ -157,14 +143,10 @@
     private Task LoadAsync() => RunAsync(async () =>
     {
         _current = await CashCounts.GetCurrentSessionAsync(UserId);
-        _corrections = await Reconciliation.GetMyCorrectionsAsync(UserId);
-        _selectedCorrection = CorrectionId.HasValue ? _corrections.SingleOrDefault(r => r.Id == CorrectionId) : _selectedCorrection;
-        var sessionId = _selectedCorrection?.CashSessionId ?? SessionId ?? _current.SessionId;
+        var sessionId = SessionId ?? _current.SessionId;
         _entries = sessionId.HasValue ? await Transactions.GetForSessionAsync(UserId, sessionId.Value) : [];
         _cases = await Transactions.GetOpenCasesAsync(UserId);
-        _options = _selectedCorrection != null
-            ? await Transactions.GetCorrectionOptionsAsync(UserId, _selectedCorrection.Id)
-            : _current.CanRecordCustomerTransactions && _current.SessionId.HasValue
+        _options = _current.CanRecordCustomerTransactions && _current.SessionId.HasValue
                 ? await Transactions.GetCaptureOptionsAsync(UserId, _current.SessionId.Value) : null;
         if (_options != null && _form.CashSessionId != _options.CashSessionId)
             ResetForm();
@@ -176,8 +158,7 @@
         {
             CommandId = Guid.NewGuid(), CashSessionId = _options!.CashSessionId,
             BankAccountId = _options.BankAccounts.FirstOrDefault()?.Id ?? 0,
-            CashWalletId = _options.CashWallets.FirstOrDefault()?.Id ?? 0,
-            CorrectionRequestId = _selectedCorrection?.Id
+            CashWalletId = _options.CashWallets.FirstOrDefault()?.Id ?? 0
         };
         _occurredAt = string.Empty;
         _uploadKey = Guid.NewGuid();
@@ -205,16 +186,4 @@
         _form.EvidenceFileId = uploaded.Id;
     });
 
-    private async Task SelectCorrectionAsync(BankCorrectionRequestDto request)
-    {
-        _selectedCorrection = request;
-        _form = new CustomerTransactionForm { CommandId = Guid.NewGuid() };
-        await LoadAsync();
-    }
-
-    private async Task ResubmitAsync(BankCorrectionRequestDto request)
-    {
-        if (await RunAsync(() => Transactions.ResubmitCorrectionsAsync(UserId, request.Id, request.Version)))
-            await LoadAsync();
-    }
 }

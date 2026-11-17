@@ -53,10 +53,12 @@ builder.Services.AddScoped<IYourFeatureService, YourFeatureService>();
 ## Bank Statements and Reconciliation
 
 - New statement imports use the shipped, versioned universal CSV schema; do not restore bank-specific executable statement profiles or an Admin-editable parser.
-- Statement import, matching/classification and Admin responses are Admin-only web workflows; Supervisors have web read/flag access. Do not add Android statement-import pages or routes; preserve unrelated Android banking APIs.
-- A transaction-date daily control is not exact session-cutoff certification. Never fabricate statement times or bypass the evaluator's date-only cutoff guard.
-- Preserve import revisions and append-only baseline, match, classification, flag, and response decisions. Unknown or unexplained rows remain unresolved.
-- An unresolved daily statement control warns but does not block the next session opening; existing session, opening-approval, and vault safeguards remain in force.
+- Admin uploads complete, non-empty single-day statements and reconciles every captured Bank wallet together. Cash and Mobile Money need no statement. Supervisors may read and ordinarily approve a successful closing, but cannot upload, run or exception-approve.
+- Reconciliation compares approved opening plus credits minus debits with submitted closing and statement balance anchors. It is daily arithmetic, not transaction matching or exact-cutoff certification; never fabricate times.
+- One immutable run per closing; used statements and submitted inputs are frozen. Replacements before use retain prior evidence and a reason. Approval is separate; Admin exception approval requires acknowledgement and a reason and never changes Failed to Success.
+- Preserve retired reconciliation history in the read-only archive. Do not restore matching, classifications, flags, baseline wizards, historical correction grants or reruns.
+- Outstanding reconciliation does not block the next opening; preserve session, opening-approval and vault safeguards and exactly-once settlement. Do not add Android/API/MCP reconciliation workflows.
+- The canonical process is `docs/closing-reconciliation-business-process.md`.
 - See `docs/bank-workflow-enrollment-guide.md` and `docs/agenti-banking-business-workflow.md` for the user process and `docs/centenary-agency-float-statement-profile.md` for superseded-format conversion notes.
 
 ---

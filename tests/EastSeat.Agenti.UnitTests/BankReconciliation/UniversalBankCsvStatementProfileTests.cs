@@ -8,7 +8,7 @@ namespace EastSeat.Agenti.UnitTests.BankReconciliation;
 public class UniversalBankCsvStatementProfileTests
 {
     private static readonly DateOnly From = new(2026, 11, 1);
-    private static readonly DateOnly To = new(2026, 11, 2);
+    private static readonly DateOnly To = new(2026, 11, 1);
 
     [Fact]
     public async Task Parse_DerivesLedgerBalancesAndPreservesDateOnlyRows()
@@ -16,7 +16,7 @@ public class UniversalBankCsvStatementProfileTests
         var parsed = await ParseAsync(
             "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\r\n" +
             "2026-11-01,,REF-1,\"Cash deposit, teller\",,1000.00,11000.00\r\n" +
-            "2026-11-02,09:15:00,REF-2,Withdrawal,250.00,,10750.00",
+            "2026-11-01,09:15:00,REF-2,Withdrawal,250.00,,10750.00",
             "Africa/Kampala", null);
 
         Assert.Equal(10_000m, parsed.OpeningBalance);
@@ -91,23 +91,16 @@ public class UniversalBankCsvStatementProfileTests
     }
 
     [Fact]
-    public async Task Parse_EmptyPeriodRequiresAndUsesBaseline()
+    public async Task Parse_RejectsEmptyStatementsEvenWithABaseline()
     {
         var csv = "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n";
 
-        var missing = await Assert.ThrowsAsync<StatementParsingException>(() =>
-            ParseAsync(csv, "Africa/Kampala", null));
-        Assert.Contains("audited opening baseline", missing.Message);
-
-        var parsed = await ParseAsync(csv, "Africa/Kampala", 12_345m);
-
-        Assert.Empty(parsed.Entries);
-        Assert.Equal(12_345m, parsed.OpeningBalance);
-        Assert.Equal(12_345m, parsed.ClosingBalance);
-
-        var overdraft = await ParseAsync(csv, "Africa/Kampala", -123.45m);
-        Assert.Equal(-123.45m, overdraft.OpeningBalance);
-        Assert.Equal(-123.45m, overdraft.ClosingBalance);
+        foreach (var baseline in new decimal?[] { null, 12_345m, -123.45m })
+        {
+            var error = await Assert.ThrowsAsync<StatementParsingException>(() =>
+                ParseAsync(csv, "Africa/Kampala", baseline));
+            Assert.Contains("Empty statements are not supported", error.Message);
+        }
     }
 
     [Fact]
@@ -129,7 +122,7 @@ public class UniversalBankCsvStatementProfileTests
     }
 
     [Fact]
-    public async Task Parse_FirstDateWithoutRowsRequiresBaselineEvenWhenLaterDatesHaveTransactions()
+    public async Task Parse_RejectsAnotherTransactionDateEvenWithABaseline()
     {
         var csv =
             "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
@@ -137,11 +130,8 @@ public class UniversalBankCsvStatementProfileTests
 
         var missing = await Assert.ThrowsAsync<StatementParsingException>(() =>
             ParseAsync(csv, "Africa/Kampala", null));
-        Assert.Contains("first empty statement period", missing.Message);
-
-        var parsed = await ParseAsync(csv, "Africa/Kampala", 10_000m);
-        Assert.Equal(10_000m, parsed.OpeningBalance);
-        Assert.Equal(10_100m, parsed.ClosingBalance);
+        Assert.Contains("must match the selected statement date", missing.Message);
+        await Assert.ThrowsAsync<StatementParsingException>(() => ParseAsync(csv, "Africa/Kampala", 10_000m));
     }
 
     [Theory]
@@ -149,7 +139,7 @@ public class UniversalBankCsvStatementProfileTests
     [InlineData("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n2026-11-01,,,Fee,1.0,,10.00\n", "Debit")]
     [InlineData("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n2026-11-01,,,Fee,,,10.00\n", "Debit/Credit")]
     [InlineData("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n2026-11-01,,,Fee,,1.00,11.00\n2026-11-01,,,Fee,1.00,,9.99\n", "RunningBalance")]
-    [InlineData("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n2026-11-03,,,Fee,,1.00,10.00\n", "outside the selected period")]
+    [InlineData("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n2026-11-03,,,Fee,,1.00,10.00\n", "must match the selected statement date")]
     [InlineData("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n2026-11-01,not-time,,Fee,,1.00,10.00\n", "TransactionTime")]
     public async Task Parse_RejectsInvalidSchemaOrRows(string csv, string expectedMessage)
     {

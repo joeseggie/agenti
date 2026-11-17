@@ -80,7 +80,7 @@
                 Submitted observations remain unchanged while bank evidence is reviewed.
             </MudAlert>
             <AuthorizeView Policy="BankReconciliation">
-                <MudButton Href="@($"/bank-reconciliation?sessionId={Id}")">Review bank reconciliation</MudButton>
+                <MudButton Href="/cashcount-approvals">Review pending closings</MudButton>
             </AuthorizeView>
         }
         else

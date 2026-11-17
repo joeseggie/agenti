@@ -1,0 +1,163 @@
+@page "/closing-approvals/{Id:long}"
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Web.Features.ClosingReconciliation
+@using EastSeat.Agenti.Web.Features.CashCounts
+@inherits BankingPageBase
+@attribute [Authorize(Policy = "CashCountApprove")]
+@rendermode InteractiveServer
+@inject IClosingReconciliationService Reconciliation
+@inject ICashCountService Counts
+
+<PageTitle>Closing approval - Agenti</PageTitle>
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudText Typo="Typo.h4">Closing approval</MudText>
+    <MudButton Href="/cashcount-approvals">Back to approvals</MudButton>
+    <MudButton OnClick="LoadAsync" Disabled="Busy">Refresh closing</MudButton>
+    @if (Error != null)
+    {
+        <MudAlert Severity="Severity.Error" Class="my-3">@Error</MudAlert>
+    }
+    @if (_review != null)
+    {
+        <MudText Typo="Typo.h6">@_review.AgentName - @_review.BusinessDate.ToString("yyyy-MM-dd")</MudText>
+        <MudText>Closing status: @_review.Status</MudText>
+        <MudTable Items="_review.Wallets" Dense="true" Class="my-3">
+            <HeaderContent><MudTh>Wallet</MudTh><MudTh>Type</MudTh><MudTh>Submitted closing</MudTh><MudTh>Statement</MudTh></HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.WalletName</MudTd><MudTd>@context.Type</MudTd>
+                <MudTd>@context.Currency @context.Amount.ToString("N2")</MudTd>
+                <MudTd>
+                    @(context.Type != WalletTypeEnum.Bank ? "Not required" :
+                        !context.BankAccountId.HasValue ? "Missing account binding" :
+                        context.StatementId.HasValue ? "Ready" : "Missing statement")
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+        @if (!_review.Wallets.Any(w => w.Type == WalletTypeEnum.Bank))
+        {
+            <MudAlert Severity="Severity.Info">Bank reconciliation not required.</MudAlert>
+            @if (_review.Status == CashCountStatus.PendingApproval)
+            {
+                <MudButton OnClick="ApproveWithoutBanksAsync" Disabled="Busy" Color="Color.Primary">Approve closing</MudButton>
+            }
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Info">
+                Daily arithmetic comparison only. This does not certify an exact session cutoff or verify individual customer transactions.
+            </MudAlert>
+            @if (IsAdmin)
+            {
+                <MudButton Href="@($"/bank-statements?date={_review.BusinessDate:yyyy-MM-dd}")">Open statement uploads</MudButton>
+            }
+            @if (_review.Report == null && _review.Status == CashCountStatus.PendingApproval)
+            {
+                @if (IsAdmin)
+                {
+                    <MudButton OnClick="ReconcileAsync" Disabled="Busy" Color="Color.Primary" Variant="Variant.Filled">Reconcile closing</MudButton>
+                }
+                else
+                {
+                    <MudText>An Admin must upload all Bank statements and reconcile this closing.</MudText>
+                }
+            }
+            @if (_review.Report == null && _review.Status == CashCountStatus.Approved)
+            {
+                <MudAlert Severity="Severity.Info">This approved closing has no replacement reconciliation report. Its historical approval is retained.</MudAlert>
+            }
+            @if (_review.Report is { } report)
+            {
+                <MudAlert Severity="@(report.Succeeded ? Severity.Success : Severity.Warning)" Class="my-3">
+                    Reconciliation: @(report.Succeeded ? "Success" : "Failed"). Saved report #@report.Id.
+                </MudAlert>
+                <MudText>Run by @report.PerformedByUserId at @UgandaTime(report.PerformedAt) (Uganda). Results and inputs are locked; reruns are not supported.</MudText>
+                <MudTable Items="report.Wallets" Dense="true" Class="my-3">
+                    <HeaderContent>
+                        <MudTh>Bank wallet / account</MudTh><MudTh>Opening</MudTh><MudTh>Debits</MudTh><MudTh>Credits</MudTh>
+                        <MudTh>Calculated closing</MudTh><MudTh>Submitted closing</MudTh><MudTh>Difference</MudTh><MudTh>Result</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.WalletName / @context.BankName / @context.AccountIdentifier (@context.Currency)</MudTd>
+                        <MudTd>@context.OpeningBalance.ToString("N2")</MudTd><MudTd>@context.TotalDebits.ToString("N2")</MudTd>
+                        <MudTd>@context.TotalCredits.ToString("N2")</MudTd><MudTd>@context.ExpectedClosing.ToString("N2")</MudTd>
+                        <MudTd>@context.SubmittedClosing.ToString("N2")</MudTd><MudTd>@context.Difference.ToString("N2")</MudTd>
+                        <MudTd>
+                            <strong>@(context.Succeeded ? "Success" : "Failed")</strong>
+                            <MudText Typo="Typo.caption">@context.Explanation</MudText>
+                            <MudLink Href="@($"/closing-statement-evidence/{context.StatementId}")">Statement #@context.StatementId, revision @context.StatementRevision</MudLink>
+                            <MudText Typo="Typo.caption">Statement opening @context.StatementOpening.ToString("N2"), ending @context.StatementClosing.ToString("N2")</MudText>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+                @if (_review.Status == CashCountStatus.PendingApproval)
+                {
+                    @if (report.Succeeded)
+                    {
+                        <MudButton OnClick="ApproveAsync" Disabled="Busy" Color="Color.Primary" Variant="Variant.Filled">Approve closing</MudButton>
+                    }
+                    else if (IsAdmin)
+                    {
+                        <MudTextField T="string" Label="Exception approval reason" @bind-Value="_reason" Lines="3" Disabled="Busy" />
+                        <MudCheckBox T="bool" @bind-Value="_acknowledged" Disabled="Busy" Label="I acknowledge all failed wallets and differences; the reconciliation remains Failed" />
+                        <MudButton OnClick="ApproveExceptionAsync" Disabled="@(Busy || !_acknowledged)" Color="Color.Warning" Variant="Variant.Filled">Approve with reconciliation exception</MudButton>
+                    }
+                    else
+                    {
+                        <MudText>Only an Admin may approve with a reconciliation exception. The failed result will remain visible.</MudText>
+                    }
+                }
+            }
+            @if (_review.Approval is { } approval)
+            {
+                <MudAlert Severity="@(approval.IsException ? Severity.Warning : Severity.Success)" Class="my-3">
+                    @(approval.IsException ? "Approved with reconciliation exception" : "Closing approved").
+                    @approval.ApprovedByUserId, @UgandaTime(approval.ApprovedAt) (Uganda). @approval.Reason
+                </MudAlert>
+            }
+        }
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public long Id { get; set; }
+    private ClosingReviewDto? _review;
+    private string? _reason;
+    private bool _acknowledged;
+    private long? _loadedId;
+    protected override Task OnParametersSetAsync()
+    {
+        if (_loadedId == Id)
+            return Task.CompletedTask;
+        _loadedId = Id;
+        _review = null;
+        _reason = null;
+        _acknowledged = false;
+        return LoadAsync();
+    }
+
+    private Task UpdateReviewAsync(Func<long, Task<ClosingReviewDto>> action, bool queueIfBusy = false)
+    {
+        var closingId = Id;
+        return RunAsync(async () =>
+        {
+            var review = await action(closingId);
+            if (Id == closingId)
+                _review = review;
+        }, queueIfBusy: queueIfBusy);
+    }
+
+    private Task LoadAsync() => UpdateReviewAsync(id => Reconciliation.GetAsync(UserId, id), queueIfBusy: true);
+    private Task ReconcileAsync() => UpdateReviewAsync(id => Reconciliation.ReconcileAsync(UserId, id));
+    private Task ApproveAsync() => UpdateReviewAsync(id => Reconciliation.ApproveAsync(UserId, id, false));
+    private Task ApproveExceptionAsync() => UpdateReviewAsync(id => Reconciliation.ApproveAsync(UserId, id, true, _reason, _acknowledged));
+    private Task ApproveWithoutBanksAsync() => UpdateReviewAsync(async id =>
+    {
+        if (_review?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            return await Reconciliation.ApproveAsync(UserId, id, false);
+        var result = await Counts.ApproveCashCountAsync(UserId, id);
+        if (!result.Success)
+            throw new EastSeat.Agenti.Shared.Services.BankingRuleException(result.ErrorMessage ?? "Closing approval failed.");
+        return await Reconciliation.GetAsync(UserId, id);
+    });
+}

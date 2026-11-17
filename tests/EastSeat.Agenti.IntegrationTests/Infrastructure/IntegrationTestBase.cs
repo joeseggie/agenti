@@ -36,7 +36,17 @@ public abstract class IntegrationTestBase : IClassFixture<DatabaseFixture>, IAsy
                 new("__EFMigrationsHistory"),
                 new("AspNetRoles"),
                 new("WalletTypes"),
-                new("AppConfigs")
+                new("AppConfigs"),
+                new("reconciliation_archive", "BankStatementImports"),
+                new("reconciliation_archive", "BankStatementRows"),
+                new("reconciliation_archive", "BankTransactions"),
+                new("reconciliation_archive", "BankStatementOccurrences"),
+                new("reconciliation_archive", "BankReconciliationReviews"),
+                new("reconciliation_archive", "BankReconciliationResults"),
+                new("reconciliation_archive", "BankReconciliationMatches"),
+                new("reconciliation_archive", "BankReconciliationExceptions"),
+                new("reconciliation_archive", "BankReconciliationDecisions"),
+                new("reconciliation_archive", "CashCountCorrectionRequests")
             }
         });
     }
@@ -46,7 +56,19 @@ public abstract class IntegrationTestBase : IClassFixture<DatabaseFixture>, IAsy
         // Clean database after each test
         await using var connection = new NpgsqlConnection(Fixture.ConnectionString);
         await connection.OpenAsync();
-        await _respawner.ResetAsync(connection);
+        // Only this disposable Testcontainers teardown connection bypasses history guards.
+        // Test execution uses separate connections with all triggers and constraints enabled.
+        await using var disable = new NpgsqlCommand("SET session_replication_role = replica", connection);
+        await disable.ExecuteNonQueryAsync();
+        try
+        {
+            await _respawner.ResetAsync(connection);
+        }
+        finally
+        {
+            await using var enable = new NpgsqlCommand("SET session_replication_role = origin", connection);
+            await enable.ExecuteNonQueryAsync();
+        }
 
         await DbContext.DisposeAsync();
     }

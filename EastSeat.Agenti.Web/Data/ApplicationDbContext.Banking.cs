@@ -38,6 +38,10 @@ public partial class ApplicationDbContext
 
     private void EnsureBankingRecordsImmutable()
     {
+        if (ChangeTracker.Entries().Any(e =>
+                e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted &&
+                LegacyReconciliationArchive.Tables.Any(t => t.Type == e.Metadata.ClrType)))
+            throw new InvalidOperationException("Legacy reconciliation history is archived and read-only.");
         var modifiedRecord = ChangeTracker.Entries()
             .FirstOrDefault(e => e.Entity is IImmutableBankingRecord &&
                 e.State is EntityState.Modified or EntityState.Deleted);
@@ -50,6 +54,9 @@ public partial class ApplicationDbContext
 
     private static void ConfigureBankingModel(ModelBuilder builder)
     {
+        ConfigureClosingReconciliation(builder);
+        foreach (var (type, table) in LegacyReconciliationArchive.Tables)
+            builder.Entity(type).ToTable(table, LegacyReconciliationArchive.Schema);
         builder.Entity<CashSession>(entity =>
         {
             entity.Property(e => e.WorkflowVersion).HasConversion<string>().HasMaxLength(40)

@@ -571,6 +571,31 @@ public class WalletAdjustmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ApproveAdjustmentAsync_ModernSession_AdvancesRegisterWithoutTouchingArchivedReviews()
+    {
+        SeedApprovedOpeningCount();
+        _testSession.WorkflowVersion = SessionWorkflowVersion.BankReconciliation;
+        var adminUser = UserBuilder.Default().WithEmail("admin@test.com").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(adminUser);
+        var adjustment = new WalletAdjustment
+        {
+            CashSessionId = _testSession.Id, WalletId = _testWallet.Id, AgentId = _testAgent.Id,
+            Status = WalletAdjustmentStatus.Pending, Reason = WalletAdjustmentReason.BankShortage,
+            Amount = 50_000m, RecordedByUserId = _testUser.Id, CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.WalletAdjustments.Add(adjustment);
+        await _dbContext.SaveChangesAsync();
+        var registerVersion = _testSession.RegisterVersion;
+
+        var result = await _sut.ApproveAdjustmentAsync(adminUser.Id, adjustment.Id);
+
+        result.Success.Should().BeTrue();
+        _testSession.RegisterVersion.Should().Be(registerVersion + 1);
+        (await _dbContext.BankReconciliationReviews.CountAsync()).Should().Be(0);
+        (await _dbContext.BankReconciliationDecisions.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
     public async Task ApproveAdjustmentAsync_WithNonAdmin_ReturnsError()
     {
         var adjustment = new WalletAdjustment

@@ -45,26 +45,6 @@ public sealed class CustomerFollowUpForm
     public string Notes { get; set; } = string.Empty;
 }
 
-public sealed class CustomerMovementCorrectionForm
-{
-    [JsonRequired]
-    public Guid CommandId { get; set; }
-    public long CorrectionRequestId { get; set; }
-    public long MovementId { get; set; }
-    public bool Void { get; set; }
-    public CustomerTransactionKind TransactionKind { get; set; }
-    public CustomerCaptureOutcome Outcome { get; set; }
-    public decimal Amount { get; set; }
-    public bool CashExchanged { get; set; } = true;
-    public bool BankMoved { get; set; } = true;
-    public string CustomerIdentifier { get; set; } = string.Empty;
-    public string? BankReference { get; set; }
-    public bool ReferenceUnavailable { get; set; }
-    public DateTimeOffset OccurredAt { get; set; }
-    public long EvidenceFileId { get; set; }
-    public string Reason { get; set; } = string.Empty;
-}
-
 public sealed class CustomerTransactionDto
 {
     public long Id { get; set; }

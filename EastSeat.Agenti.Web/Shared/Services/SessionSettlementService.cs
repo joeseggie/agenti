@@ -23,7 +23,8 @@ public sealed class SessionSettlementService(
         string userId, long cashCountId, bool isOpening, CancellationToken cancellationToken)
     {
         var actor = await access.GetActorAsync(userId, cancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        await using var transaction = db.Database.CurrentTransaction == null
+            ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken) : null;
         try
         {
             var count = await db.CashCounts
@@ -33,13 +34,18 @@ public sealed class SessionSettlementService(
                 .SingleOrDefaultAsync(c => c.Id == cashCountId, cancellationToken)
                 ?? throw new BankingRuleException("Cash count not found.");
             var session = count.CashSession!;
+            var legacyClosing = !isOpening && session.WorkflowVersion == SessionWorkflowVersion.Legacy;
             if (session.BranchId != actor.BranchId ||
-                (!isOpening && count.AgentId != actor.AgentId))
+                (!isOpening && count.AgentId != actor.AgentId &&
+                 !(legacyClosing && count.Status == CashCountStatus.PendingApproval &&
+                   actor.Role is UserRole.Admin or UserRole.Supervisor)))
                 throw new UnauthorizedAccessException("You do not have access to this cash count.");
             if (isOpening && actor.Role is not (UserRole.Admin or UserRole.Supervisor))
                 throw new UnauthorizedAccessException("Only administrators or supervisors can approve opening counts.");
-            if (count.IsOpening != isOpening || session.WorkflowVersion != SessionWorkflowVersion.BankReconciliation)
-                throw new BankingRuleException("This operation requires a matching bank-reconciliation cash count.");
+            if (count.IsOpening != isOpening ||
+                (session.WorkflowVersion != SessionWorkflowVersion.BankReconciliation &&
+                 !(legacyClosing && count.Details.Any(d => d.Wallet!.WalletType!.Type == WalletTypeEnum.Bank))))
+                throw new BankingRuleException("This operation requires an eligible cash count.");
             if (isOpening && (count.Agent!.UserId == actor.UserId || count.AgentId == actor.AgentId))
                 throw new UnauthorizedAccessException("You cannot approve your own opening count.");
 
@@ -48,20 +54,23 @@ public sealed class SessionSettlementService(
                 .SingleOrDefaultAsync(s => s.CashCountId == count.Id && s.Stage == stage, cancellationToken);
             if (existing != null)
             {
-                await transaction.CommitAsync(cancellationToken);
+                if (transaction != null) await transaction.CommitAsync(cancellationToken);
                 return new SessionSettlementResult(count.Id, session.Id, existing.SnapshotId, true);
             }
             if (session.OperationalClosedAt.HasValue || session.Status != CashSessionStatus.Open)
                 throw new BankingRuleException("This session is already locked for trading.");
             var requiredStatus = isOpening ? CashCountStatus.PendingApproval : CashCountStatus.Draft;
-            if (count.Status != requiredStatus)
+            if (count.Status != requiredStatus && !(legacyClosing && count.Status == CashCountStatus.PendingApproval))
                 throw new BankingRuleException(isOpening
                     ? "The opening count is not pending approval."
                     : "Only a draft closing count can be submitted.");
-            if (!isOpening && !await db.SessionFloatSettlements.AnyAsync(
+            if (!isOpening && !legacyClosing && !await db.SessionFloatSettlements.AnyAsync(
                     s => s.CashCount!.CashSessionId == session.Id && s.CashCount.AgentId == count.AgentId &&
                          s.Stage == FloatSettlementStage.Opening, cancellationToken))
                 throw new BankingRuleException("The opening allocation must be approved before closing.");
+            if (legacyClosing && !await db.CashCounts.AnyAsync(c => c.CashSessionId == session.Id &&
+                    c.AgentId == count.AgentId && c.IsOpening && c.Status == CashCountStatus.Approved, cancellationToken))
+                throw new BankingRuleException("The opening count must be approved before closing.");
 
             var now = clock.UtcNow;
             var walletSnapshots = await ReadCountWalletsAsync(count, now, cancellationToken);
@@ -87,7 +96,7 @@ public sealed class SessionSettlementService(
             if (vaultAmount < 0)
                 throw new BankingRuleException("The opening's internal allocation cannot be negative.");
 
-            if (!isOpening)
+            if (!isOpening && !legacyClosing)
             {
                 var positions = await balances.GetPositionsAtSnapshotAsync(snapshot.Id,
                     includePendingAdjustments: true, cancellationToken);
@@ -98,7 +107,48 @@ public sealed class SessionSettlementService(
                 var hasVariance = walletSnapshots.Any(w => positions.Single(p => p.WalletId == w.WalletId).ExpectedBalance != w.Amount);
                 if (hasVariance && string.IsNullOrWhiteSpace(count.Explanation))
                     throw new BankingRuleException("Closing wallet balances differ from recorded movements. Provide an explanation for admin review.");
+                // A Cash/Mobile variance has no bank statement to resolve it, so it is reviewed as a discrepancy at approval.
+                var nonBank = walletSnapshots.Where(w => w.WalletType != WalletTypeEnum.Bank).ToList();
+                var expectedNonBank = nonBank.Sum(w => positions.Single(p => p.WalletId == w.WalletId).ExpectedBalance);
+                if (nonBank.Any(w => positions.Single(p => p.WalletId == w.WalletId).ExpectedBalance != w.Amount) &&
+                    !await db.Discrepancies.AnyAsync(d => d.CashCountId == count.Id &&
+                        d.Status == DiscrepancyStatus.PendingReview, cancellationToken))
+                    db.Discrepancies.Add(new Discrepancy
+                    {
+                        CashSessionId = session.Id, CashCountId = count.Id, Status = DiscrepancyStatus.PendingReview,
+                        ExpectedAmount = expectedNonBank, ActualAmount = nonBank.Sum(w => w.Amount),
+                        Variance = nonBank.Sum(w => w.Amount) - expectedNonBank,
+                        Explanation = count.Explanation, ExplainedByUserId = count.AgentId,
+                        ExplainedAt = now, CreatedAt = now
+                    });
                 await EnsureNoLaterMovementsAsync(count, walletSnapshots, cancellationToken);
+            }
+            if (legacyClosing)
+            {
+                var opening = await db.CashCounts.Include(c => c.Details).SingleAsync(c =>
+                    c.CashSessionId == session.Id && c.AgentId == count.AgentId &&
+                    c.IsOpening && c.Status == CashCountStatus.Approved, cancellationToken);
+                if (!opening.Details.Select(d => d.WalletId).Order()
+                    .SequenceEqual(walletSnapshots.Select(w => w.WalletId).Order()))
+                    throw new BankingRuleException("Closing must contain the same wallets as opening.");
+                var adjustments = await db.WalletAdjustments.Where(a => a.CashSessionId == session.Id &&
+                        a.AgentId == count.AgentId && a.Status == WalletAdjustmentStatus.Approved)
+                    .Select(a => a.Amount).ToListAsync(cancellationToken);
+                var expected = opening.TotalAmount - adjustments.Sum();
+                if (expected != count.TotalAmount)
+                {
+                    if (string.IsNullOrWhiteSpace(count.Explanation))
+                        throw new BankingRuleException("Closing differs from the expected amount. Provide an explanation for approval.");
+                    if (!await db.Discrepancies.AnyAsync(d => d.CashCountId == count.Id &&
+                            d.Status == DiscrepancyStatus.PendingReview, cancellationToken))
+                        db.Discrepancies.Add(new Discrepancy
+                        {
+                            CashSessionId = session.Id, CashCountId = count.Id, Status = DiscrepancyStatus.PendingReview,
+                            ExpectedAmount = expected, ActualAmount = count.TotalAmount, Variance = count.TotalAmount - expected,
+                            Explanation = count.Explanation, ExplainedByUserId = count.AgentId,
+                            ExplainedAt = now, CreatedAt = now
+                        });
+                }
             }
 
             long? vaultTransactionId = null;
@@ -127,7 +177,7 @@ public sealed class SessionSettlementService(
             }
             else
             {
-                count.SubmittedAt = now;
+                count.SubmittedAt ??= now;
             }
             db.SessionFloatSettlements.Add(new SessionFloatSettlement
             {
@@ -146,24 +196,13 @@ public sealed class SessionSettlementService(
             });
             if (!isOpening)
             {
-                var openingAgents = await db.CashCounts
-                    .Where(c => c.CashSessionId == session.Id && c.IsOpening && c.Status == CashCountStatus.Approved)
-                    .Select(c => c.AgentId).ToListAsync(cancellationToken);
-                var submittedAgents = await db.CashCountSnapshots
-                    .Where(s => s.CashCount!.CashSessionId == session.Id && !s.CashCount.IsOpening)
-                    .Select(s => s.CashCount!.AgentId).ToListAsync(cancellationToken);
-                var pendingOpening = await db.CashCounts.AnyAsync(c => c.CashSessionId == session.Id &&
-                    c.IsOpening && c.Status == CashCountStatus.PendingApproval, cancellationToken);
-                if (!pendingOpening && openingAgents.All(submittedAgents.Contains))
-                {
-                    session.Status = CashSessionStatus.Closed;
-                    session.OperationalClosedAt = now;
-                    session.ClosedAt = now;
-                }
-                await WorkflowNotifications.AddForBranchAsync(db, session.BranchId, "Closing awaiting bank review",
-                    $"A provisional closing for {session.SessionDate:yyyy-MM-dd} requires reconciliation and approval.",
-                    NotificationType.CountPendingApproval, $"/bank-reconciliation?sessionId={session.Id}", now,
-                    cancellationToken: cancellationToken);
+                // Persist this settlement first so the shared completion check sees it.
+                await db.SaveChangesAsync(cancellationToken);
+                await SessionCompletion.CloseIfCompleteAsync(db, session, now, cancellationToken);
+                await WorkflowNotifications.AddForBranchAsync(db, session.BranchId, "Closing count pending approval",
+                    $"A submitted closing for {count.CountDate:yyyy-MM-dd} is awaiting review and approval.",
+                    NotificationType.CountPendingApproval, $"/closing-approvals/{count.Id}", now,
+                    includeSupervisors: true, cancellationToken: cancellationToken);
             }
             else if (count.Agent != null)
             {
@@ -173,12 +212,12 @@ public sealed class SessionSettlementService(
             }
 
             await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            if (transaction != null) await transaction.CommitAsync(cancellationToken);
             return new SessionSettlementResult(count.Id, session.Id, snapshot.Id, false);
         }
         catch
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            await BankingConcurrency.RollbackAfterConflictAsync(transaction);
             db.ChangeTracker.Clear();
             throw;
         }
@@ -198,13 +237,13 @@ public sealed class SessionSettlementService(
             var wallet = detail.Wallet;
             if (wallet == null || wallet.AgentId != count.AgentId || wallet.WalletType == null)
                 throw new UnauthorizedAccessException("Every counted wallet must belong to this agent.");
-            if (!detail.ObservedAt.HasValue || detail.ObservedAt > now)
+            if ((!detail.ObservedAt.HasValue && count.CashSession!.WorkflowVersion != SessionWorkflowVersion.Legacy) || detail.ObservedAt > now)
                 throw new BankingRuleException("Each wallet requires a valid, non-future balance observation time.");
             if (decimal.Round(detail.Amount, 2) != detail.Amount ||
                 (wallet.WalletType.Type == WalletTypeEnum.Cash && detail.Amount < 0))
                 throw new BankingRuleException("Cash cannot be negative and wallet amounts must use at most two decimal places.");
             result.Add(new CountedWalletSnapshot(wallet.Id, wallet.Name, wallet.WalletType.Type, wallet.Currency,
-                detail.Amount, detail.ObservedAt.Value.ToUniversalTime(),
+                detail.Amount, (detail.ObservedAt ?? count.SubmittedAt ?? now).ToUniversalTime(),
                 bindings.TryGetValue(wallet.Id, out var accountId) ? accountId : null));
         }
         if (result.Select(w => w.Currency).Distinct().Count() != 1)
@@ -222,7 +261,10 @@ public sealed class SessionSettlementService(
                 c.CashSession!.BranchId == count.CashSession!.BranchId &&
                 ((c.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation &&
                   c.CashSession.OperationalClosedAt != null) ||
-                 (c.CashSession!.WorkflowVersion == SessionWorkflowVersion.Legacy && c.Status == CashCountStatus.Approved)))
+                 (c.CashSession!.WorkflowVersion == SessionWorkflowVersion.Legacy &&
+                  (c.Status == CashCountStatus.Approved ||
+                   (c.Status == CashCountStatus.PendingApproval && db.SessionFloatSettlements.Any(s =>
+                       s.CashCountId == c.Id && s.Stage == FloatSettlementStage.Closing))))))
             .OrderByDescending(c => c.CountDate).ThenByDescending(c => c.Id)
             .FirstOrDefaultAsync(cancellationToken);
         if (previous == null)

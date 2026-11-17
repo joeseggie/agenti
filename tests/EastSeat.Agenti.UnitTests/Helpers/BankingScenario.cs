@@ -4,7 +4,6 @@ using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.BankStatements;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace EastSeat.Agenti.UnitTests.Helpers;
@@ -86,9 +85,10 @@ internal class BankingScenario : IDisposable
     }
 
     public void AddApprovedOpening(bool withSettlement = false, decimal bankAmount = 1_000_000m,
-        IReadOnlyList<Wallet>? additionalWallets = null)
+        IReadOnlyList<Wallet>? additionalWallets = null, bool includeBank = true)
     {
-        var wallets = new List<Wallet> { CashWallet, BankWallet };
+        var wallets = new List<Wallet> { CashWallet };
+        if (includeBank) wallets.Add(BankWallet);
         wallets.AddRange(additionalWallets ?? []);
         var bindings = Db.BankAccounts.ToDictionary(a => a.WalletId, a => a.Id);
         var snapshots = wallets.Select(w => new CountedWalletSnapshot(
@@ -186,72 +186,32 @@ internal class BankingScenario : IDisposable
         return count;
     }
 
-    public async Task<BankStatementImportDto> ImportStatementAsync(
-        BankAccount account, IBusinessClock clock, IReadOnlyList<ParsedStatementEntry> rows,
-        decimal opening, decimal closing, bool acceptRevisions = false)
+    public async Task<DailyBankStatementDto> UploadStatementAsync(
+        BankAccount account, IBusinessClock clock, string csv, long? previousId = null, string? reason = null)
     {
-        account = await Db.BankAccounts.SingleAsync(a => a.Id == account.Id);
-        var from = new DateTimeOffset(Session.SessionDate.ToDateTime(TimeOnly.MinValue), TimeSpan.FromHours(3));
-        var profile = new FixtureStatementProfile(new ParsedStatement(account.AccountIdentifier, "UGX",
-            BankBalanceBasis.Ledger, from, from.AddDays(1), opening, closing, true, rows));
-        account.ImportProfileKey = profile.Key;
-        account.ImportProfileVerified = true;
-        account.BankIdentifier = profile.BankIdentifier;
-        await Db.SaveChangesAsync();
-        var access = new BankingAccessService(Db, clock);
-        var evidence = new BankEvidenceService(Db, access, clock, Options.Create(new BankEvidenceOptions()));
-        var file = await evidence.UploadAsync(Admin.Id, account.Id, Guid.NewGuid(), "synthetic.csv", true,
-            new MemoryStream(Guid.NewGuid().ToByteArray()));
-        var imports = new BankStatementService(Db, access, clock, new StatementProfileCatalog([profile]),
-            Options.Create(new BankStatementOptions()), NullLogger<BankStatementService>.Instance);
-        var import = await imports.StartAsync(Admin.Id, account.Id, file.Id);
-        await imports.ProcessNextAsync();
-        var preview = await imports.GetPreviewAsync(Admin.Id, import.Id);
-        return await imports.CommitAsync(Admin.Id, import.Id, new CommitStatementForm
-        {
-            ExpectedVersion = preview.Import.Version,
-            Resolutions = acceptRevisions ? preview.Rows.Where(r => r.RequiresIdentityDecision).Select(r =>
-                new StatementRowResolution(r.Id, StatementRowResolutionKind.AcceptRevision, r.PossibleExistingTransactionIds.Single(),
-                    "Corrected synthetic bank evidence for this occurrence.")).ToList() : []
-        });
+        var service = new DailyBankStatementService(Db, new BankingAccessService(Db, clock), clock,
+            new UniversalBankCsvStatementProfile(), Options.Create(new BankEvidenceOptions()));
+        using var content = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(csv));
+        return await service.UploadAsync(Admin.Id,
+            new DailyStatementUpload(account.Id, Session.SessionDate, true, previousId, reason), "synthetic.csv", content);
     }
 
-    private sealed class FixtureStatementProfile(ParsedStatement statement) : IStatementImportProfile
+    public static string StatementCsv(DateOnly date, decimal opening, decimal netChange = 0m)
     {
-        public string Key => "multi-wallet-test-only";
-        public string BankIdentifier => "synthetic-multi-wallet";
-        public string DisplayName => "Synthetic multi-wallet fixture";
-        public int Version => 1;
-        public bool IsVerified => true;
-        public BankBalanceBasis BalanceBasis => BankBalanceBasis.Ledger;
-        public IReadOnlyList<string> SupportedContentTypes => ["text/csv"];
-        public string? GetReliableIdentity(ParsedStatementEntry entry) => entry.TransactionNumber;
-        public Task<ParsedStatement> ParseAsync(Stream source, string contentType, StatementAccountContext account,
-            CancellationToken cancellationToken) => Task.FromResult(statement);
-    }
-
-    public BankStatementImport AddImport()
-    {
-        var evidence = new BankEvidenceFile
-        {
-            BankAccountId = Account.Id, UploadKey = Guid.NewGuid(), IsStatement = true,
-            FileName = "synthetic.csv", ContentType = "text/csv", ContentHash = new string('0', 64),
-            Content = [1], UploadedByUserId = Admin.Id, UploadedAt = Now
-        };
-        Db.BankEvidenceFiles.Add(evidence);
-        Db.SaveChanges();
-        var import = new BankStatementImport
-        {
-            BankAccountId = Account.Id, EvidenceFileId = evidence.Id, ProfileKey = "synthetic",
-            Status = StatementImportStatus.Committed, UploadedByUserId = Admin.Id, CreatedAt = Now
-        };
-        Db.BankStatementImports.Add(import);
-        Db.SaveChanges();
-        return import;
+        var debit = netChange < 0 ? 1m - netChange : 1m;
+        var credit = netChange > 0 ? 1m + netChange : 1m;
+        return "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+            FormattableString.Invariant($"{date:yyyy-MM-dd},,SYNTHETIC-DEBIT,Synthetic debit,{debit:F2},,{opening - debit:F2}\n") +
+            FormattableString.Invariant($"{date:yyyy-MM-dd},,SYNTHETIC-CREDIT,Synthetic credit,,{credit:F2},{opening + netChange:F2}\n");
     }
 
     public void Dispose()
     {
         if (_ownsContext) Db.Dispose();
     }
+}
+
+internal sealed class ScenarioTimeProvider(DateTimeOffset? now = null) : TimeProvider
+{
+    public override DateTimeOffset GetUtcNow() => now ?? BankingScenario.Now;
 }

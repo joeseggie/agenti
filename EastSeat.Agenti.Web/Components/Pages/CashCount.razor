@@ -119,10 +119,6 @@
             @if (_currentSession?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
             {
                 <MudButton Href="/customer-transactions" Variant="Variant.Outlined" Color="Color.Primary" Class="mt-3">Customer register and case follow-ups</MudButton>
-                @if (_currentSession.CorrectionRequestId.HasValue)
-                {
-                    <MudButton Href="@($"/customer-transactions?correctionId={_currentSession.CorrectionRequestId}")" Color="Color.Warning" Class="mt-3">Open requested historical correction</MudButton>
-                }
             }
         }
 
@@ -684,6 +680,10 @@
                 Snackbar.Add(result.ErrorMessage ?? "Failed to save cash count.", Severity.Error);
             }
         }
+        catch (EastSeat.Agenti.Shared.Services.BankingConflictException exception)
+        {
+            Snackbar.Add(exception.Message, Severity.Warning);
+        }
         finally
         {
             _isSaving = false;
@@ -719,6 +719,10 @@
             {
                 Snackbar.Add(submitResult.ErrorMessage ?? "Failed to submit cash count.", Severity.Error);
             }
+        }
+        catch (EastSeat.Agenti.Shared.Services.BankingConflictException exception)
+        {
+            Snackbar.Add(exception.Message, Severity.Warning);
         }
         finally
         {

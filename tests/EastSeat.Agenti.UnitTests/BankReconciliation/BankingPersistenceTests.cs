@@ -44,22 +44,15 @@ public class BankingPersistenceTests
     }
 
     [Fact]
-    public async Task StatementRows_IdenticalFallbackFieldsPreserveBothOccurrences()
+    public async Task LegacyReconciliationArchive_RejectsNewWrites()
     {
         using var fixture = new BankingTestContext();
-        var import = fixture.AddImport();
-        for (var sequence = 1; sequence <= 2; sequence++)
+        fixture.Db.BankStatementImports.Add(new BankStatementImport
         {
-            fixture.Db.BankStatementRows.Add(new BankStatementRow
-            {
-                ImportId = import.Id, Sequence = sequence, SourceLocation = $"row {sequence}",
-                RawData = "synthetic", CustomerIdentifier = "SAME-CUSTOMER", SignedAmount = -50_000m,
-                RunningBalance = 1_000_000m - sequence * 50_000m, OccurredAt = BankingTestContext.Now
-            });
-        }
-        await fixture.Db.SaveChangesAsync();
-
-        Assert.Equal(2, await fixture.Db.BankStatementRows.CountAsync());
+            BankAccountId = fixture.Account.Id, UploadedByUserId = fixture.Admin.Id
+        });
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Db.SaveChangesAsync());
+        Assert.Contains("archived and read-only", error.Message);
     }
 
     [Fact]
@@ -79,45 +72,4 @@ public class BankingPersistenceTests
         await Assert.ThrowsAsync<DbUpdateException>(() => fixture.Db.SaveChangesAsync());
     }
 
-    [Fact]
-    public async Task Match_MultipleInternalSourcesAreRejectedByDatabase()
-    {
-        using var fixture = new BankingTestContext();
-        var customer = fixture.AddCustomerTransaction();
-        var movement = new CustomerMovement
-        {
-            CustomerTransactionId = customer.Id, CashSessionId = fixture.Session.Id,
-            Kind = CustomerMovementKind.Completed, CashEffect = 50_000m, BankEffect = -50_000m,
-            CommandId = Guid.NewGuid(), RecordedByUserId = fixture.User.Id,
-            OccurredAt = BankingTestContext.Now, RecordedAt = BankingTestContext.Now
-        };
-        var bankRun = new BankRun
-        {
-            CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id,
-            FromWalletId = fixture.CashWallet.Id, ToWalletId = fixture.BankWallet.Id,
-            Amount = 50_000m, RecordedByUserId = fixture.User.Id, CreatedAt = BankingTestContext.Now
-        };
-        fixture.Db.AddRange(movement, bankRun);
-        var import = fixture.AddImport();
-        var row = new BankStatementRow
-        {
-            ImportId = import.Id, Sequence = 1, SourceLocation = "row 1", RawData = "synthetic",
-            SignedAmount = -50_000m, RunningBalance = 950_000m, OccurredAt = BankingTestContext.Now
-        };
-        fixture.Db.BankStatementRows.Add(row);
-        await fixture.Db.SaveChangesAsync();
-        var bankTransaction = new BankTransaction
-        {
-            BankAccountId = fixture.Account.Id, AcceptedRowId = row.Id, CreatedAt = BankingTestContext.Now
-        };
-        fixture.Db.BankTransactions.Add(bankTransaction);
-        await fixture.Db.SaveChangesAsync();
-        fixture.Db.BankReconciliationMatches.Add(new BankReconciliationMatch
-        {
-            BankTransactionId = bankTransaction.Id, CustomerMovementId = movement.Id, BankRunId = bankRun.Id,
-            MatchedByUserId = fixture.Admin.Id, MatchedAt = BankingTestContext.Now
-        });
-
-        await Assert.ThrowsAsync<DbUpdateException>(() => fixture.Db.SaveChangesAsync());
-    }
 }

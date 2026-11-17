@@ -1135,6 +1135,115 @@ public class CashCountServiceTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetPendingApprovalsAsync_OpeningComparesAgainstSubmittedPreviousClosingOnlyOnceSettled(bool settled)
+    {
+        var (_, openingCount) = await SeedPreviousClosingAndTodayOpeningAsync(
+            previousClosingTotal: 1000m, openingTotal: 800m, openingExplanation: "Opening observations for review.");
+        var previousClosing = await _dbContext.CashCounts.SingleAsync(c => c.Id == 10);
+        previousClosing.Status = CashCountStatus.PendingApproval;
+        openingCount.Status = CashCountStatus.PendingApproval;
+        await _dbContext.SaveChangesAsync();
+        if (settled)
+        {
+            var snapshot = new CashCountSnapshot
+            {
+                CashCountId = previousClosing.Id, TotalAmount = 1000m, WalletsJson = "[]",
+                CapturedByUserId = _testUser.Id, CapturedAt = DateTimeOffset.UtcNow
+            };
+            _dbContext.CashCountSnapshots.Add(snapshot);
+            await _dbContext.SaveChangesAsync();
+            _dbContext.SessionFloatSettlements.Add(new SessionFloatSettlement
+            {
+                CashCountId = previousClosing.Id, SnapshotId = snapshot.Id, Stage = FloatSettlementStage.Closing,
+                ReportedAmount = 1000m, VaultAmount = 1000m, PostedByUserId = _testUser.Id,
+                PostedAt = DateTimeOffset.UtcNow
+            });
+            await _dbContext.SaveChangesAsync();
+        }
+
+        var pending = (await _sut.GetPendingApprovalsAsync(_testBranch.Id))
+            .Single(count => count.CashCountId == openingCount.Id);
+
+        pending.OpeningTotal.Should().Be(settled ? 1000m : null);
+        pending.Variance.Should().Be(settled ? -200m : null);
+    }
+
+    [Fact]
+    public async Task SaveCashCountAsync_ClosingOmittingAnOpenedBankWallet_IsRejected()
+    {
+        var bankType = new WalletType
+        {
+            Id = 4, Name = "Bank", Type = WalletTypeEnum.Bank, IsActive = true, CreatedAt = DateTimeOffset.UtcNow
+        };
+        _dbContext.WalletTypes.Add(bankType);
+        var bankWallet = WalletBuilder.Default().WithId(2).WithAgentId(_testAgent.Id)
+            .WithWalletTypeId(bankType.Id).WithName("Bank wallet").Build();
+        _dbContext.Wallets.Add(bankWallet);
+        await _dbContext.SaveChangesAsync();
+        await SeedOpenSessionWithApprovedOpeningAsync(_testWallet, bankWallet);
+        var form = new CashCountFormModel
+        {
+            IsOpening = false,
+            WalletEntries = [new() { WalletId = _testWallet.Id, CountedAmount = 1000m }]
+        };
+
+        var result = await _sut.SaveCashCountAsync(_testUser.Id, form);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Count every wallet from the approved opening");
+        (await _dbContext.CashCounts.CountAsync(c => !c.IsOpening)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task SaveCashCountAsync_SubmittedClosingWithSnapshot_IsFrozenEvenWhenStatusIsStale()
+    {
+        var session = await SeedOpenSessionWithApprovedOpeningAsync(_testWallet);
+        var closing = CashCountBuilder.Default().WithId(21).WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id).AsClosing().WithStatus(CashCountStatus.Draft)
+            .WithCountDate(session.SessionDate).WithTotalAmount(1000m).Build();
+        _dbContext.CashCounts.Add(closing);
+        await _dbContext.SaveChangesAsync();
+        _dbContext.CashCountSnapshots.Add(new CashCountSnapshot
+        {
+            CashCountId = closing.Id, TotalAmount = 1000m, WalletsJson = "[]",
+            CapturedByUserId = _testUser.Id, CapturedAt = DateTimeOffset.UtcNow
+        });
+        await _dbContext.SaveChangesAsync();
+        var form = new CashCountFormModel
+        {
+            IsOpening = false,
+            WalletEntries = [new() { WalletId = _testWallet.Id, CountedAmount = 900m }]
+        };
+
+        var result = await _sut.SaveCashCountAsync(_testUser.Id, form);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("frozen");
+        (await _dbContext.CashCountDetails.CountAsync(d => d.CashCountId == closing.Id)).Should().Be(0);
+    }
+
+    private async Task<CashSession> SeedOpenSessionWithApprovedOpeningAsync(params Wallet[] openedWallets)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var session = CashSessionBuilder.Default().WithId(20).WithBranchId(_testBranch.Id)
+            .WithSessionDate(today).AsOpen().Build();
+        _dbContext.CashSessions.Add(session);
+        await _dbContext.SaveChangesAsync();
+        var opening = CashCountBuilder.Default().WithId(20).WithCashSessionId(session.Id)
+            .WithAgentId(_testAgent.Id).AsOpening().AsApproved().WithCountDate(today)
+            .WithTotalAmount(openedWallets.Length * 1000m).Build();
+        _dbContext.CashCounts.Add(opening);
+        await _dbContext.SaveChangesAsync();
+        foreach (var wallet in openedWallets)
+            _dbContext.CashCountDetails.Add(CashCountDetailBuilder.Default().WithId(200 + wallet.Id)
+                .WithCashCountId(opening.Id).WithWalletId(wallet.Id).WithAmount(1000m).Build());
+        await _dbContext.SaveChangesAsync();
+        return session;
+    }
+
     /// <summary>
     /// Seeds an approved closing count for the previous day plus a draft opening count for today.
     /// </summary>

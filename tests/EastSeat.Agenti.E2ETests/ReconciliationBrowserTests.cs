@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text.Json;
+using System.Text;
 using EastSeat.Agenti.IntegrationTests.Infrastructure;
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
@@ -14,6 +14,7 @@ using EastSeat.Agenti.Web.Features.CashCounts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 using static Microsoft.Playwright.Assertions;
@@ -23,7 +24,7 @@ namespace EastSeat.Agenti.E2ETests;
 public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClassFixture<DatabaseFixture>
 {
     [Fact]
-    public async Task Reconciliation_ReceiptToRetrospectiveApproval_PreservesLaterSessionBalances()
+    public async Task Closing_ReconcilesAllBanksWithRealCsv_AndPreservesNextDayBalances()
     {
         await using var db = database.CreateContext();
         using var scenario = new BankingScenario(db);
@@ -33,12 +34,17 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         scenario.AddApprovedOpening(withSettlement: true, additionalWallets: [secondBank, mobile]);
         scenario.Account.WorkflowEnabled = true;
         scenario.Account.ImportProfileVerified = true;
-        scenario.Account.ImportProfileKey = SyntheticStatementProfile.ProfileKey;
-        scenario.Account.BankIdentifier = "synthetic-test-bank";
+        scenario.Account.ImportProfileKey = UniversalBankCsvStatementProfile.ProfileKey;
+        var supervisor = new ApplicationUser
+        {
+            Id = Guid.NewGuid().ToString("N"), UserName = "closing-supervisor",
+            FirstName = "Synthetic", LastName = "Supervisor", Role = UserRole.Supervisor,
+            BranchId = scenario.Admin.BranchId, IsActive = true
+        };
+        db.Users.Add(supervisor);
         (await db.AppConfigs.SingleAsync(c => c.Key == "SetupComplete")).Value = "true";
         await db.SaveChangesAsync();
-        var lookupFailures = new AccountLookupFailures();
-        await using var app = CreateLookupControlledApp(lookupFailures);
+        await using var app = new BankingApplicationFactory(database.ConnectionString);
         app.UseKestrel(0);
         var root = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single().TrimEnd('/');
         using var client = app.CreateClient(new() { AllowAutoRedirect = false, BaseAddress = new Uri(root) });
@@ -73,8 +79,16 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
             wallet.ObservedAt = app.Clock.Now;
         }
         var saved = await PostAsync<CashCountFormModel, CashCountSaveResult>(client, "/api/banking/counts", closing);
-        using (var submitted = await client.PostAsync($"/api/banking/counts/{saved.CashCountId}/submit", null))
-            Assert.Equal(HttpStatusCode.OK, submitted.StatusCode);
+        await page.GetByRole(AriaRole.Link, new() { Name = "Cash Count", Exact = true }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Continue Closing Draft", Exact = true }).ClickAsync();
+        await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Save Draft", Exact = true })).ToBeVisibleAsync();
+        foreach (var wallet in closing.WalletEntries.Where(w => !w.SupportsDenominations))
+        {
+            var row = page.Locator("tbody tr").Filter(new() { Has = page.GetByText(wallet.WalletName, new() { Exact = true }) });
+            await row.Locator("input").First.FillAsync(wallet.CountedAmount.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        await page.GetByRole(AriaRole.Button, new() { Name = "Submit for Approval", Exact = true }).ClickAsync();
+        await ExpectVisibleAsync(page, page.GetByText("Submitted closing observations are locked.", new() { Exact = false }));
         var frozen = await GetAsync<CashCountFormModel>(client, $"/api/banking/counts/{saved.CashCountId}");
         Assert.True(frozen.IsReadOnly);
         using (var edit = await client.PostAsJsonAsync("/api/banking/counts", frozen))
@@ -96,75 +110,38 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.Admin));
         using (var approved = await client.PostAsync($"/api/banking/counts/{laterOpening.CashCountId}/approve", null))
             Assert.Equal(HttpStatusCode.OK, approved.StatusCode);
-        await scenario.ImportStatementAsync(secondAccount, new BusinessClock(app.Clock), [], 200_000m, 200_000m);
-
         await using var administrator = await browser.NewContextAsync();
-        await AddCookieAsync(administrator, app, scenario.Admin, root);
         var adminPage = await administrator.NewPageAsync();
-        await adminPage.GotoAsync($"{root}/bank-statements?accountId={scenario.Account.Id}");
-        await Expect(adminPage.Locator("input[type=file]")).ToBeEnabledAsync(new() { Timeout = 30_000 });
-        await Expect(adminPage.GetByText("Register a bank account", new() { Exact = true })).ToHaveCountAsync(0);
-        await Expect(adminPage.GetByText("Account configuration", new() { Exact = true })).ToHaveCountAsync(0);
-        await Expect(adminPage.GetByText("Pause new enrollment", new() { Exact = true })).ToHaveCountAsync(0);
-        await Expect(adminPage.GetByText("New-session enrollment: Enabled", new() { Exact = true })).ToBeVisibleAsync();
-        await Expect(adminPage.Locator("a").Filter(new() { HasText = "Manage account" }))
-            .ToHaveAttributeAsync("href", $"/bank-accounts?accountId={scenario.Account.Id}");
-        await FillDateAsync(adminPage, "Start date", "2026-11-02");
-        await FillDateAsync(adminPage, "End date", "2026-11-02");
-        var source = new ParsedStatement("SYNTHETIC-ACCOUNT", "UGX", BankBalanceBasis.Ledger,
-            new DateTimeOffset(2026, 11, 2, 0, 0, 0, TimeSpan.FromHours(3)),
-            new DateTimeOffset(2026, 11, 3, 0, 0, 0, TimeSpan.FromHours(3)),
-            1_000_000m, 950_000m, true,
-            [new("synthetic row", "synthetic fixture", "SYNTHETIC-DEPOSIT", "SYNTHETIC-DEPOSIT",
-                "0012345", "synthetic customer deposit", "UGX", -50_000m, 950_000m,
-                BankingScenario.Now, null, null, true)]);
-        await adminPage.Locator("input[type=file]").SetInputFilesAsync(new FilePayload
-        {
-            Name = "synthetic-statement.csv", MimeType = "text/csv", Buffer = JsonSerializer.SerializeToUtf8Bytes(source)
-        });
-        var upload = adminPage.GetByRole(AriaRole.Button, new() { Name = "Upload and validate", Exact = true });
-        await Expect(adminPage.GetByText("synthetic-statement.csv", new() { Exact = true })).ToBeVisibleAsync();
-        await Expect(upload).ToBeEnabledAsync(new() { Timeout = 30_000 });
-        await upload.ClickAsync();
-        var refresh = adminPage.GetByRole(AriaRole.Button, new() { Name = "Refresh preview", Exact = true });
-        await Expect(refresh).ToBeVisibleAsync();
-        var commit = adminPage.GetByRole(AriaRole.Button, new() { Name = "Commit reviewed bank entries", Exact = true });
-        for (var attempt = 0; attempt < 30 && !await commit.IsEnabledAsync(); attempt++)
-        {
-            await Task.Delay(500);
-            await refresh.ClickAsync();
-        }
-        await Expect(commit).ToBeEnabledAsync();
-        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Correct extraction", Exact = true }).ClickAsync();
-        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("^Correct extracted row #"))).ToBeVisibleAsync();
-        lookupFailures.FailNext();
-        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true }).ClickAsync();
-        await Expect(adminPage.GetByText("Simulated account lookup failure.", new() { Exact = true })).ToBeVisibleAsync();
-        await Expect(adminPage.GetByRole(AriaRole.Heading, new() { NameRegex = new("^Import #") })).ToHaveCountAsync(0);
-        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("^Correct extracted row #"))).ToHaveCountAsync(0);
-        await Expect(commit).ToHaveCountAsync(0);
-        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true }).ClickAsync();
-        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Review", Exact = true }).ClickAsync();
-        await Expect(commit).ToBeEnabledAsync();
-        await commit.ClickAsync();
-        await Expect(adminPage.GetByRole(AriaRole.Heading, new() { NameRegex = new("Import #.*Committed") })).ToBeVisibleAsync();
-
-        await adminPage.GotoAsync($"{root}/bank-reconciliation?sessionId={scenario.Session.Id}");
-        await Expect(adminPage.GetByRole(AriaRole.Button, new() { Name = "Start review", Exact = true })).ToBeEnabledAsync();
-        await SelectAsync(adminPage, "Account", $"{scenario.Account.BankName} - {scenario.Account.AccountIdentifier}");
-        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Start review", Exact = true }).ClickAsync();
-        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Match unique exact entries", Exact = true }).ClickAsync();
-        var approve = adminPage.GetByRole(AriaRole.Button, new() { Name = "Approve this bank wallet", Exact = true });
-        await Expect(approve).ToBeEnabledAsync();
-        await approve.ClickAsync();
-        await Expect(adminPage.GetByText("Selected bank approval: Current", new() { Exact = true })).ToBeVisibleAsync();
-        await Expect(adminPage.GetByText("Closing approval: PendingApproval; reconciliation: Reconciled", new() { Exact = true })).ToBeVisibleAsync();
-        await Expect(adminPage.GetByText("Bank wallets awaiting current approval: ABSA", new() { Exact = true })).ToBeVisibleAsync();
-        await SelectAsync(adminPage, "Account", $"{secondAccount.BankName} - {secondAccount.AccountIdentifier}");
-        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Start review", Exact = true }).ClickAsync();
-        await Expect(approve).ToBeEnabledAsync();
-        await approve.ClickAsync();
-        await Expect(adminPage.GetByText("Closing approval: Approved; reconciliation: Reconciled", new() { Exact = true })).ToBeVisibleAsync();
+        await LoginAdminAsync(adminPage, app, scenario.Admin.Id, root);
+        var reviewUrl = $"{root}/closing-approvals/{saved.CashCountId}";
+        await adminPage.GotoAsync(reviewUrl);
+        await Expect(adminPage.GetByRole(AriaRole.Button, new() { Name = "Reconcile closing", Exact = true })).ToBeEnabledAsync();
+        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Reconcile closing", Exact = true }).ClickAsync();
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("^Reconciliation blocked"))).ToBeVisibleAsync();
+        await Expect(adminPage.Locator("input[type=file]")).ToHaveCountAsync(0);
+        var day = scenario.Session.SessionDate;
+        await UploadCsvAsync(adminPage, root, scenario.Account.Id, day, BankingScenario.StatementCsv(day.AddDays(-1), 1_000_000m));
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("must match the selected statement date"))).ToBeVisibleAsync();
+        await UploadCsvAsync(adminPage, root, scenario.Account.Id, day, BankingScenario.StatementCsv(day, 1_000_000m, -50_000m));
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("^Statement accepted"))).ToBeVisibleAsync();
+        await adminPage.GotoAsync(reviewUrl);
+        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Reconcile closing", Exact = true }).ClickAsync();
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("ABSA: statement.*missing"))).ToBeVisibleAsync();
+        await UploadCsvAsync(adminPage, root, secondAccount.Id, day, BankingScenario.StatementCsv(day, 200_000m));
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("^Statement accepted"))).ToBeVisibleAsync();
+        await adminPage.GotoAsync(reviewUrl);
+        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Reconcile closing", Exact = true }).ClickAsync();
+        await ExpectVisibleAsync(adminPage, adminPage.GetByText(new System.Text.RegularExpressions.Regex("Reconciliation: Success")));
+        await Expect(adminPage.GetByText("Closing status: PendingApproval", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(adminPage.GetByRole(AriaRole.Button, new() { Name = "Reconcile closing", Exact = true })).ToHaveCountAsync(0);
+        Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "TestResults"));
+        await adminPage.ScreenshotAsync(new() { Path = Path.Combine(AppContext.BaseDirectory, "TestResults", "closing-success.png"), FullPage = true });
+        await using var reviewer = await browser.NewContextAsync();
+        await AddCookieAsync(reviewer, app, supervisor, root);
+        var supervisorPage = await reviewer.NewPageAsync();
+        await supervisorPage.GotoAsync(reviewUrl);
+        await supervisorPage.GetByRole(AriaRole.Button, new() { Name = "Approve closing", Exact = true }).ClickAsync();
+        await Expect(supervisorPage.GetByText("Closing status: Approved", new() { Exact = true })).ToBeVisibleAsync();
 
         await using var final = database.CreateContext();
         Assert.Equal(150_000m, (await final.Wallets.FindAsync(scenario.CashWallet.Id))!.Balance);
@@ -174,7 +151,59 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         Assert.Equal(0m, (await final.Vaults.SingleAsync(v => v.BranchId == scenario.Agent.BranchId)).CurrentBalance);
         Assert.Equal(CashCountStatus.Approved, (await final.CashCounts.FindAsync(saved.CashCountId))!.Status);
         Assert.Equal(1, await final.SessionFloatSettlements.CountAsync(s => s.Stage == FloatSettlementStage.Closing));
-        Assert.Equal(2, await final.BankReconciliationResults.CountAsync());
+        Assert.Equal(2, await final.ClosingWalletResults.CountAsync());
+        var notices = await final.Notifications.Where(n => n.Type == NotificationType.CountPendingApproval &&
+            n.LinkUrl == $"/closing-approvals/{saved.CashCountId}").ToListAsync();
+        Assert.Equal(2, notices.Count);
+        Assert.Contains(notices, n => n.RecipientUserId == supervisor.Id);
+        Assert.Contains(notices, n => n.RecipientUserId == scenario.Admin.Id);
+
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.User));
+        var nextClosing = await GetAsync<CashCountFormModel>(client, "/api/banking/counts/initialize?isOpening=false");
+        foreach (var wallet in nextClosing.WalletEntries)
+        {
+            wallet.CountedAmount = wallet.ExpectedBalance;
+            wallet.Denominations = null;
+            wallet.ObservedAt = app.Clock.Now;
+        }
+        var nextSaved = await PostAsync<CashCountFormModel, CashCountSaveResult>(client, "/api/banking/counts", nextClosing);
+        using (var submitted = await client.PostAsync($"/api/banking/counts/{nextSaved.CashCountId}/submit", null))
+            Assert.Equal(HttpStatusCode.OK, submitted.StatusCode);
+        var nextDay = day.AddDays(1);
+        await UploadCsvAsync(adminPage, root, scenario.Account.Id, nextDay, BankingScenario.StatementCsv(nextDay, 950_000m, 10m));
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("^Statement accepted"))).ToBeVisibleAsync();
+        await UploadCsvAsync(adminPage, root, secondAccount.Id, nextDay, BankingScenario.StatementCsv(nextDay, 200_000m));
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("^Statement accepted"))).ToBeVisibleAsync();
+        var failedUrl = $"{root}/closing-approvals/{nextSaved.CashCountId}";
+        await adminPage.GotoAsync(failedUrl);
+        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Reconcile closing", Exact = true }).ClickAsync();
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("Reconciliation: Failed"))).ToBeVisibleAsync();
+        await supervisorPage.GotoAsync(failedUrl);
+        await Expect(supervisorPage.GetByRole(AriaRole.Button, new() { Name = "Approve closing", Exact = true })).ToHaveCountAsync(0);
+        await Expect(supervisorPage.GetByRole(AriaRole.Button, new() { Name = "Approve with reconciliation exception", Exact = true })).ToHaveCountAsync(0);
+        await adminPage.GetByLabel("Exception approval reason", new() { Exact = true }).FillAsync("short");
+        await adminPage.GetByLabel("I acknowledge all failed wallets and differences; the reconciliation remains Failed", new() { Exact = true }).CheckAsync();
+        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Approve with reconciliation exception", Exact = true }).ClickAsync();
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("between 10 and 2,000 characters"))).ToBeVisibleAsync();
+        await adminPage.EvaluateAsync("url => Blazor.navigateTo(url)", reviewUrl);
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("Reconciliation: Success"))).ToBeVisibleAsync();
+        await adminPage.EvaluateAsync("url => Blazor.navigateTo(url)", failedUrl);
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("Reconciliation: Failed"))).ToBeVisibleAsync();
+        await Expect(adminPage.GetByLabel("Exception approval reason", new() { Exact = true })).ToHaveValueAsync("");
+        await Expect(adminPage.GetByLabel("I acknowledge all failed wallets and differences; the reconciliation remains Failed", new() { Exact = true })).Not.ToBeCheckedAsync();
+        await adminPage.GetByLabel("I acknowledge all failed wallets and differences; the reconciliation remains Failed", new() { Exact = true }).CheckAsync();
+        await adminPage.GetByLabel("Exception approval reason", new() { Exact = true }).FillAsync("Bank difference investigated and separately documented.");
+        await adminPage.GetByRole(AriaRole.Button, new() { Name = "Approve with reconciliation exception", Exact = true }).ClickAsync();
+        await Expect(adminPage.GetByText("Closing status: Approved", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("Reconciliation: Failed"))).ToBeVisibleAsync();
+        await adminPage.ReloadAsync();
+        await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("Approved with reconciliation exception"))).ToBeVisibleAsync();
+        await adminPage.ScreenshotAsync(new() { Path = Path.Combine(AppContext.BaseDirectory, "TestResults", "closing-exception.png"), FullPage = true });
+        await using var verifyFailed = database.CreateContext();
+        var failedRun = await verifyFailed.ClosingReconciliationRuns.Include(r => r.Wallets).SingleAsync(r => r.ClosingCountId == nextSaved.CashCountId);
+        Assert.False(failedRun.Succeeded);
+        Assert.Equal(1, failedRun.Wallets.Count(w => !w.Succeeded));
+        Assert.True((await verifyFailed.ClosingApprovalDecisions.SingleAsync(a => a.ClosingCountId == nextSaved.CashCountId)).IsException);
     }
 
     [Fact]
@@ -230,12 +259,12 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await Expect(page.GetByText("New-session enrollment: Paused", new() { Exact = true })).ToBeVisibleAsync();
 
         await page.SetViewportSizeAsync(390, 844);
+        await page.GetByText("Open statements", new() { Exact = true }).ScrollIntoViewIfNeededAsync();
         await Expect(page.GetByText("Open statements", new() { Exact = true })).ToBeInViewportAsync();
         await page.GetByText("Open statements", new() { Exact = true }).ClickAsync();
         await Expect(page).ToHaveURLAsync($"{root}/bank-statements?accountId={account.Id}");
         await Expect(page.Locator("input[type=file]")).ToBeEnabledAsync(new() { Timeout = 30_000 });
         await Expect(page.GetByText("Placement bank configured / UGX / Ledger", new() { Exact = true })).ToBeVisibleAsync();
-        await Expect(page.GetByText("New-session enrollment: Paused", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(page.GetByText("Manage account", new() { Exact = true })).ToBeInViewportAsync();
         await Expect(page.GetByText("Account configuration", new() { Exact = true })).ToHaveCountAsync(0);
         await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Enable new-session workflow", Exact = true })).ToHaveCountAsync(0);
@@ -320,28 +349,25 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await page.GetByText("Open statements", new() { Exact = true }).ClickAsync();
         await Expect(page).ToHaveURLAsync($"{root}/bank-statements?accountId={first.Id}");
         await Expect(page.Locator("input[type=file]")).ToBeEnabledAsync(new() { Timeout = 30_000 });
-        await FillDateAsync(page, "Start date", "2026-10-28");
-        await FillDateAsync(page, "End date", "2026-10-29");
+        await FillDateAsync(page, "Statement date", "2026-10-28");
+        await Expect(page).ToHaveURLAsync($"{root}/bank-statements?accountId={first.Id}&date=2026-10-28");
+        await Expect(page.Locator("input[type=file]")).ToBeEnabledAsync();
         await page.Locator("input[type=file]").SetInputFilesAsync(new FilePayload
         {
             Name = "unsubmitted.csv", MimeType = "text/csv",
             Buffer = System.Text.Encoding.UTF8.GetBytes("TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n")
         });
-        await Expect(page.GetByText("unsubmitted.csv", new() { Exact = true })).ToBeVisibleAsync();
-        await page.GetByLabel("Initial opening balance (first empty period only)", new() { Exact = true }).FillAsync("1000000");
+        await ExpectVisibleAsync(page, page.GetByText("unsubmitted.csv", new() { Exact = true }));
         lookupFailures.FailNext();
-        await SelectAsync(page, "Bank account", "Zulu bank - ZULU-ACCOUNT");
-        await Expect(page).ToHaveURLAsync($"{root}/bank-statements?accountId={second.Id}");
+        await SelectAsync(page, "Bank account", "Second bank wallet - Zulu bank (ZULU-ACCOUNT)");
+        await Expect(page).ToHaveURLAsync($"{root}/bank-statements?accountId={second.Id}&date=2026-10-28");
         await Expect(page.GetByText("Simulated account lookup failure.", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(page.Locator("input[type=file]")).ToHaveCountAsync(0);
         await page.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true }).ClickAsync();
         await Expect(page.GetByText("Zulu bank / UGX / Ledger", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(page.GetByText("unsubmitted.csv", new() { Exact = true })).ToHaveCountAsync(0);
-        await Expect(page.GetByLabel("Initial opening balance (first empty period only)", new() { Exact = true })).ToHaveValueAsync("");
-        using var clockScope = app.Services.CreateScope();
-        var defaultDate = clockScope.ServiceProvider.GetRequiredService<IBusinessClock>().Today.AddDays(-1).ToString("yyyy-MM-dd");
-        await Expect(page.GetByLabel("Start date", new() { Exact = true })).ToHaveValueAsync(defaultDate);
-        await Expect(page.GetByLabel("End date", new() { Exact = true })).ToHaveValueAsync(defaultDate);
+        await Expect(page.GetByLabel("Initial opening balance (first empty period only)", new() { Exact = true })).ToHaveCountAsync(0);
+        await Expect(page.GetByLabel("Statement date", new() { Exact = true })).ToHaveValueAsync("2026-10-28");
         Assert.Equal(0, await page.Locator("input[type=file]").EvaluateAsync<int>("input => input.files.length"));
         await page.ReloadAsync();
         await Expect(page.Locator("a").Filter(new() { HasText = "Manage account" }))
@@ -393,9 +419,9 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await using var supervisorBrowser = await browser.NewContextAsync();
         await AddCookieAsync(supervisorBrowser, app, supervisor, root);
         var supervisorPage = await supervisorBrowser.NewPageAsync();
-        await supervisorPage.GotoAsync(root + "/bank-reconciliation");
-        await Expect(supervisorPage.GetByRole(AriaRole.Heading, new() { Name = "Bank reconciliation", Exact = true })).ToBeVisibleAsync();
-        await Expect(supervisorPage.GetByText("Reconciliation Reviews", new() { Exact = true })).ToBeVisibleAsync();
+        await supervisorPage.GotoAsync(root + "/cashcount-approvals");
+        await Expect(supervisorPage.GetByRole(AriaRole.Heading, new() { Name = "Cash Count Approvals", Exact = true })).ToBeVisibleAsync();
+        await Expect(supervisorPage.GetByText("Closing approvals", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(supervisorPage.GetByText("Bank accounts", new() { Exact = true })).ToHaveCountAsync(0);
 
         await using var administrator = await browser.NewContextAsync();
@@ -451,6 +477,52 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
             inner.ConfigureAsync(userId, accountId, form, expectedVersion, cancellationToken);
         public Task<BankAccountDto> SetWorkflowAsync(string userId, long accountId, bool enabled, int expectedVersion, CancellationToken cancellationToken = default) =>
             inner.SetWorkflowAsync(userId, accountId, enabled, expectedVersion, cancellationToken);
+    }
+
+    private static async Task ExpectVisibleAsync(IPage page, ILocator locator)
+    {
+        try
+        {
+            await Expect(locator).ToBeVisibleAsync();
+        }
+        catch (PlaywrightException exception)
+        {
+            throw new Xunit.Sdk.XunitException(exception.Message + Environment.NewLine + await page.Locator("body").InnerTextAsync());
+        }
+    }
+
+    private static async Task LoginAdminAsync(IPage page, BankingApplicationFactory app, string userId, string root)
+    {
+        using var scope = app.Services.CreateScope();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var roles = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+        var user = (await users.FindByIdAsync(userId))!;
+        user.UserName = "synthetic-" + Guid.NewGuid().ToString("N") + "@example.invalid";
+        user.Email = user.UserName;
+        user.EmailConfirmed = true;
+        Assert.True((await users.UpdateAsync(user)).Succeeded);
+        var password = "Synthetic!" + Guid.NewGuid().ToString("N") + "1a";
+        Assert.True((await users.AddPasswordAsync(user, password)).Succeeded);
+        if (!await roles.RoleExistsAsync("Admin"))
+            Assert.True((await roles.CreateAsync(new IdentityRole("Admin"))).Succeeded);
+        Assert.True((await users.AddToRoleAsync(user, "Admin")).Succeeded);
+        await page.GotoAsync(root + "/Account/Login?ReturnUrl=%2Fcashcount-approvals");
+        await page.GetByLabel("Email", new() { Exact = true }).FillAsync(user.Email);
+        await page.GetByLabel("Password", new() { Exact = true }).FillAsync(password);
+        await page.GetByRole(AriaRole.Button, new() { Name = "Sign In", Exact = true }).ClickAsync();
+        await Expect(page).ToHaveURLAsync(root + "/cashcount-approvals");
+    }
+
+    private static async Task UploadCsvAsync(IPage page, string root, long accountId, DateOnly date, string csv)
+    {
+        await page.GotoAsync($"{root}/bank-statements?accountId={accountId}&date={date:yyyy-MM-dd}");
+        await Expect(page.Locator("input[type=file]")).ToBeEnabledAsync(new() { Timeout = 30_000 });
+        await page.Locator("input[type=file]").SetInputFilesAsync(new FilePayload
+        {
+            Name = "synthetic-statement.csv", MimeType = "text/csv", Buffer = Encoding.UTF8.GetBytes(csv)
+        });
+        await page.GetByLabel("I confirm this file belongs to the selected bank account and covers the complete selected day", new() { Exact = true }).CheckAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Upload statement", Exact = true }).ClickAsync();
     }
 
     private static async Task NavigateBankPageAsync(IPage page, string route)

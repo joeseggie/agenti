@@ -1,282 +1,174 @@
 @page "/bank-statements"
 @using Microsoft.AspNetCore.Authorization
-@using EastSeat.Agenti.Shared.Domain.Enums
+@using Microsoft.AspNetCore.Components.Forms
 @using EastSeat.Agenti.Shared.Services
 @using EastSeat.Agenti.Web.Features.BankStatements
 @inherits BankingPageBase
 @attribute [Authorize(Policy = "BankReconciliation")]
 @rendermode InteractiveServer
 @inject IBankAccountService Accounts
-@inject IBankStatementService Statements
-@inject IBankEvidenceService Evidence
+@inject IDailyBankStatementService Statements
 @inject IBusinessClock Clock
-@inject NavigationManager Nav
+@inject NavigationManager Navigation
 @inject Microsoft.Extensions.Options.IOptions<BankEvidenceOptions> EvidenceOptions
 
-<PageTitle>Bank Statements - Agenti</PageTitle>
-<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
-    <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.SpaceBetween">
-        <MudText Typo="Typo.h4">Bank statements</MudText>
-        <MudButton Href="/bank-reconciliation">Reconciliation</MudButton>
-        <MudButton OnClick="LoadAsync" Disabled="Busy">Refresh</MudButton>
-    </MudStack>
-    @if (Error != null) { <MudAlert Severity="Severity.Error" Class="my-3">@Error</MudAlert> }
-    @if (Busy) { <MudProgressLinear Indeterminate="true" Class="my-3" /> }
-    @if (Loaded && Error == null && _accounts.Count == 0)
+<PageTitle>Daily bank statements - Agenti</PageTitle>
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudText Typo="Typo.h4">Daily bank statements</MudText>
+    <MudText>Upload one complete statement for each Bank wallet for one selected date. Cash and Mobile Money need no statement.</MudText>
+    <MudButton Href="/cashcount-approvals">Closing approvals</MudButton>
+    <MudButton Href="/bank-accounts">Manage bank accounts</MudButton>
+    <MudButton OnClick="ReloadAsync" Disabled="Busy">Refresh</MudButton>
+    <MudButton Href="/templates/agenti-bank-statement-v1.csv" Download="agenti-bank-statement-v1.csv">Download CSV template</MudButton>
+    @if (Error != null)
     {
-        <MudAlert Severity="Severity.Info" Class="my-3">
-            Register the existing agent bank wallet on <MudLink Href="/bank-accounts">Bank accounts</MudLink> to begin.
-            This does not move money or change legacy sessions.
-        </MudAlert>
+        <MudAlert Severity="Severity.Error" Class="my-3">@Error</MudAlert>
     }
-    @if (_accounts.Count > 0)
+    @if (_accepted != null)
     {
-        <MudSelect T="long" Label="Bank account" Value="_accountId" ValueChanged="SelectAccount" Disabled="Busy">
+        <MudAlert Severity="Severity.Success" Class="my-3">@_accepted</MudAlert>
+    }
+    @if (Loaded && _accounts.Count == 0)
+    {
+        <MudAlert Severity="Severity.Warning">Register a Bank wallet's account on <MudLink Href="/bank-accounts">Bank accounts</MudLink> before uploading statements.</MudAlert>
+    }
+    @if (_selected is { } selected)
+    {
+    <MudText>@selected.BankName / @selected.Currency / @selected.BalanceBasis</MudText>
+    <MudLink Href="@($"/bank-accounts?accountId={selected.Id}")">Manage account</MudLink>
+    <MudPaper Class="pa-4 my-4" Outlined="true">
+        <MudSelect T="long" Label="Bank account" Value="_accountId" ValueChanged="ChangeAccountAsync" Disabled="Busy">
             @foreach (var account in _accounts)
             {
-                <MudSelectItem T="long" Value="@account.Id">@account.BankName - @account.AccountIdentifier</MudSelectItem>
+                <MudSelectItem T="long" Value="@account.Id">@account.WalletName - @account.BankName (@account.AccountIdentifier)</MudSelectItem>
             }
         </MudSelect>
-    }
-    @if (_selected != null)
-    {
-        <MudPaper Class="pa-4 my-3" Outlined="true">
-            <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
-                <MudStack Spacing="1">
-                    <MudText>@_selected.BankName / @_selected.Currency / @_selected.BalanceBasis</MudText>
-                    <MudText Typo="Typo.body2">New-session enrollment: @(_selected.WorkflowEnabled ? "Enabled" : "Paused")</MudText>
-                </MudStack>
-                <MudButton Href="@($"/bank-accounts?accountId={_selected.Id}")" Disabled="Busy">Manage account</MudButton>
-            </MudStack>
-        </MudPaper>
-        <MudPaper @key="_accountId" Class="pa-4 my-3" Outlined="true">
-            <MudText Typo="Typo.h6">Upload a bank statement CSV</MudText>
-            <MudText Typo="Typo.body2">Download the <a href="/templates/agenti-bank-statement-v1.csv" download>blank CSV template</a> and <a href="/templates/agenti-bank-statement-v1-guide.txt" target="_blank">column guide</a>. Convert the bank export outside Agenti, then upload one CSV for the selected date range. The app checks daily balances and movements; date-only rows do not certify exact session cutoff balances.</MudText>
-            <MudGrid Class="my-2">
-                <MudItem xs="12" sm="4"><MudDatePicker Label="Start date" @bind-Date="_fromDate" Editable="true" DateFormat="yyyy-MM-dd" Disabled="Busy" /></MudItem>
-                <MudItem xs="12" sm="4"><MudDatePicker Label="End date" @bind-Date="_toDate" Editable="true" DateFormat="yyyy-MM-dd" Disabled="Busy" /></MudItem>
-                @if (!_imports.Any(i => i.Status == StatementImportStatus.Committed && i.CoverageVerified) ||
-                     (_fromDate.HasValue && _toDate.HasValue && _imports.Any(i => i.OpeningBaselineReason != null &&
-                         i.RequestedFromDate == DateOnly.FromDateTime(_fromDate.Value) &&
-                         i.RequestedToDate == DateOnly.FromDateTime(_toDate.Value))))
-                {
-                    <MudItem xs="12" sm="4"><MudNumericField T="decimal?" Label="Initial opening balance (first empty period only)" @bind-Value="_openingBaseline" /></MudItem>
-                }
-            </MudGrid>
-            @if (_openingBaseline.HasValue)
-            {
-                <MudTextField T="string" Label="Baseline source and reason (audited)" @bind-Value="_openingBaselineReason" Lines="2" />
-            }
-            <MudText Typo="Typo.caption">Headers must match exactly: TransactionDate, TransactionTime, Reference, Description, Debit, Credit, RunningBalance. Time may be blank; never add a time the bank did not provide.</MudText>
-            <InputFile OnChange="SelectFile" accept=".csv" disabled="@Busy" />
-            @if (_file != null) { <MudText>@_file.Name</MudText> }
-            <MudButton OnClick="UploadAsync" Disabled="@(Busy || _file == null)" Color="Color.Primary" Variant="Variant.Filled" Class="mt-2">Upload and validate</MudButton>
-        </MudPaper>
-        <MudTable T="BankStatementImportDto" Items="_imports" Dense="true" Hover="true">
-            <HeaderContent><MudTh>Source</MudTh><MudTh>Status</MudTh><MudTh>Coverage</MudTh><MudTh>Validation</MudTh><MudTh></MudTh></HeaderContent>
-            <RowTemplate>
-                <MudTd><MudLink Href="@($"/banking-evidence/{context.EvidenceFileId}")" Target="_blank">@context.FileName</MudLink></MudTd>
-                <MudTd>@context.Status (revision @context.Revision)</MudTd>
-                <MudTd>@(context.CoverageFrom.HasValue ? UgandaTime(context.CoverageFrom.Value) : "-") to @(context.CoverageTo.HasValue ? UgandaTime(context.CoverageTo.Value) : "-")</MudTd>
-                <MudTd>@context.ErrorMessage</MudTd>
-                <MudTd>
-                    <MudButton OnClick="@(() => PreviewAsync(context.Id))" Disabled="Busy">Review</MudButton>
-                    <MudButton OnClick="@(() => ReprocessAsync(context))" Disabled="@(Busy || context.Status is StatementImportStatus.Uploaded or StatementImportStatus.Processing)">Reprocess as new revision</MudButton>
-                </MudTd>
-            </RowTemplate>
-            <PagerContent><MudTablePager /></PagerContent>
-        </MudTable>
-    }
-    @if (_preview != null)
-    {
-        <MudPaper Class="pa-4 my-4" Outlined="true">
-            <MudText Typo="Typo.h5">Import #@_preview.Import.Id - @_preview.Import.Status</MudText>
-            @foreach (var issue in _preview.Errors) { <MudAlert Severity="Severity.Error" Class="my-2">@issue</MudAlert> }
-            @if (_preview.Import.Status is StatementImportStatus.Uploaded or StatementImportStatus.Processing)
-            {
-                <MudAlert Severity="Severity.Info">Processing is server-side. Refresh this preview to retrieve its durable status.</MudAlert>
-            }
-            else if (_preview.Import.Status == StatementImportStatus.ReadyForReview && _preview.Rows.Count == 0 && _preview.Errors.Count == 0)
-            {
-                <MudAlert Severity="Severity.Info">The source declares complete coverage with no transactions. Opening and closing balances must agree.</MudAlert>
-            }
-            <MudButton OnClick="@(() => PreviewAsync(_preview.Import.Id))" Disabled="Busy">Refresh preview</MudButton>
-            <MudTable T="StatementRowDto" Items="_preview.Rows" Dense="true" Class="my-3">
-                <HeaderContent><MudTh>Row / time</MudTh><MudTh>Bank identity / narration</MudTh><MudTh>Movement</MudTh><MudTh>Balance</MudTh><MudTh>Identity decision</MudTh><MudTh></MudTh></HeaderContent>
-                <RowTemplate>
-                    <MudTd>#@context.Id @context.SourceLocation<br />@UgandaTime(context.OccurredAt)</MudTd>
-                    <MudTd>@context.TransactionNumber / @context.Reference<br />@context.CustomerIdentifier<br />@context.Narration</MudTd>
-                    <MudTd>@context.SignedAmount.ToString("N2")</MudTd><MudTd>@context.RunningBalance.ToString("N2")</MudTd>
-                    <MudTd>
-                        @if (context.RequiresIdentityDecision && _decisions.TryGetValue(context.Id, out var decision))
-                        {
-                            <MudText Typo="Typo.caption">Possible existing occurrences: @string.Join(", ", context.PossibleExistingTransactionIds)</MudText>
-                            <MudSelect T="StatementRowResolutionKind" @bind-Value="decision.Kind" Label="Decision">
-                                @foreach (var kind in Enum.GetValues<StatementRowResolutionKind>()) { <MudSelectItem T="StatementRowResolutionKind" Value="@kind">@kind</MudSelectItem> }
-                            </MudSelect>
-                            <MudNumericField T="long?" Label="Existing occurrence ID (when linking/revising)" @bind-Value="decision.ExistingId" />
-                            <MudTextField T="string" Label="Evidence-based reason" @bind-Value="decision.Reason" />
-                        }
-                        else { <MudText Typo="Typo.caption">No identity decision required</MudText> }
-                    </MudTd>
-                    <MudTd><MudButton OnClick="@(() => SelectRow(context))" Disabled="@(_preview.Import.Status != StatementImportStatus.ReadyForReview || Busy)">Correct extraction</MudButton></MudTd>
-                </RowTemplate>
-                <PagerContent><MudTablePager /></PagerContent>
-            </MudTable>
-            <MudButton OnClick="CommitAsync" Disabled="@(Busy || _preview.Import.Status != StatementImportStatus.ReadyForReview || _preview.Errors.Count > 0)" Color="Color.Primary" Variant="Variant.Filled">Commit reviewed bank entries</MudButton>
-        </MudPaper>
-    }
-    @if (_editRowId.HasValue)
-    {
-        <MudPaper Class="pa-4 my-3" Outlined="true">
-            <MudText Typo="Typo.h6">Correct extracted row #@_editRowId</MudText>
-            <MudText Typo="Typo.body2">The original source and extraction remain preserved. A correction creates a new normalization revision.</MudText>
-            <MudGrid>
-                <MudItem xs="12" sm="6"><MudTextField T="string" Label="Transaction number" @bind-Value="_rowForm.TransactionNumber" /></MudItem>
-                <MudItem xs="12" sm="6"><MudTextField T="string" Label="Reference" @bind-Value="_rowForm.Reference" /></MudItem>
-                <MudItem xs="12" sm="6"><MudTextField T="string" Label="Customer identifier" @bind-Value="_rowForm.CustomerIdentifier" /></MudItem>
-                <MudItem xs="12" sm="6"><MudTextField T="string" Label="Currency" @bind-Value="_rowForm.Currency" /></MudItem>
-                <MudItem xs="12" sm="6"><MudNumericField T="decimal" Label="Signed movement (+credit / -debit)" @bind-Value="_rowForm.SignedAmount" /></MudItem>
-                <MudItem xs="12" sm="6"><MudNumericField T="decimal" Label="Running balance" @bind-Value="_rowForm.RunningBalance" /></MudItem>
-                <MudItem xs="12" sm="6"><MudTextField T="string" Label="Transaction time (Uganda)" @bind-Value="_rowOccurred" /></MudItem>
-                <MudItem xs="12" sm="6"><MudTextField T="string" Label="Posting time (Uganda, optional)" @bind-Value="_rowPosted" /></MudItem>
-                <MudItem xs="12"><MudTextField T="string" Label="Narration" @bind-Value="_rowForm.Narration" /></MudItem>
-                <MudItem xs="12"><MudCheckBox T="bool" @bind-Value="_rowForm.HasPreciseTimestamp" Label="The bank provides a usable precise timestamp" /></MudItem>
-                <MudItem xs="12"><MudTextField T="string" Label="Correction reason" @bind-Value="_rowForm.Reason" Lines="2" /></MudItem>
-            </MudGrid>
-            <MudButton OnClick="CorrectRowAsync" Disabled="Busy" Color="Color.Primary">Save normalization correction</MudButton>
-        </MudPaper>
+        <MudDatePicker Label="Statement date" Date="_date" DateChanged="ChangeDateAsync"
+                       Editable="true" DateFormat="yyyy-MM-dd" Disabled="Busy" />
+        <MudText Typo="Typo.body2" Class="my-2">Every TransactionDate must equal the selected date. Multi-day and empty statements are rejected.</MudText>
+        <InputFile @key="_fileKey" OnChange="SelectFile" accept=".csv" disabled="@Busy" />
+        @if (_file != null)
+        {
+            <MudText>@_file.Name</MudText>
+        }
+        <MudCheckBox T="bool" @bind-Value="_confirmed" Disabled="Busy"
+                     Label="I confirm this file belongs to the selected bank account and covers the complete selected day" />
+        @if (_imports.Count > 0)
+        {
+            <MudTextField T="string" Label="Replacement reason" @bind-Value="_reason" Disabled="Busy"
+                          HelperText="A different file requires a reason of 10-2,000 characters; the previous version is retained." />
+        }
+        <MudButton OnClick="UploadAsync" Disabled="@(Busy || _file == null || _accountId == 0 || !_confirmed)"
+                   Color="Color.Primary" Variant="Variant.Filled">Upload statement</MudButton>
+        <MudButton OnClick="RefreshAsync" Disabled="Busy">Refresh statements</MudButton>
+    </MudPaper>
+    <MudText Typo="Typo.h6">Statement history for the selected account and date</MudText>
+    <MudTable Items="_imports" Dense="true" Hover="true">
+        <HeaderContent>
+            <MudTh>Revision</MudTh><MudTh>File</MudTh><MudTh>Rows</MudTh>
+            <MudTh>Debits</MudTh><MudTh>Credits</MudTh><MudTh>Status</MudTh><MudTh>Replacement reason</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.Revision</MudTd><MudTd><MudLink Href="@($"/closing-statement-evidence/{context.Id}")">@context.FileName</MudLink></MudTd><MudTd>@context.RowCount</MudTd>
+            <MudTd>@context.TotalDebits.ToString("N2")</MudTd><MudTd>@context.TotalCredits.ToString("N2")</MudTd>
+            <MudTd>@(context.IsUsed ? "Used - locked" : context.Id == _imports[0].Id ? "Ready" : "Superseded")</MudTd>
+            <MudTd>@context.ReplacementReason</MudTd>
+        </RowTemplate>
+        <NoRecordsContent><MudText>No accepted statement for this account and date.</MudText></NoRecordsContent>
+    </MudTable>
     }
 </MudContainer>
 
 @code {
-    [SupplyParameterFromQuery(Name = "accountId")] public long? AccountId { get; set; }
+    [SupplyParameterFromQuery] public long? AccountId { get; set; }
+    [SupplyParameterFromQuery(Name = "date")] public string? RequestedDate { get; set; }
     private List<BankAccountDto> _accounts = [];
+    private List<DailyBankStatementDto> _imports = [];
     private long _accountId;
     private BankAccountDto? _selected;
-    private List<BankStatementImportDto> _imports = [];
-    private BankStatementPreviewDto? _preview;
+    private DateTime? _date;
     private IBrowserFile? _file;
-    private DateTime? _fromDate;
-    private DateTime? _toDate;
-    private decimal? _openingBaseline;
-    private string? _openingBaselineReason;
-    private Guid _uploadKey = Guid.NewGuid();
-    private readonly Dictionary<long, RowDecision> _decisions = [];
-    private long? _editRowId;
-    private CorrectStatementRowForm _rowForm = new();
-    private string _rowOccurred = string.Empty;
-    private string _rowPosted = string.Empty;
-    private sealed class RowDecision
+    private Guid _fileKey = Guid.NewGuid();
+    private bool _confirmed;
+    private string? _reason;
+    private string? _accepted;
+    private (long? AccountId, string? Date)? _loadedQuery;
+
+    protected override Task OnParametersSetAsync()
     {
-        public StatementRowResolutionKind Kind { get; set; }
-        public long? ExistingId { get; set; }
-        public string Reason { get; set; } = string.Empty;
+        var query = (AccountId, RequestedDate);
+        if (_loadedQuery == query) return Task.CompletedTask;
+        _loadedQuery = query;
+        return ReloadAsync();
     }
 
-    protected override void OnInitialized()
+    private Task ReloadAsync() => RunAsync(async () =>
     {
-        _fromDate = _toDate = Clock.Today.AddDays(-1).ToDateTime(TimeOnly.MinValue);
-    }
-
-    protected override Task OnParametersSetAsync() => LoadAsync();
-
-    private Task LoadAsync() => RunAsync(async () =>
-    {
+        ResetSelection();
         _selected = null;
-        _preview = null;
-        _editRowId = null;
-        _decisions.Clear();
+        _imports = [];
         _accounts = await Accounts.GetAccountsAsync(UserId);
-        var accountId = AccountId ?? (_accounts.Any(a => a.Id == _accountId) ? _accountId : _accounts.FirstOrDefault()?.Id ?? 0);
-        if (accountId != _accountId)
-        {
-            _accountId = accountId;
-            _imports = [];
-            _file = null;
-            _uploadKey = Guid.NewGuid();
-            _openingBaseline = null;
-            _openingBaselineReason = null;
-            _fromDate = _toDate = Clock.Today.AddDays(-1).ToDateTime(TimeOnly.MinValue);
-        }
+        _accountId = AccountId ?? _accounts.FirstOrDefault()?.Id ?? 0;
+        if (AccountId.HasValue && !_accounts.Any(a => a.Id == AccountId))
+            throw new UnauthorizedAccessException();
         _selected = _accounts.SingleOrDefault(a => a.Id == _accountId);
-        if (_selected == null)
-        {
-            if (AccountId.HasValue || _accountId != 0) throw new UnauthorizedAccessException();
-            return;
-        }
-        _imports = await Statements.GetImportsAsync(UserId, _accountId);
+        _date = (RequestedDate == null ? Clock.Today : ParseDate(RequestedDate)).ToDateTime(TimeOnly.MinValue);
+        await LoadImportsAsync();
     }, queueIfBusy: true);
 
-    private void SelectAccount(long id) => Nav.NavigateTo(Nav.GetUriWithQueryParameter("accountId", id));
+    private Task LoadImportsAsync() => LoadSelectedAsync();
 
-    private void SelectFile(InputFileChangeEventArgs args) { _file = args.File; _uploadKey = Guid.NewGuid(); }
+    private async Task LoadSelectedAsync()
+    {
+        _imports = _accountId == 0 || !_date.HasValue ? [] :
+            await Statements.GetAsync(UserId, _accountId, DateOnly.FromDateTime(_date.Value));
+    }
+
+    private Task RefreshAsync() => RunAsync(LoadImportsAsync);
+    private Task ChangeAccountAsync(long value)
+    {
+        Navigation.NavigateTo($"/bank-statements?accountId={value}&date={_date:yyyy-MM-dd}");
+        return Task.CompletedTask;
+    }
+    private Task ChangeDateAsync(DateTime? value)
+    {
+        if (value.HasValue)
+        {
+            Navigation.NavigateTo($"/bank-statements?accountId={_accountId}&date={value:yyyy-MM-dd}");
+            return Task.CompletedTask;
+        }
+        return RunAsync(() =>
+        {
+            _date = null;
+            ResetSelection();
+            _imports = [];
+            return Task.CompletedTask;
+        });
+    }
+    private void ResetSelection()
+    {
+        _confirmed = false;
+        _accepted = null;
+        _file = null;
+        _fileKey = Guid.NewGuid();
+        _reason = null;
+    }
+    private void SelectFile(InputFileChangeEventArgs args)
+    {
+        _file = args.File;
+        _confirmed = false;
+        _accepted = null;
+    }
     private Task UploadAsync() => RunAsync(async () =>
     {
-        if (_file == null || _accountId == 0 || !_fromDate.HasValue || !_toDate.HasValue)
-            throw new BankingRuleException("Select an account, date range and CSV file.");
+        if (_file == null || !_date.HasValue)
+            throw new BankingRuleException("Select a statement date and CSV file.");
         await using var stream = _file.OpenReadStream(EvidenceOptions.Value.MaxFileBytes);
-        var file = await Evidence.UploadAsync(UserId, _accountId, _uploadKey, _file.Name, true, stream);
-        var import = await Statements.StartAsync(UserId, _accountId, file.Id,
-            new StatementImportRequest(DateOnly.FromDateTime(_fromDate.Value), DateOnly.FromDateTime(_toDate.Value),
-                _openingBaseline, _openingBaselineReason));
-        _openingBaseline = null;
-        _openingBaselineReason = null;
-        _imports = await Statements.GetImportsAsync(UserId, _accountId);
-        SetPreview(await Statements.GetPreviewAsync(UserId, import.Id));
-    });
-    private Task PreviewAsync(long id) => RunAsync(async () => SetPreview(await Statements.GetPreviewAsync(UserId, id)));
-    private Task ReprocessAsync(BankStatementImportDto import) => RunAsync(async () =>
-    {
-        var revision = import.RequestedFromDate.HasValue && import.RequestedToDate.HasValue
-            ? await Statements.StartAsync(UserId, import.BankAccountId, import.EvidenceFileId,
-                new StatementImportRequest(import.RequestedFromDate.Value, import.RequestedToDate.Value,
-                    import.OpeningBaselineReason == null ? null : import.OpeningBaseline, import.OpeningBaselineReason), true)
-            : await Statements.StartAsync(UserId, import.BankAccountId, import.EvidenceFileId, true);
-        _imports = await Statements.GetImportsAsync(UserId, _accountId);
-        SetPreview(await Statements.GetPreviewAsync(UserId, revision.Id));
-    });
-    private void SetPreview(BankStatementPreviewDto preview)
-    {
-        var sameVersion = _preview?.Import.Id == preview.Import.Id && _preview.Import.Version == preview.Import.Version;
-        _preview = preview;
-        if (sameVersion) return;
-        _decisions.Clear();
-        foreach (var row in preview.Rows.Where(r => r.RequiresIdentityDecision))
-            _decisions[row.Id] = new RowDecision
-            {
-                Kind = row.PossibleExistingTransactionIds.Count == 1 ? StatementRowResolutionKind.LinkExisting : StatementRowResolutionKind.NewOccurrence,
-                ExistingId = row.PossibleExistingTransactionIds.Count == 1 ? row.PossibleExistingTransactionIds[0] : null
-            };
-    }
-    private Task CommitAsync() => RunAsync(async () =>
-    {
-        await Statements.CommitAsync(UserId, _preview!.Import.Id, new CommitStatementForm
-        {
-            ExpectedVersion = _preview.Import.Version,
-            Resolutions = _decisions.Select(d => new StatementRowResolution(d.Key, d.Value.Kind, d.Value.ExistingId, d.Value.Reason)).ToList()
-        });
-        SetPreview(await Statements.GetPreviewAsync(UserId, _preview.Import.Id));
-        _imports = await Statements.GetImportsAsync(UserId, _accountId);
-    });
-    private void SelectRow(StatementRowDto row)
-    {
-        _editRowId = row.Id;
-        _rowForm = new CorrectStatementRowForm
-        {
-            ExpectedVersion = _preview!.Import.Version, TransactionNumber = row.TransactionNumber, Reference = row.Reference,
-            CustomerIdentifier = row.CustomerIdentifier, Narration = row.Narration, Currency = row.Currency,
-            SignedAmount = row.SignedAmount, RunningBalance = row.RunningBalance, ValueDate = row.ValueDate,
-            HasPreciseTimestamp = row.HasPreciseTimestamp
-        };
-        _rowOccurred = UgandaTime(row.OccurredAt);
-        _rowPosted = row.PostedAt.HasValue ? UgandaTime(row.PostedAt.Value) : string.Empty;
-    }
-    private Task CorrectRowAsync() => RunAsync(async () =>
-    {
-        _rowForm.OccurredAt = ParseUgandaTime(_rowOccurred);
-        _rowForm.PostedAt = string.IsNullOrWhiteSpace(_rowPosted) ? null : ParseUgandaTime(_rowPosted);
-        SetPreview(await Statements.CorrectRowAsync(UserId, _preview!.Import.Id, _editRowId!.Value, _rowForm));
-        _editRowId = null;
+        var saved = await Statements.UploadAsync(UserId,
+            new DailyStatementUpload(_accountId, DateOnly.FromDateTime(_date.Value), _confirmed, _imports.FirstOrDefault()?.Id, _reason),
+            _file.Name, stream);
+        ResetSelection();
+        _accepted = $"Statement accepted for {saved.StatementDate:yyyy-MM-dd}: {saved.RowCount} rows, revision {saved.Revision}.";
+        await LoadImportsAsync();
     });
 }

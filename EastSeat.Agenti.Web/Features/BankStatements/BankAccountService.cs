@@ -90,6 +90,7 @@ public sealed class BankAccountService(
             if (account.WalletId != form.WalletId)
                 throw new BankingRuleException("A bank account's wallet binding cannot be reassigned.");
             var hasHistory = await db.CustomerTransactions.AnyAsync(t => t.BankAccountId == accountId, cancellationToken) ||
+                await db.DailyBankStatements.AnyAsync(s => s.BankAccountId == accountId, cancellationToken) ||
                 await db.BankStatementImports.AnyAsync(i => i.BankAccountId == accountId && i.Status == StatementImportStatus.Committed, cancellationToken);
             if ((hasHistory || account.WorkflowEnabled) &&
                 (account.AccountIdentifier != form.AccountIdentifier.Trim() || account.TimeZoneId != form.TimeZoneId ||

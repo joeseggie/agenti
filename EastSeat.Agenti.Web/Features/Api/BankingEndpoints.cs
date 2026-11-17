@@ -1,6 +1,5 @@
 using System.Security.Claims;
 using EastSeat.Agenti.Shared.Services;
-using EastSeat.Agenti.Web.Features.BankReconciliation;
 using EastSeat.Agenti.Web.Features.BankRuns;
 using EastSeat.Agenti.Web.Features.BankStatements;
 using EastSeat.Agenti.Web.Features.CashCounts;
@@ -55,18 +54,6 @@ public static class BankingEndpoints
             Ok(await service.CaptureAsync(UserId(principal), form, token)));
         group.MapPost("/transactions/{id:long}/follow-ups", async (long id, CustomerFollowUpForm form, ClaimsPrincipal principal, ICustomerTransactionService service, CancellationToken token) =>
             Ok(await service.RecordFollowUpAsync(UserId(principal), id, form, token)));
-        group.MapPost("/transactions/correct", async (CustomerMovementCorrectionForm form, ClaimsPrincipal principal, ICustomerTransactionService service, CancellationToken token) =>
-            Ok(await service.CorrectAsync(UserId(principal), form, token)));
-        group.MapGet("/corrections", async (ClaimsPrincipal principal, IBankReconciliationService service, CancellationToken token) =>
-            Ok(await service.GetMyCorrectionsAsync(UserId(principal), token)));
-        group.MapGet("/corrections/{id:long}/options", async (long id, ClaimsPrincipal principal, ICustomerTransactionService service, CancellationToken token) =>
-            Ok(await service.GetCorrectionOptionsAsync(UserId(principal), id, token)));
-        group.MapPost("/corrections/{id:long}/submit", async (long id, ResubmitBankCorrectionsRequest form,
-            ClaimsPrincipal principal, ICustomerTransactionService service, CancellationToken token) =>
-        {
-            await service.ResubmitCorrectionsAsync(UserId(principal), id, form.ExpectedVersion, token);
-            return Ok("Corrections submitted for review.");
-        });
 
         group.MapGet("/bank-runs", async (ClaimsPrincipal principal, IBankingAccessService access, IBankRunService service, CancellationToken token) =>
         {
@@ -118,9 +105,19 @@ public static class BankingEndpoints
         return group;
     }
 
-    public static void MapBankingEvidence(this WebApplication app) =>
+    public static void MapBankingEvidence(this WebApplication app)
+    {
         app.MapGet("/banking-evidence/{id:long}", DownloadEvidenceAsync)
             .RequireAuthorization().AddEndpointFilter<BankingApiExceptionFilter>();
+        app.MapGet("/closing-statement-evidence/{id:long}", async (
+            long id, HttpContext context, IDailyBankStatementService statements, CancellationToken cancellationToken) =>
+        {
+            var evidence = await statements.GetEvidenceAsync(UserId(context.User), id, cancellationToken);
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers.XContentTypeOptions = "nosniff";
+            return Results.File(evidence.Content, evidence.Info.ContentType, evidence.Info.FileName);
+        }).RequireAuthorization("BankReconciliationReview").AddEndpointFilter<BankingApiExceptionFilter>();
+    }
 
     private static async Task<IResult> UploadEvidenceAsync(
         HttpContext context, IBankEvidenceService service, IOptions<BankEvidenceOptions> options, CancellationToken cancellationToken)
@@ -138,6 +135,8 @@ public static class BankingEndpoints
         if (form.Files.Count != 1 || !long.TryParse(form["bankAccountId"], out var accountId) ||
             !Guid.TryParse(form["uploadKey"], out var uploadKey) || !bool.TryParse(form["isStatement"], out var isStatement))
             return Results.BadRequest(ApiResponse<BankEvidenceInfoDto>.Fail("Account, upload identity, file purpose and one file are required."));
+        if (isStatement)
+            return Results.BadRequest(ApiResponse<BankEvidenceInfoDto>.Fail("Bank statements must be uploaded through the Admin web statement page."));
         var file = form.Files[0];
         await using var stream = file.OpenReadStream();
         return Ok(await service.UploadAsync(UserId(context.User), accountId, uploadKey, file.FileName,
@@ -148,6 +147,8 @@ public static class BankingEndpoints
         long id, HttpContext context, IBankEvidenceService service, CancellationToken cancellationToken)
     {
         var evidence = await service.DownloadAsync(UserId(context.User), id, cancellationToken);
+        if (evidence.Info.IsStatement)
+            return Results.NotFound();
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers.XContentTypeOptions = "nosniff";
         return Results.File(evidence.Content, evidence.Info.ContentType, evidence.Info.FileName);

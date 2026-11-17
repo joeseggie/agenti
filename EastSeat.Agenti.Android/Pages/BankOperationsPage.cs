@@ -2,7 +2,7 @@ using EastSeat.Agenti.Android.Models;
 using EastSeat.Agenti.Android.Services;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
-using EastSeat.Agenti.Web.Features.BankReconciliation;
+using EastSeat.Agenti.Web.Features.Api;
 using EastSeat.Agenti.Web.Features.BankRuns;
 using EastSeat.Agenti.Web.Features.CashCounts;
 using EastSeat.Agenti.Web.Features.WalletAdjustments;
@@ -246,9 +246,9 @@ public sealed class BankOperationsPage(
         {
             Text($"#{count.CashCountId} {count.SessionDate:yyyy-MM-dd} | {count.AgentName} | {(count.IsOpening ? "Opening" : "Closing")} | {count.TotalAmount:N2}");
             Text(count.Explanation ?? string.Empty);
-            if (!count.IsOpening && count.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            if (!count.IsOpening && (count.HasBankWallets || count.WorkflowVersion == SessionWorkflowVersion.BankReconciliation))
             {
-                Text("Administrator bank reconciliation is required. There is no direct approval shortcut.");
+                Text("Review this closing in the web approval workspace.");
                 continue;
             }
             Action($"Approve count {count.CashCountId}", async () =>

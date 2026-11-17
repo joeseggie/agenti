@@ -76,16 +76,21 @@ public sealed class ReconciliationApiTests(DatabaseFixture fixture) : Integratio
             { new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("synthetic private statement")), "file", "test.csv" }
         };
         using var uploaded = await client.PostAsync("/api/banking/evidence", content);
-        Assert.Equal(HttpStatusCode.OK, uploaded.StatusCode);
-        var file = await uploaded.Content.ReadFromJsonAsync<ApiResponse<EastSeat.Agenti.Web.Features.BankStatements.BankEvidenceInfoDto>>();
-        var fileId = file!.Data!.Id;
+        Assert.Equal(HttpStatusCode.BadRequest, uploaded.StatusCode);
+        var csv = BankingScenario.StatementCsv(scenario.Session.SessionDate, 1_000_000m);
+        var file = await scenario.UploadStatementAsync(scenario.Account,
+            new EastSeat.Agenti.Shared.Services.BusinessClock(app.Clock),
+            csv);
+        var fileId = file.Id;
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(supervisor));
-        using var supervisorDownload = await client.GetAsync($"/api/banking/evidence/{fileId}");
+        using var supervisorDownload = await client.GetAsync($"/closing-statement-evidence/{fileId}");
         Assert.Equal(HttpStatusCode.OK, supervisorDownload.StatusCode);
+        Assert.Equal("text/csv", supervisorDownload.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(System.Text.Encoding.UTF8.GetBytes(csv), await supervisorDownload.Content.ReadAsByteArrayAsync());
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.User));
-        using var statement = await client.GetAsync($"/api/banking/evidence/{fileId}");
+        using var statement = await client.GetAsync($"/closing-statement-evidence/{fileId}");
         Assert.Equal(HttpStatusCode.Forbidden, statement.StatusCode);
 
         var foreignBranch = new EastSeat.Agenti.Shared.Domain.Entities.Branch { Name = "Other synthetic branch", CreatedAt = BankingScenario.Now };
@@ -99,7 +104,7 @@ public sealed class ReconciliationApiTests(DatabaseFixture fixture) : Integratio
         DbContext.Users.Add(foreignSupervisor);
         await DbContext.SaveChangesAsync();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(foreignSupervisor));
-        using var foreignResponse = await client.GetAsync($"/api/banking/evidence/{fileId}");
+        using var foreignResponse = await client.GetAsync($"/closing-statement-evidence/{fileId}");
         Assert.Equal(HttpStatusCode.Forbidden, foreignResponse.StatusCode);
     }
 
