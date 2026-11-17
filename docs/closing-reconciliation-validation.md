@@ -206,13 +206,22 @@ Each row lists the behavior now enforced and the test that protects it.
 |---|---:|---:|---:|
 | Affected unit/regression selection (same filter as above) | 210 | 0 | 18 |
 | Full integration project (PostgreSQL/API) | 13 | 0 | 0 |
-| Local browser selection | 5 | 0 | 0 |
+| Full integration project (PostgreSQL/API) | 13 | 0 | 0 |
+| Full E2E project (real browser) | 5 | 0 | 1 |
 | Web, MCP and Android (`net10.0-android`) builds | Success | 0 errors | - |
 
 The whitespace check passed. The 18 skipped unit tests are the same
-`VaultServiceTests` skips described above. The retry in finding 10 is not
-exercised by an injected conflict; this is a documented gap. The entire unit
-and E2E projects remain unclaimed.
+`VaultServiceTests` skips described above. The one skipped E2E test was already
+marked skipped. The retry in finding 10 is not exercised by an injected conflict;
+this is a documented gap. The entire unit project was not run locally (it stalled
+earlier); the GitHub Actions unit job on the pushed commit ran it and passed.
+
+The first CI run on the review-fix commit failed one browser test,
+`BankAccounts_FirstRegistration_ManagesWorkflowWithoutMovingMoney`, at the
+mobile-viewport `ToBeInViewportAsync` check: Playwright does not scroll, so the
+link could sit off-screen at 390px depending on scroll position and fonts. The
+test now scrolls the link into view first. It passed locally before and after the
+change, so the CI failure was not reproduced locally.
 
 ## Explicit limitations
 

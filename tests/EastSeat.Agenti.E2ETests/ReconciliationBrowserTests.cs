@@ -259,6 +259,7 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await Expect(page.GetByText("New-session enrollment: Paused", new() { Exact = true })).ToBeVisibleAsync();
 
         await page.SetViewportSizeAsync(390, 844);
+        await page.GetByText("Open statements", new() { Exact = true }).ScrollIntoViewIfNeededAsync();
         await Expect(page.GetByText("Open statements", new() { Exact = true })).ToBeInViewportAsync();
         await page.GetByText("Open statements", new() { Exact = true }).ClickAsync();
         await Expect(page).ToHaveURLAsync($"{root}/bank-statements?accountId={account.Id}");
