@@ -20,7 +20,8 @@ public sealed record ClosingApprovalDto(bool IsException, string? Reason, string
 
 public sealed record ClosingReviewDto(
     long ClosingCountId, long CashSessionId, string AgentName, DateOnly BusinessDate,
-    CashCountStatus Status, List<ClosingWalletDto> Wallets, ClosingReportDto? Report, ClosingApprovalDto? Approval);
+    CashCountStatus Status, List<ClosingWalletDto> Wallets, ClosingReportDto? Report, ClosingApprovalDto? Approval,
+    SessionWorkflowVersion WorkflowVersion = SessionWorkflowVersion.BankReconciliation);
 
 public interface IClosingReconciliationService
 {

@@ -2,6 +2,7 @@
 
 **Execution date:** 2026-11-16. **Result:** the replacement's targeted service,
 PostgreSQL/API and real-browser checks passed; Web, MCP and Android built.
+The PR review follow-up (below) re-ran every layer after the review fixes.
 This is local validation, not a production deployment or a claim that the entire
 repository test suite passed.
 
@@ -13,7 +14,8 @@ read-only archive rather than deleting financial history.
 ## Environment and isolation
 
 - Dedicated worktree/branch: `u/jserunjogi/closing-balance-reconciliation`, based
-  on `af0dbcc`. No commit, push or deployment was performed.
+  on `af0dbcc`. The original validation ran before the work was committed; it was
+  later committed and opened as a pull request. No deployment was performed.
 - Shared Windows development machine; existing .NET SDKs/workloads were used
   without upgrading frameworks or changing global tool settings. Targets remain
   `net10.0` and `net10.0-android`; the default installed SDK was a .NET 11 preview.
@@ -179,6 +181,38 @@ account versions in long-lived Blazor scopes, statement-page parameter/file
 reset races, and test cleanup conflicting with archive guards. Browser assertions
 were also corrected to tolerate rendered whitespace rather than falsely reporting
 a missing successful report. The final runs above passed after those changes.
+
+## PR review follow-up
+
+Ten review findings on the pull request were fixed in code and re-validated.
+Each row lists the behavior now enforced and the test that protects it.
+
+| # | Finding | Fix | Protecting test |
+|---|---|---|---|
+| 1 | Modern Cash/Mobile-only closing could not be approved | Ordinary approval without a run/decision row; exception refused; session closes | `ClosingReconciliationTests.CashOnlyModernClosing_IsApprovedWithoutRunOrExceptionAndClosesSession`, `..._CannotBeSelfApproved` |
+| 2 | Wallet adjustment touched archived review tables | Only advances the session register version | `WalletAdjustmentServiceTests.ApproveAdjustmentAsync_ModernSession_AdvancesRegisterWithoutTouchingArchivedReviews` |
+| 3 | Previous-closing/bridge queries ignored settled-but-unapproved closings | Settled submitted closings count as the previous closing and bridge | `SessionSettlementTests.Opening_BridgesFromLegacySubmittedClosingOnlyOnceItsFloatIsSettled`, `CashCountServiceTests.GetPendingApprovalsAsync_OpeningComparesAgainstSubmittedPreviousClosingOnlyOnceSettled` |
+| 4 | Stale cached status allowed editing a submitted legacy closing | Freeze guard on snapshot/settlement/pending-bank state | `CashCountServiceTests.SaveCashCountAsync_SubmittedClosingWithSnapshot_IsFrozenEvenWhenStatusIsStale` |
+| 5 | Bank review detection ignored the approved opening | Closing must count every opening wallet exactly once | `CashCountServiceTests.SaveCashCountAsync_ClosingOmittingAnOpenedBankWallet_IsRejected` |
+| 6 | Explained Cash/Mobile variance blocked approval | Submission raises one reviewable discrepancy; approved with the closing | `SessionSettlementTests.Closing_ExplainedCashVarianceCreatesDiscrepancyForReview`, `..._ExplainedBankOnlyVarianceDoesNotCreateDiscrepancy`, `ClosingReconciliationTests.ExplainedCashVariance_IsReviewedAndApprovedWithTheClosing` |
+| 7 | Input hash included mutable wallet name/null account id | Hash uses stable identifiers only | `ClosingReconciliationTests.RenamingABankWalletAfterReconciliation_DoesNotInvalidateApproval` |
+| 8 | Session closed on first closing, not when all agents submitted | Shared settlement-aware completion check | `SessionSettlementTests.Session_StaysOpenUntilEveryOpenedAgentHasSubmittedAClosing` |
+| 9 | Legacy Cash/Mobile closings lost their Reject action | Review link only for bank-bearing or modern closings | Razor change without a dedicated test; `CashCountBrowserTests` still passes |
+| 10 | No retry on serialization conflicts | Up to three fresh Serializable attempts, then a conflict | Covered by the existing legacy save tests; conflict injection is not unit-tested |
+
+### Results after the review fixes
+
+| Layer | Passed | Failed | Skipped |
+|---|---:|---:|---:|
+| Affected unit/regression selection (same filter as above) | 210 | 0 | 18 |
+| Full integration project (PostgreSQL/API) | 13 | 0 | 0 |
+| Local browser selection | 5 | 0 | 0 |
+| Web, MCP and Android (`net10.0-android`) builds | Success | 0 errors | - |
+
+The whitespace check passed. The 18 skipped unit tests are the same
+`VaultServiceTests` skips described above. The retry in finding 10 is not
+exercised by an injected conflict; this is a documented gap. The entire unit
+and E2E projects remain unclaimed.
 
 ## Explicit limitations
 

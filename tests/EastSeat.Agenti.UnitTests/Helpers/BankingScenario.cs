@@ -85,9 +85,10 @@ internal class BankingScenario : IDisposable
     }
 
     public void AddApprovedOpening(bool withSettlement = false, decimal bankAmount = 1_000_000m,
-        IReadOnlyList<Wallet>? additionalWallets = null)
+        IReadOnlyList<Wallet>? additionalWallets = null, bool includeBank = true)
     {
-        var wallets = new List<Wallet> { CashWallet, BankWallet };
+        var wallets = new List<Wallet> { CashWallet };
+        if (includeBank) wallets.Add(BankWallet);
         wallets.AddRange(additionalWallets ?? []);
         var bindings = Db.BankAccounts.ToDictionary(a => a.WalletId, a => a.Id);
         var snapshots = wallets.Select(w => new CountedWalletSnapshot(

@@ -278,6 +278,92 @@ public class ClosingReconciliationTests
         Assert.Equal(CashCountStatus.PendingApproval, (await fixture.Db.CashCounts.FindAsync(closing.Id))!.Status);
     }
 
+    [Fact]
+    public async Task CashOnlyModernClosing_IsApprovedWithoutRunOrExceptionAndClosesSession()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.AddApprovedOpening(includeBank: false);
+        var closing = fixture.AddSubmittedClosing();
+        fixture.Session.Status = CashSessionStatus.Open;
+        fixture.Session.ClosedAt = null;
+        await fixture.Db.SaveChangesAsync();
+        var supervisor = AddReviewer(fixture, UserRole.Supervisor);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            Service(fixture).ApproveAsync(supervisor.Id, closing.Id, true, "Not applicable to cash.", true));
+        var exception = await Assert.ThrowsAsync<BankingRuleException>(() =>
+            Service(fixture).ApproveAsync(fixture.Admin.Id, closing.Id, true, "Not applicable to cash.", true));
+        var approved = await Service(fixture).ApproveAsync(supervisor.Id, closing.Id, false);
+        var replay = await Service(fixture).ApproveAsync(supervisor.Id, closing.Id, false);
+
+        Assert.Contains("not required", exception.Message);
+        Assert.Equal(CashCountStatus.Approved, approved.Status);
+        Assert.Equal(CashCountStatus.Approved, replay.Status);
+        Assert.Empty(await fixture.Db.ClosingApprovalDecisions.ToListAsync());
+        Assert.Empty(await fixture.Db.ClosingReconciliationRuns.ToListAsync());
+        var audit = await fixture.Db.CashCountAuditLogs.SingleAsync(l => l.CashCountId == closing.Id &&
+            l.Action == CashCountAuditAction.Approved);
+        Assert.Contains("not required", audit.Notes);
+        Assert.Equal(CashSessionStatus.Closed, (await fixture.Db.CashSessions.FindAsync(fixture.Session.Id))!.Status);
+    }
+
+    [Fact]
+    public async Task CashOnlyModernClosing_CannotBeSelfApproved()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.AddApprovedOpening(includeBank: false);
+        var closing = fixture.AddSubmittedClosing();
+        fixture.User.Role = UserRole.Supervisor;
+        await fixture.Db.SaveChangesAsync();
+
+        var error = await Assert.ThrowsAsync<BankingRuleException>(() =>
+            Service(fixture).ApproveAsync(fixture.User.Id, closing.Id, false));
+
+        Assert.Contains("your own closing", error.Message);
+        Assert.Equal(CashCountStatus.PendingApproval, (await fixture.Db.CashCounts.FindAsync(closing.Id))!.Status);
+    }
+
+    [Fact]
+    public async Task ExplainedCashVariance_IsReviewedAndApprovedWithTheClosing()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.AddApprovedOpening(includeBank: false);
+        var closing = fixture.AddSubmittedClosing(new Dictionary<long, decimal> { [fixture.CashWallet.Id] = 90_000m });
+        closing.Explanation = "Counted ten thousand short after the final deposit.";
+        fixture.Db.Discrepancies.Add(new Discrepancy
+        {
+            CashSessionId = fixture.Session.Id, CashCountId = closing.Id, Status = DiscrepancyStatus.PendingReview,
+            ExpectedAmount = 100_000m, ActualAmount = 90_000m, Variance = -10_000m,
+            Explanation = closing.Explanation, ExplainedAt = BankingScenario.Now, CreatedAt = BankingScenario.Now
+        });
+        await fixture.Db.SaveChangesAsync();
+        var supervisor = AddReviewer(fixture, UserRole.Supervisor);
+
+        var approved = await Service(fixture).ApproveAsync(supervisor.Id, closing.Id, false);
+
+        Assert.Equal(CashCountStatus.Approved, approved.Status);
+        var discrepancy = await fixture.Db.Discrepancies.SingleAsync();
+        Assert.Equal(DiscrepancyStatus.Approved, discrepancy.Status);
+        Assert.Equal(supervisor.Id, discrepancy.ApprovedByUserId);
+    }
+
+    [Fact]
+    public async Task RenamingABankWalletAfterReconciliation_DoesNotInvalidateApproval()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.AddApprovedOpening();
+        var closing = fixture.AddSubmittedClosing();
+        await fixture.UploadStatementAsync(fixture.Account, Clock(), Csv(fixture));
+        await Service(fixture).ReconcileAsync(fixture.Admin.Id, closing.Id);
+        var supervisor = AddReviewer(fixture, UserRole.Supervisor);
+        (await fixture.Db.Wallets.FindAsync(fixture.BankWallet.Id))!.Name = "Renamed bank wallet";
+        await fixture.Db.SaveChangesAsync();
+
+        var approved = await Service(fixture).ApproveAsync(supervisor.Id, closing.Id, false);
+
+        Assert.Equal(CashCountStatus.Approved, approved.Status);
+    }
+
     private static ApplicationUser AddReviewer(BankingScenario fixture, UserRole role)
     {
         var user = new ApplicationUser

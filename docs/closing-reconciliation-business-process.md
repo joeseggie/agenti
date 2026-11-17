@@ -63,7 +63,41 @@ reconciliation API.
 | 12 | Authorized reviewers later open the saved report. | See the original inputs, per-wallet outcome, actor/time, and any distinct normal or exception approval. There is no rerun action. |
 
 If there are no Bank wallets, display **Bank reconciliation not required** and
-retain the existing closing-approval process.
+retain the existing closing-approval process:
+
+- A modern-workflow Cash/Mobile-only closing is approved with the ordinary
+  **Approve closing** action by an Admin or Supervisor other than the agent. No
+  reconciliation run or exception decision exists; the approval audit note states
+  that bank reconciliation was not required. An exception approval is refused.
+  If the agent's approved opening held a Bank wallet, the closing is still treated
+  as bank-bearing even when the closing form omitted it.
+- A legacy-workflow Cash/Mobile-only closing keeps its existing approve/reject
+  buttons in the cash-count approvals list. Only a closing that is bank-bearing,
+  or on the modern workflow, links to the closing review.
+- A legacy closing must count every wallet from the approved opening, including
+  each Bank wallet, exactly once. A submitted closing is frozen (no edits) once
+  its snapshot or settlement exists, even if a stale view still shows it as a draft.
+
+### Variances, settlement and session closure
+
+- Closing a modern session with a Cash/Mobile Money count that differs from the
+  recorded movements requires the agent's explanation at submission. Submission
+  then raises one pending-review discrepancy (expected, actual and variance for
+  the non-bank wallets) which the reviewer approves together with the closing.
+  A bank reconciliation exception cannot override a Cash/Mobile variance that has
+  no explained discrepancy. A Bank-only variance is handled by the reconciliation
+  report, not by a discrepancy.
+- A submitted closing whose float has been settled is treated as submitted for
+  the next-day opening comparison, the opening bridge and session completion.
+  The session closes (and is operationally locked) only when every agent with an
+  approved opening has submitted a settled closing. Financial approval of a
+  settled closing does not gate closure and never repeats settlement.
+- The recorded input fingerprint uses only stable facts (wallet id/type/currency,
+  submitted amount, bound account, opening, closing and date). Renaming a wallet
+  after reconciliation does not invalidate the saved report or its approval.
+- Submitting a legacy closing retries up to three times on a database
+  serialization conflict, each time in a fresh transaction, then reports a
+  conflict instead of a partial save.
 
 ## Statement intake rules
 
@@ -139,6 +173,7 @@ appear in report labels or approval messages.
 | No accepted statement for any required Bank wallet | Upload the missing statement, then attempt the whole-closing run. No report has yet been recorded. |
 | No approved opening or missing account binding | Correct the prerequisite through its authorized existing workflow. Do not substitute zero or a statement-derived opening for the required approved count. |
 | All Bank wallets succeeded | Admin/Supervisor may perform ordinary approval, subject to all other safeguards. |
+| No Bank wallet required (modern workflow) | Admin/Supervisor performs ordinary approval without a run; exception approval is refused. |
 | At least one Bank wallet failed | Ordinary approval is blocked. Admin may record a separately audited exception approval with the required reason/acknowledgement. |
 | Exception-approved closing | Closing approval and Failed reconciliation remain distinct facts. The failed report is immutable and remains available to reviewers. |
 | Previously recorded run | Retrieve the same saved report. Do not run only failed wallets or recalculate the whole closing. |

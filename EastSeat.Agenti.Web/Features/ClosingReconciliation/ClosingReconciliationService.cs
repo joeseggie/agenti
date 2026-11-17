@@ -38,7 +38,8 @@ public sealed class ClosingReconciliationService(
                     w.TotalDebits, w.TotalCredits, w.ExpectedClosing, w.SubmittedClosing,
                     w.StatementOpening, w.StatementClosing, w.Difference, w.Succeeded, w.Explanation)).ToList()),
             approval == null ? null : new ClosingApprovalDto(
-                approval.IsException, approval.Reason, approval.ApprovedByUserId, approval.ApprovedAt));
+                approval.IsException, approval.Reason, approval.ApprovedByUserId, approval.ApprovedAt),
+            count.CashSession!.WorkflowVersion);
     }
 
     public async Task<ClosingReviewDto> ReconcileAsync(
@@ -85,7 +86,7 @@ public sealed class ClosingReconciliationService(
             var run = new ClosingReconciliationRun
             {
                 ClosingCountId = count.Id, OpeningCountId = opening.Id, BusinessDate = count.CountDate,
-                InputHash = InputHash(opening, count, openingWallets, closingWallets),
+                InputHash = InputHash(opening, count, openingWallets, closingWallets, accounts),
                 PerformedByUserId = userId, PerformedAt = clock.UtcNow
             };
             foreach (var wallet in banks)
@@ -162,40 +163,65 @@ public sealed class ClosingReconciliationService(
                 if (!acknowledgeFailures || string.IsNullOrWhiteSpace(reason) || reason.Trim().Length is < 10 or > 2000)
                     throw new BankingRuleException("Acknowledge the failed wallets and provide an exception reason between 10 and 2,000 characters.");
             }
-            var run = await db.ClosingReconciliationRuns.AsNoTracking()
-                .SingleOrDefaultAsync(r => r.ClosingCountId == count.Id, cancellationToken)
-                ?? throw new BankingRuleException("Reconcile all Bank wallets before approving this closing.");
-            if (exception == run.Succeeded)
-                throw new BankingRuleException(run.Succeeded
-                    ? "This reconciliation succeeded. Use ordinary closing approval."
-                    : "Reconciliation failed. Only an Admin may use the separate exception approval.");
-            var existing = await db.ClosingApprovalDecisions.AsNoTracking()
-                .SingleOrDefaultAsync(a => a.ClosingCountId == count.Id, cancellationToken);
-            if (existing != null)
+            var wallets = await ReadWalletsAsync(count, cancellationToken);
+            var bankRequired = wallets.Any(w => w.Type == WalletTypeEnum.Bank) ||
+                await OpeningHadBankAsync(count, cancellationToken);
+            ClosingReconciliationRun? run = null;
+            if (!bankRequired)
             {
-                if (existing.IsException != exception || existing.Reason != (exception ? reason!.Trim() : null))
-                    throw new BankingConflictException("This closing already has a different recorded approval decision.");
-                await transaction.CommitAsync(cancellationToken);
-                return await GetAsync(userId, count.Id, cancellationToken);
+                if (exception)
+                    throw new BankingRuleException("Bank reconciliation is not required for this closing; use ordinary approval.");
+                if (count.CashSession!.WorkflowVersion != SessionWorkflowVersion.BankReconciliation)
+                    throw new BankingRuleException("Approve this Cash/Mobile Money closing from the cash count approvals list.");
+                if (count.Status == CashCountStatus.Approved)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                    return await GetAsync(userId, count.Id, cancellationToken);
+                }
+            }
+            else
+            {
+                run = await db.ClosingReconciliationRuns.AsNoTracking()
+                    .SingleOrDefaultAsync(r => r.ClosingCountId == count.Id, cancellationToken)
+                    ?? throw new BankingRuleException("Reconcile all Bank wallets before approving this closing.");
+                if (exception == run.Succeeded)
+                    throw new BankingRuleException(run.Succeeded
+                        ? "This reconciliation succeeded. Use ordinary closing approval."
+                        : "Reconciliation failed. Only an Admin may use the separate exception approval.");
+                var existing = await db.ClosingApprovalDecisions.AsNoTracking()
+                    .SingleOrDefaultAsync(a => a.ClosingCountId == count.Id, cancellationToken);
+                if (existing != null)
+                {
+                    if (existing.IsException != exception || existing.Reason != (exception ? reason!.Trim() : null))
+                        throw new BankingConflictException("This closing already has a different recorded approval decision.");
+                    await transaction.CommitAsync(cancellationToken);
+                    return await GetAsync(userId, count.Id, cancellationToken);
+                }
             }
             if (count.Status != CashCountStatus.PendingApproval)
                 throw new BankingRuleException("This closing is no longer awaiting approval.");
-            var opening = await OpeningAsync(count, cancellationToken);
-            var wallets = await ReadWalletsAsync(count, cancellationToken);
-            if (run.OpeningCountId != opening.Id || run.InputHash !=
-                InputHash(opening, count, await ReadWalletsAsync(opening, cancellationToken), wallets))
-                throw new BankingRuleException("The recorded opening/closing inputs changed. Approval requires investigation; rerunning is not supported.");
+            var accounts = await AccountsAsync(count, cancellationToken);
+            if (run != null)
+            {
+                var opening = await OpeningAsync(count, cancellationToken);
+                if (run.OpeningCountId != opening.Id || run.InputHash !=
+                    InputHash(opening, count, await ReadWalletsAsync(opening, cancellationToken), wallets, accounts))
+                    throw new BankingRuleException("The recorded opening/closing inputs changed. Approval requires investigation; rerunning is not supported.");
+            }
             if (await db.WalletAdjustments.AnyAsync(a => a.CashSessionId == count.CashSessionId &&
                     a.AgentId == count.AgentId && a.Status == WalletAdjustmentStatus.Pending, cancellationToken))
                 throw new BankingRuleException("Review pending wallet adjustments before closing approval.");
+            var discrepancy = await db.Discrepancies.SingleOrDefaultAsync(d => d.CashCountId == count.Id &&
+                d.Status == DiscrepancyStatus.PendingReview, cancellationToken);
             var snapshot = await db.CashCountSnapshots.AsNoTracking()
                 .SingleOrDefaultAsync(s => s.CashCountId == count.Id, cancellationToken);
             if (count.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation && snapshot != null)
             {
                 var positions = await balances.GetPositionsAtSnapshotAsync(snapshot.Id, cancellationToken: cancellationToken);
-                if (wallets.Where(w => w.Type != WalletTypeEnum.Bank)
+                // A bank statement cannot explain a Cash/Mobile variance; only the agent's reviewed discrepancy can.
+                if (discrepancy == null && wallets.Where(w => w.Type != WalletTypeEnum.Bank)
                     .Any(w => positions.Single(p => p.WalletId == w.Id).ExpectedBalance != w.Amount))
-                    throw new BankingRuleException("Cash or Mobile Money differs from recorded movements. A bank reconciliation exception cannot override this safeguard.");
+                    throw new BankingRuleException("Cash or Mobile Money differs from recorded movements and has no explained discrepancy to review. A bank reconciliation exception cannot override this safeguard.");
             }
             if (!await db.SessionFloatSettlements.AnyAsync(s => s.CashCountId == count.Id &&
                     s.Stage == FloatSettlementStage.Closing, cancellationToken))
@@ -206,7 +232,8 @@ public sealed class ClosingReconciliationService(
                 await settlements.SubmitClosingAsync(userId, count.Id, cancellationToken);
             }
             var now = clock.UtcNow;
-            var discrepancy = await db.Discrepancies.SingleOrDefaultAsync(d => d.CashCountId == count.Id &&
+            // A legacy closing settled just above may have just raised its discrepancy.
+            discrepancy ??= await db.Discrepancies.SingleOrDefaultAsync(d => d.CashCountId == count.Id &&
                 d.Status == DiscrepancyStatus.PendingReview, cancellationToken);
             if (discrepancy != null)
             {
@@ -232,23 +259,28 @@ public sealed class ClosingReconciliationService(
             count.ApprovedAt = now;
             count.ApprovedByUserId = actor.UserId;
             count.CashSession.Version++;
-            db.ClosingApprovalDecisions.Add(new ClosingApprovalDecision
-            {
-                ClosingCountId = count.Id, RunId = run.Id, IsException = exception,
-                Reason = exception ? reason!.Trim() : null, ApprovedByUserId = actor.UserId, ApprovedAt = now
-            });
+            if (run != null)
+                db.ClosingApprovalDecisions.Add(new ClosingApprovalDecision
+                {
+                    ClosingCountId = count.Id, RunId = run.Id, IsException = exception,
+                    Reason = exception ? reason!.Trim() : null, ApprovedByUserId = actor.UserId, ApprovedAt = now
+                });
             db.CashCountAuditLogs.Add(new CashCountAuditLog
             {
                 CashCountId = count.Id, CashSessionId = count.CashSessionId, AgentId = count.AgentId,
                 Action = CashCountAuditAction.Approved, PreviousStatus = CashCountStatus.PendingApproval,
                 NewStatus = CashCountStatus.Approved, TotalAmount = count.TotalAmount,
                 PerformedByUserId = actor.UserId, PerformedAt = now,
-                Notes = exception ? $"Approved with reconciliation exception. Failed report #{run.Id} retained. {reason!.Trim()}"
+                Notes = run == null ? "Approved; bank reconciliation not required for this closing."
+                    : exception ? $"Approved with reconciliation exception. Failed report #{run.Id} retained. {reason!.Trim()}"
                     : $"Approved after successful daily reconciliation #{run.Id}; not exact-time certification."
             });
             WorkflowNotifications.AddForUser(db, count.Agent.UserId, "Closing count approved",
                 "Your submitted closing count has been approved.", NotificationType.CountApproved, "/cashcount", now);
             await db.SaveChangesAsync(cancellationToken);
+            // Approval must never leave a fully submitted session open.
+            if (await SessionCompletion.CloseIfCompleteAsync(db, count.CashSession, now, cancellationToken))
+                await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return await GetAsync(userId, count.Id, cancellationToken);
         }
@@ -307,9 +339,22 @@ public sealed class ClosingReconciliationService(
     }
 
     private static string InputHash(CashCount opening, CashCount closing,
-        List<WalletObservation> openingWallets, List<WalletObservation> closingWallets) =>
-        BankingRequestIdentity.Hash(new { OpeningId = opening.Id, ClosingId = closing.Id, closing.CountDate,
-            Opening = openingWallets, Closing = closingWallets });
+        List<WalletObservation> openingWallets, List<WalletObservation> closingWallets, List<BankAccount> accounts)
+    {
+        // Only immutable identifiers and amounts: a wallet rename or a later snapshot must not invalidate the run.
+        static List<object> Stable(List<WalletObservation> wallets, List<BankAccount> accounts) =>
+            wallets.Select(w => (object)new { w.Id, w.Type, w.Currency, w.Amount, AccountId = Binding(w, accounts)?.Id }).ToList();
+        return BankingRequestIdentity.Hash(new
+        {
+            OpeningId = opening.Id, ClosingId = closing.Id, closing.CountDate,
+            Opening = Stable(openingWallets, accounts), Closing = Stable(closingWallets, accounts)
+        });
+    }
+
+    private async Task<bool> OpeningHadBankAsync(CashCount closing, CancellationToken cancellationToken) =>
+        await db.CashCountDetails.AnyAsync(d => d.CashCount!.IsOpening && d.CashCount.AgentId == closing.AgentId &&
+            d.CashCount.CashSessionId == closing.CashSessionId && d.CashCount.Status == CashCountStatus.Approved &&
+            d.Wallet!.WalletType!.Type == WalletTypeEnum.Bank, cancellationToken);
 
     private sealed record WalletObservation(
         long Id, string Name, WalletTypeEnum Type, string Currency, decimal Amount, long? BankAccountId);

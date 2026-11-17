@@ -80,7 +80,7 @@
                             @(context.Variance.Value > 0 ? "+" : "")@context.Variance.Value.ToString("N0")
                         </MudText>
                     }
-                    else if (!context.IsOpening && context.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+                    else if (!context.IsOpening && context.HasBankWallets)
                     {
                         <MudText Typo="Typo.body2">Bank review required</MudText>
                     }
@@ -97,7 +97,7 @@
                     <MudText Typo="Typo.caption">@context.SubmittedAt.ToLocalTime().ToString("HH:mm")</MudText>
                 </MudTd>
                 <MudTd DataLabel="Actions" Style="text-align: center;">
-                    @if (!context.IsOpening)
+                    @if (!context.IsOpening && (context.HasBankWallets || context.WorkflowVersion == SessionWorkflowVersion.BankReconciliation))
                     {
                         <MudButton Href="@($"/closing-approvals/{context.CashCountId}")">Review closing</MudButton>
                     }

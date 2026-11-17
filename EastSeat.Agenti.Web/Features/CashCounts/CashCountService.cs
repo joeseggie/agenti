@@ -248,6 +248,32 @@ public class CashCountService(
         var branchId = agent.BranchId.Value;
         if (await bankWorkflow.HandlesFormAsync(branchId, form))
             return await RunBankWorkflowAsync(() => bankWorkflow.SaveAsync(userId, form));
+
+        const int maxAttempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await SaveLegacyCashCountAsync(userId, form, agentId, branchId);
+            }
+            catch (Exception exception) when (BankingConcurrency.IsConflict(exception))
+            {
+                // The serializable transaction was rolled back on dispose; restart from fresh state.
+                dbContext.ChangeTracker.Clear();
+                if (attempt >= maxAttempts)
+                    throw new BankingConflictException("The session changed while this request was being processed. Refresh and retry using the same request.");
+            }
+            catch
+            {
+                dbContext.ChangeTracker.Clear();
+                throw;
+            }
+        }
+    }
+
+    private async Task<CashCountSaveResult> SaveLegacyCashCountAsync(
+        string userId, CashCountFormModel form, long agentId, long branchId)
+    {
         await using var saveTransaction = await dbContext.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
         var countDate = form.CountDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
@@ -301,9 +327,17 @@ public class CashCountService(
                 .Where(s => s.BranchId == branchId && s.SessionDate == countDate)
                 .FirstOrDefaultAsync();
         }
-        catch
+        catch (Exception exception) when (!BankingConcurrency.IsConflict(exception))
         {
             session = null;
+        }
+
+        if (session != null)
+        {
+            // A long-lived scoped context may hold stale tracked rows; the serializable snapshot does not refresh them.
+            await dbContext.Entry(session).ReloadAsync();
+            foreach (var existingCount in session.CashCounts)
+                await dbContext.Entry(existingCount).ReloadAsync();
         }
 
         if (form.IsOpening)
@@ -354,9 +388,10 @@ public class CashCountService(
                 {
                     await dbContext.SaveChangesAsync();
                 }
-                catch (DbUpdateException)
+                catch (DbUpdateException exception) when (!BankingConcurrency.IsConflict(exception))
                 {
-                    // Race condition: another agent created the session concurrently
+                    // Conflicts (including a concurrent session insert) abort the serializable transaction and
+                    // are retried from a fresh transaction by the caller.
                     dbContext.Entry(session).State = EntityState.Detached;
                     session = await dbContext.CashSessions
                         .Include(s => s.CashCounts.Where(c => c.AgentId == agentId))
@@ -391,6 +426,18 @@ public class CashCountService(
                 return CashCountSaveResult.Error("Opening count must be approved before submitting a closing count.");
             }
 
+            // Omitting a Bank wallet that was opened must not let a closing bypass bank review.
+            var openedWalletTypes = await dbContext.CashCountDetails.AsNoTracking()
+                .Where(d => d.CashCountId == approvedOpening.Id)
+                .Select(d => new { d.WalletId, d.Wallet!.WalletType!.Type })
+                .ToListAsync();
+            if (openedWalletTypes.Any(w => w.Type == WalletTypeEnum.Bank) &&
+                !openedWalletTypes.Select(w => w.WalletId).Order()
+                    .SequenceEqual(form.WalletEntries.Select(w => w.WalletId).Distinct().Order()))
+            {
+                return CashCountSaveResult.Error("Count every wallet from the approved opening, including each Bank wallet, exactly once.");
+            }
+
             var existingClosing = session.CashCounts
                 .FirstOrDefault(c => !c.IsOpening &&
                                      c.Status != CashCountStatus.Rejected &&
@@ -411,8 +458,7 @@ public class CashCountService(
 
         var isNewCount = cashCount == null;
         var previousStatus = cashCount?.Status;
-        if (cashCount != null && !cashCount.IsOpening &&
-            cashCount.Status == CashCountStatus.PendingApproval && await RequiresBankReviewAsync(cashCount.Id))
+        if (cashCount != null && !cashCount.IsOpening && await IsClosingFrozenAsync(cashCount.Id))
             return CashCountSaveResult.Error("Submitted closing balances are frozen and cannot be edited.");
 
         if (cashCount == null)
@@ -672,7 +718,7 @@ public class CashCountService(
         {
             return cashCount.IsOpening
                 ? await RunBankWorkflowAsync(() => bankWorkflow.ApproveOpeningAsync(adminUserId, cashCountId))
-                : CashCountSaveResult.Error("Closing approval requires the bank reconciliation workspace; matching balances alone are not sufficient.");
+                : CashCountSaveResult.Error("Review and approve this closing in the web closing approval workspace.");
         }
 
         if (cashCount.Status != CashCountStatus.PendingApproval)
@@ -856,10 +902,8 @@ public class CashCountService(
         if (openingAgentIds.Count > 0)
         {
             var maxOpeningDate = legacyOpeningCounts.Max(c => c.CountDate);
-            previousClosingCounts = (await dbContext.CashCounts
+            previousClosingCounts = (await SettledClosingCounts()
                 .Where(c => openingAgentIds.Contains(c.AgentId) &&
-                            !c.IsOpening &&
-                            c.Status == CashCountStatus.Approved &&
                             c.CountDate < maxOpeningDate)
                 .Select(c => new { c.AgentId, c.CountDate, c.TotalAmount })
                 .ToListAsync())
@@ -1066,20 +1110,25 @@ public class CashCountService(
     // ---- Private helpers ----
 
     /// <summary>
-    /// Gets the agent's most recent approved closing count before the given date.
+    /// Gets the agent's most recent settled closing count before the given date. A closing is settled once approved or,
+    /// for a bank closing, once its operational settlement is recorded while financial approval is still pending.
     /// Used to compare an opening count against the previous day's closing balance.
     /// </summary>
     private async Task<CashCount?> GetPreviousApprovedClosingCountAsync(long agentId, DateOnly beforeDate)
     {
-        return await dbContext.CashCounts
-            .Where(c => c.AgentId == agentId &&
-                        !c.IsOpening &&
-                        c.Status == CashCountStatus.Approved &&
-                        c.CountDate < beforeDate)
+        return await SettledClosingCounts()
+            .Where(c => c.AgentId == agentId && c.CountDate < beforeDate)
             .OrderByDescending(c => c.CountDate)
             .ThenByDescending(c => c.Id)
             .FirstOrDefaultAsync();
     }
+
+    private IQueryable<CashCount> SettledClosingCounts() =>
+        dbContext.CashCounts.Where(c => !c.IsOpening &&
+            (c.Status == CashCountStatus.Approved ||
+             (c.Status == CashCountStatus.PendingApproval &&
+              dbContext.SessionFloatSettlements.Any(s =>
+                  s.CashCountId == c.Id && s.Stage == FloatSettlementStage.Closing))));
 
     /// <summary>
     /// Review comment: wraps vault withdrawal + wallet updates + status change in a single transaction.
@@ -1311,53 +1360,25 @@ public class CashCountService(
     /// </summary>
     private async Task TryCloseSessionAsync(long sessionId)
     {
-        var session = await dbContext.CashSessions
-            .Include(s => s.CashCounts)
-            .FirstOrDefaultAsync(s => s.Id == sessionId);
-
+        var session = await dbContext.CashSessions.FirstOrDefaultAsync(s => s.Id == sessionId);
         if (session == null || session.Status == CashSessionStatus.Closed)
         {
             return;
         }
 
-        // Review comment: don't auto-close if any counts are still pending approval
-        var hasPendingApprovals = session.CashCounts
-            .Any(c => c.Status == CashCountStatus.PendingApproval);
-        if (hasPendingApprovals)
+        // Shared with bank settlement: a settled closing awaiting financial approval counts as submitted.
+        if (await SessionCompletion.CloseIfCompleteAsync(dbContext, session, DateTimeOffset.UtcNow))
         {
-            return;
-        }
-
-        var agentsWithOpeningCounts = session.CashCounts
-            .Where(c => c.IsOpening && c.Status == CashCountStatus.Approved)
-            .Select(c => c.AgentId)
-            .Distinct()
-            .ToList();
-
-        if (agentsWithOpeningCounts.Count == 0)
-        {
-            return;
-        }
-
-        var agentsWithApprovedClosing = session.CashCounts
-            .Where(c => !c.IsOpening && c.Status == CashCountStatus.Approved)
-            .Select(c => c.AgentId)
-            .Distinct()
-            .ToList();
-
-        var allClosed = agentsWithOpeningCounts.All(agentId => agentsWithApprovedClosing.Contains(agentId));
-
-        if (allClosed)
-        {
-            session.Status = CashSessionStatus.Closed;
-            session.ClosedAt = DateTimeOffset.UtcNow;
             await dbContext.SaveChangesAsync();
 
+            var agentCount = await dbContext.CashCounts
+                .Where(c => c.CashSessionId == sessionId && c.IsOpening && c.Status == CashCountStatus.Approved)
+                .Select(c => c.AgentId).Distinct().CountAsync();
             telemetryClient?.TrackEvent("session_auto_closed", new Dictionary<string, string>
             {
                 { "SessionId", session.Id.ToString() },
                 { "SessionDate", session.SessionDate.ToString("yyyy-MM-dd") },
-                { "AgentCount", agentsWithOpeningCounts.Count.ToString() }
+                { "AgentCount", agentCount.ToString() }
             });
         }
     }
@@ -1633,10 +1654,31 @@ public class CashCountService(
     private async Task<bool> RequiresBankReviewAsync(long countId)
     {
         var snapshot = await dbContext.CashCountSnapshots.AsNoTracking().SingleOrDefaultAsync(s => s.CashCountId == countId);
-        return snapshot != null
-            ? CountSnapshotCodec.Deserialize(snapshot.WalletsJson).Any(w => w.WalletType == WalletTypeEnum.Bank)
-            : await dbContext.CashCountDetails.AnyAsync(d => d.CashCountId == countId &&
-                d.Wallet!.WalletType!.Type == WalletTypeEnum.Bank);
+        if (snapshot != null)
+            return CountSnapshotCodec.Deserialize(snapshot.WalletsJson).Any(w => w.WalletType == WalletTypeEnum.Bank);
+        if (await dbContext.CashCountDetails.AnyAsync(d => d.CashCountId == countId &&
+                d.Wallet!.WalletType!.Type == WalletTypeEnum.Bank))
+            return true;
+
+        // A closing that omits a Bank wallet which the agent opened still needs bank review.
+        var count = await dbContext.CashCounts.AsNoTracking().Where(c => c.Id == countId)
+            .Select(c => new { c.CashSessionId, c.AgentId, c.IsOpening }).SingleOrDefaultAsync();
+        return count is { IsOpening: false } && await dbContext.CashCountDetails.AnyAsync(d =>
+            d.CashCount!.CashSessionId == count.CashSessionId && d.CashCount.AgentId == count.AgentId &&
+            d.CashCount.IsOpening && d.CashCount.Status == CashCountStatus.Approved &&
+            d.Wallet!.WalletType!.Type == WalletTypeEnum.Bank);
+    }
+
+    // Reads persisted state so a stale tracked entity cannot make a submitted closing look editable.
+    private async Task<bool> IsClosingFrozenAsync(long countId)
+    {
+        if (await dbContext.CashCountSnapshots.AnyAsync(s => s.CashCountId == countId) ||
+            await dbContext.SessionFloatSettlements.AnyAsync(s =>
+                s.CashCountId == countId && s.Stage == FloatSettlementStage.Closing))
+            return true;
+        var status = await dbContext.CashCounts.AsNoTracking().Where(c => c.Id == countId)
+            .Select(c => c.Status).SingleAsync();
+        return status == CashCountStatus.PendingApproval && await RequiresBankReviewAsync(countId);
     }
 
     private async Task<Agent?> GetAgentForUserAsync(string userId)

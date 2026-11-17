@@ -107,6 +107,20 @@ public sealed class SessionSettlementService(
                 var hasVariance = walletSnapshots.Any(w => positions.Single(p => p.WalletId == w.WalletId).ExpectedBalance != w.Amount);
                 if (hasVariance && string.IsNullOrWhiteSpace(count.Explanation))
                     throw new BankingRuleException("Closing wallet balances differ from recorded movements. Provide an explanation for admin review.");
+                // A Cash/Mobile variance has no bank statement to resolve it, so it is reviewed as a discrepancy at approval.
+                var nonBank = walletSnapshots.Where(w => w.WalletType != WalletTypeEnum.Bank).ToList();
+                var expectedNonBank = nonBank.Sum(w => positions.Single(p => p.WalletId == w.WalletId).ExpectedBalance);
+                if (nonBank.Any(w => positions.Single(p => p.WalletId == w.WalletId).ExpectedBalance != w.Amount) &&
+                    !await db.Discrepancies.AnyAsync(d => d.CashCountId == count.Id &&
+                        d.Status == DiscrepancyStatus.PendingReview, cancellationToken))
+                    db.Discrepancies.Add(new Discrepancy
+                    {
+                        CashSessionId = session.Id, CashCountId = count.Id, Status = DiscrepancyStatus.PendingReview,
+                        ExpectedAmount = expectedNonBank, ActualAmount = nonBank.Sum(w => w.Amount),
+                        Variance = nonBank.Sum(w => w.Amount) - expectedNonBank,
+                        Explanation = count.Explanation, ExplainedByUserId = count.AgentId,
+                        ExplainedAt = now, CreatedAt = now
+                    });
                 await EnsureNoLaterMovementsAsync(count, walletSnapshots, cancellationToken);
             }
             if (legacyClosing)
@@ -182,22 +196,9 @@ public sealed class SessionSettlementService(
             });
             if (!isOpening)
             {
-                var openingAgents = await db.CashCounts
-                    .Where(c => c.CashSessionId == session.Id && c.IsOpening && c.Status == CashCountStatus.Approved)
-                    .Select(c => c.AgentId).ToListAsync(cancellationToken);
-                var submittedAgents = await db.CashCountSnapshots
-                    .Where(s => s.CashCount!.CashSessionId == session.Id && !s.CashCount.IsOpening)
-                    .Select(s => s.CashCount!.AgentId).ToListAsync(cancellationToken);
-                submittedAgents.AddRange(await db.CashCounts.Where(c => c.CashSessionId == session.Id &&
-                    !c.IsOpening && c.Status == CashCountStatus.Approved).Select(c => c.AgentId).ToListAsync(cancellationToken));
-                var pendingOpening = await db.CashCounts.AnyAsync(c => c.CashSessionId == session.Id &&
-                    c.IsOpening && c.Status == CashCountStatus.PendingApproval, cancellationToken);
-                if (!pendingOpening && openingAgents.All(submittedAgents.Contains))
-                {
-                    session.Status = CashSessionStatus.Closed;
-                    session.OperationalClosedAt = now;
-                    session.ClosedAt = now;
-                }
+                // Persist this settlement first so the shared completion check sees it.
+                await db.SaveChangesAsync(cancellationToken);
+                await SessionCompletion.CloseIfCompleteAsync(db, session, now, cancellationToken);
                 await WorkflowNotifications.AddForBranchAsync(db, session.BranchId, "Closing count pending approval",
                     $"A submitted closing for {count.CountDate:yyyy-MM-dd} is awaiting review and approval.",
                     NotificationType.CountPendingApproval, $"/closing-approvals/{count.Id}", now,
@@ -260,7 +261,10 @@ public sealed class SessionSettlementService(
                 c.CashSession!.BranchId == count.CashSession!.BranchId &&
                 ((c.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation &&
                   c.CashSession.OperationalClosedAt != null) ||
-                 (c.CashSession!.WorkflowVersion == SessionWorkflowVersion.Legacy && c.Status == CashCountStatus.Approved)))
+                 (c.CashSession!.WorkflowVersion == SessionWorkflowVersion.Legacy &&
+                  (c.Status == CashCountStatus.Approved ||
+                   (c.Status == CashCountStatus.PendingApproval && db.SessionFloatSettlements.Any(s =>
+                       s.CashCountId == c.Id && s.Stage == FloatSettlementStage.Closing))))))
             .OrderByDescending(c => c.CountDate).ThenByDescending(c => c.Id)
             .FirstOrDefaultAsync(cancellationToken);
         if (previous == null)

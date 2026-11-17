@@ -2,6 +2,7 @@ using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.UnitTests.Helpers;
+using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.CashCounts;
 using EastSeat.Agenti.Web.Features.Vaults;
 using Microsoft.EntityFrameworkCore;
@@ -94,36 +95,7 @@ public class SessionSettlementTests
     {
         using var fixture = new BankingTestContext();
         var (service, _) = CreateService(fixture);
-        var oldSession = new CashSession
-        {
-            BranchId = fixture.Account.BranchId, SessionDate = fixture.Session.SessionDate.AddDays(-1),
-            Status = CashSessionStatus.Closed, WorkflowVersion = SessionWorkflowVersion.BankReconciliation,
-            OpenedAt = BankingTestContext.Now.AddDays(-1).AddHours(-1),
-            OperationalClosedAt = BankingTestContext.Now.AddDays(-1)
-        };
-        fixture.Db.CashSessions.Add(oldSession);
-        await fixture.Db.SaveChangesAsync();
-        var previousClose = new CashCount
-        {
-            CashSessionId = oldSession.Id, AgentId = fixture.Agent.Id, IsOpening = false,
-            Status = CashCountStatus.PendingApproval, CountDate = oldSession.SessionDate,
-            TotalAmount = 1_100_000m, CreatedAt = BankingTestContext.Now.AddDays(-1)
-        };
-        fixture.Db.CashCounts.Add(previousClose);
-        await fixture.Db.SaveChangesAsync();
-        fixture.Db.CashCountSnapshots.Add(new CashCountSnapshot
-        {
-            CashCountId = previousClose.Id, TotalAmount = previousClose.TotalAmount,
-            CapturedByUserId = fixture.User.Id, CapturedAt = BankingTestContext.Now.AddDays(-1),
-            WalletsJson = CountSnapshotCodec.Serialize(
-            [
-                new(fixture.CashWallet.Id, "cash", WalletTypeEnum.Cash, "UGX", 100_000m, BankingTestContext.Now.AddDays(-1), null),
-                new(fixture.BankWallet.Id, "bank", WalletTypeEnum.Bank, "UGX", 1_000_000m, BankingTestContext.Now.AddDays(-1), fixture.Account.Id)
-            ])
-        });
-        var storedVault = await fixture.Db.Vaults.SingleAsync();
-        storedVault.CurrentBalance = 1_100_000m;
-        await fixture.Db.SaveChangesAsync();
+        var previousClose = AddPreviousClosing(fixture, SessionWorkflowVersion.BankReconciliation, settled: false);
         var opening = AddCount(fixture, true, 100_000m, 1_000_000m + bankChange);
 
         await service.ApproveOpeningAsync(fixture.Admin.Id, opening.Id);
@@ -135,6 +107,119 @@ public class SessionSettlementTests
         Assert.Equal(1_000_000m + bankChange, (await fixture.Db.Wallets.FindAsync(fixture.BankWallet.Id))!.Balance);
         Assert.Equal(1_100_000m, (await fixture.Db.CashCounts.FindAsync(previousClose.Id))!.TotalAmount);
         Assert.Equal(CashCountStatus.PendingApproval, previousClose.Status);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Opening_BridgesFromLegacySubmittedClosingOnlyOnceItsFloatIsSettled(bool settled)
+    {
+        using var fixture = new BankingTestContext();
+        var (service, _) = CreateService(fixture);
+        AddPreviousClosing(fixture, SessionWorkflowVersion.Legacy, settled);
+        var opening = AddCount(fixture, true, 100_000m, 1_002_000m);
+        (await fixture.Db.Vaults.SingleAsync()).CurrentBalance = 1_102_000m;
+        await fixture.Db.SaveChangesAsync();
+
+        await service.ApproveOpeningAsync(fixture.Admin.Id, opening.Id);
+
+        var settlement = await fixture.Db.SessionFloatSettlements.SingleAsync(s => s.Stage == FloatSettlementStage.Opening);
+        Assert.Equal(settled ? 1 : 0, await fixture.Db.OpeningBankVariances.CountAsync());
+        Assert.Equal(settled ? 2_000m : 0m, settlement.BankVariance);
+        Assert.Equal(settled ? 1_100_000m : 1_102_000m, settlement.VaultAmount);
+    }
+
+    [Fact]
+    public async Task Closing_ExplainedCashVarianceCreatesDiscrepancyForReview()
+    {
+        using var fixture = new BankingTestContext();
+        var (service, _) = CreateService(fixture);
+        var opening = AddCount(fixture, true, 100_000m, 1_000_000m);
+        (await fixture.Db.Vaults.SingleAsync()).CurrentBalance = opening.TotalAmount;
+        await fixture.Db.SaveChangesAsync();
+        await service.ApproveOpeningAsync(fixture.Admin.Id, opening.Id);
+        var closing = AddCount(fixture, false, 90_000m, 1_000_000m);
+        closing.Explanation = "Counted ten thousand short after the final deposit.";
+        await fixture.Db.SaveChangesAsync();
+
+        await service.SubmitClosingAsync(fixture.User.Id, closing.Id);
+        await service.SubmitClosingAsync(fixture.User.Id, closing.Id);
+
+        var discrepancy = await fixture.Db.Discrepancies.SingleAsync();
+        Assert.Equal(DiscrepancyStatus.PendingReview, discrepancy.Status);
+        Assert.Equal(100_000m, discrepancy.ExpectedAmount);
+        Assert.Equal(90_000m, discrepancy.ActualAmount);
+        Assert.Equal(-10_000m, discrepancy.Variance);
+        Assert.Equal(closing.Explanation, discrepancy.Explanation);
+    }
+
+    [Fact]
+    public async Task Closing_ExplainedBankOnlyVarianceDoesNotCreateDiscrepancy()
+    {
+        using var fixture = new BankingTestContext();
+        var (service, _) = CreateService(fixture);
+        var opening = AddCount(fixture, true, 100_000m, 1_000_000m);
+        (await fixture.Db.Vaults.SingleAsync()).CurrentBalance = opening.TotalAmount;
+        await fixture.Db.SaveChangesAsync();
+        await service.ApproveOpeningAsync(fixture.Admin.Id, opening.Id);
+        var closing = AddCount(fixture, false, 100_000m, 1_010_000m);
+        closing.Explanation = "Bank balance moved by an unrecorded customer transfer.";
+        await fixture.Db.SaveChangesAsync();
+
+        await service.SubmitClosingAsync(fixture.User.Id, closing.Id);
+
+        Assert.Empty(await fixture.Db.Discrepancies.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Session_StaysOpenUntilEveryOpenedAgentHasSubmittedAClosing()
+    {
+        using var fixture = new BankingTestContext();
+        var (service, _) = CreateService(fixture);
+        var secondUser = new ApplicationUser
+        {
+            Id = "banking-agent-2", UserName = "banking-agent-2", FirstName = "Second", LastName = "Agent",
+            Role = UserRole.Agent, BranchId = fixture.Account.BranchId, IsActive = true
+        };
+        fixture.Db.Users.Add(secondUser);
+        fixture.Db.SaveChanges();
+        var secondAgent = new Agent
+        {
+            UserId = secondUser.Id, BranchId = fixture.Account.BranchId, Code = "TST2", IsActive = true,
+            CreatedAt = BankingTestContext.Now
+        };
+        fixture.Db.Agents.Add(secondAgent);
+        fixture.Db.SaveChanges();
+        secondUser.AgentId = secondAgent.Id;
+        var secondCash = new Wallet
+        {
+            AgentId = secondAgent.Id, WalletTypeId = 1, Name = "Second cash", Currency = "UGX",
+            Balance = 50_000m, IsActive = true, CreatedAt = BankingTestContext.Now
+        };
+        fixture.Db.Wallets.Add(secondCash);
+        fixture.Db.SaveChanges();
+        var firstOpening = AddCount(fixture, true, 100_000m, 1_000_000m);
+        var secondOpening = AddSecondAgentCount(fixture, secondAgent, secondCash, isOpening: true);
+        (await fixture.Db.Vaults.SingleAsync()).CurrentBalance = firstOpening.TotalAmount + secondOpening.TotalAmount;
+        await fixture.Db.SaveChangesAsync();
+        await service.ApproveOpeningAsync(fixture.Admin.Id, firstOpening.Id);
+        await service.ApproveOpeningAsync(fixture.Admin.Id, secondOpening.Id);
+        var firstClosing = AddCount(fixture, false, 100_000m, 1_000_000m);
+        var secondClosing = AddSecondAgentCount(fixture, secondAgent, secondCash, isOpening: false);
+
+        await service.SubmitClosingAsync(fixture.User.Id, firstClosing.Id);
+
+        var session = (await fixture.Db.CashSessions.FindAsync(fixture.Session.Id))!;
+        Assert.Equal(CashSessionStatus.Open, session.Status);
+        Assert.Null(session.OperationalClosedAt);
+
+        await service.SubmitClosingAsync(secondUser.Id, secondClosing.Id);
+
+        session = (await fixture.Db.CashSessions.FindAsync(fixture.Session.Id))!;
+        Assert.Equal(CashSessionStatus.Closed, session.Status);
+        Assert.NotNull(session.ClosedAt);
+        Assert.NotNull(session.OperationalClosedAt);
+        Assert.Equal(CashCountStatus.PendingApproval, (await fixture.Db.CashCounts.FindAsync(firstClosing.Id))!.Status);
     }
 
     [Fact]
@@ -173,6 +258,69 @@ public class SessionSettlementTests
 
         Assert.False(await fixture.Db.SessionFloatSettlements.AnyAsync());
         Assert.False(await fixture.Db.CashCountSnapshots.AnyAsync());
+    }
+
+    private static CashCount AddPreviousClosing(
+        BankingTestContext fixture, SessionWorkflowVersion workflow, bool settled)
+    {
+        var previousAt = BankingTestContext.Now.AddDays(-1);
+        var oldSession = new CashSession
+        {
+            BranchId = fixture.Account.BranchId, SessionDate = fixture.Session.SessionDate.AddDays(-1),
+            Status = CashSessionStatus.Closed, WorkflowVersion = workflow, OpenedAt = previousAt.AddHours(-1),
+            OperationalClosedAt = workflow == SessionWorkflowVersion.BankReconciliation ? previousAt : null
+        };
+        fixture.Db.CashSessions.Add(oldSession);
+        fixture.Db.SaveChanges();
+        var previousClose = new CashCount
+        {
+            CashSessionId = oldSession.Id, AgentId = fixture.Agent.Id, IsOpening = false,
+            Status = CashCountStatus.PendingApproval, CountDate = oldSession.SessionDate,
+            TotalAmount = 1_100_000m, CreatedAt = previousAt
+        };
+        fixture.Db.CashCounts.Add(previousClose);
+        fixture.Db.SaveChanges();
+        var snapshot = new CashCountSnapshot
+        {
+            CashCountId = previousClose.Id, TotalAmount = previousClose.TotalAmount,
+            CapturedByUserId = fixture.User.Id, CapturedAt = previousAt,
+            WalletsJson = CountSnapshotCodec.Serialize(
+            [
+                new(fixture.CashWallet.Id, "cash", WalletTypeEnum.Cash, "UGX", 100_000m, previousAt, null),
+                new(fixture.BankWallet.Id, "bank", WalletTypeEnum.Bank, "UGX", 1_000_000m, previousAt, fixture.Account.Id)
+            ])
+        };
+        fixture.Db.CashCountSnapshots.Add(snapshot);
+        fixture.Db.SaveChanges();
+        if (settled)
+            fixture.Db.SessionFloatSettlements.Add(new SessionFloatSettlement
+            {
+                CashCountId = previousClose.Id, SnapshotId = snapshot.Id, Stage = FloatSettlementStage.Closing,
+                ReportedAmount = previousClose.TotalAmount, VaultAmount = previousClose.TotalAmount,
+                PostedAt = previousAt, PostedByUserId = fixture.User.Id
+            });
+        fixture.Db.Vaults.Single().CurrentBalance = 1_100_000m;
+        fixture.Db.SaveChanges();
+        return previousClose;
+    }
+
+    private static CashCount AddSecondAgentCount(
+        BankingTestContext fixture, Agent agent, Wallet wallet, bool isOpening)
+    {
+        var count = new CashCount
+        {
+            CashSessionId = fixture.Session.Id, AgentId = agent.Id, IsOpening = isOpening,
+            Status = isOpening ? CashCountStatus.PendingApproval : CashCountStatus.Draft,
+            CountDate = fixture.Session.SessionDate, TotalAmount = 50_000m, CreatedAt = BankingTestContext.Now,
+            Details =
+            [
+                new() { WalletId = wallet.Id, Amount = 50_000m,
+                    ObservedAt = isOpening ? fixture.Session.OpenedAt : BankingTestContext.Now.AddMinutes(30) }
+            ]
+        };
+        fixture.Db.CashCounts.Add(count);
+        fixture.Db.SaveChanges();
+        return count;
     }
 
     private static CashCount AddCount(BankingTestContext fixture, bool opening, decimal cash, decimal bank)

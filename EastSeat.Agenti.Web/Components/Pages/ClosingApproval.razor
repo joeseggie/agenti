@@ -153,6 +153,8 @@
     private Task ApproveExceptionAsync() => UpdateReviewAsync(id => Reconciliation.ApproveAsync(UserId, id, true, _reason, _acknowledged));
     private Task ApproveWithoutBanksAsync() => UpdateReviewAsync(async id =>
     {
+        if (_review?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
+            return await Reconciliation.ApproveAsync(UserId, id, false);
         var result = await Counts.ApproveCashCountAsync(UserId, id);
         if (!result.Success)
             throw new EastSeat.Agenti.Shared.Services.BankingRuleException(result.ErrorMessage ?? "Closing approval failed.");
