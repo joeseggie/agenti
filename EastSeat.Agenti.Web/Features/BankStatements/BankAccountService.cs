@@ -16,9 +16,8 @@ public sealed class BankAccountService(
         var actor = await access.GetActorAsync(userId, cancellationToken);
         if (actor.Role is not (UserRole.Admin or UserRole.Supervisor))
             throw new UnauthorizedAccessException("Only administrators and supervisors may review bank accounts.");
-        var accounts = await db.BankAccounts.AsNoTracking().Include(a => a.Wallet)
-            .Where(a => a.BranchId == actor.BranchId).OrderBy(a => a.BankName).ToListAsync(cancellationToken);
-        return accounts.Select(Map).ToList();
+        return await ProjectAccounts(db.BankAccounts.AsNoTracking()
+            .Where(a => a.BranchId == actor.BranchId).OrderBy(a => a.BankName)).ToListAsync(cancellationToken);
     }
 
     public async Task<BankAccountSetupDto> GetSetupAsync(string userId, CancellationToken cancellationToken = default)
@@ -63,9 +62,10 @@ public sealed class BankAccountService(
             };
             db.BankAccounts.Add(account);
             await db.SaveChangesAsync(cancellationToken);
+            var result = await ProjectAccounts(db.BankAccounts.AsNoTracking().Where(a => a.Id == account.Id))
+                .SingleAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            account.Wallet = wallet;
-            return Map(account);
+            return result;
         }
         catch
         {
@@ -83,7 +83,7 @@ public sealed class BankAccountService(
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         try
         {
-            var account = await db.BankAccounts.Include(a => a.Wallet).SingleAsync(a => a.Id == accountId, cancellationToken);
+            var account = await db.BankAccounts.SingleAsync(a => a.Id == accountId, cancellationToken);
             await db.Entry(account).ReloadAsync(cancellationToken);
             if (account.Version != expectedVersion)
                 throw new BankingConflictException("The account configuration changed. Refresh and retry.");
@@ -112,8 +112,10 @@ public sealed class BankAccountService(
             account.ImportProfileVerified = profile?.IsVerified == true;
             account.Version++;
             await db.SaveChangesAsync(cancellationToken);
+            var result = await ProjectAccounts(db.BankAccounts.AsNoTracking().Where(a => a.Id == accountId))
+                .SingleAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return Map(account);
+            return result;
         }
         catch
         {
@@ -130,7 +132,7 @@ public sealed class BankAccountService(
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         try
         {
-            var account = await db.BankAccounts.Include(a => a.Wallet).SingleAsync(a => a.Id == accountId, cancellationToken);
+            var account = await db.BankAccounts.SingleAsync(a => a.Id == accountId, cancellationToken);
             await db.Entry(account).ReloadAsync(cancellationToken);
             if (account.Version != expectedVersion)
                 throw new BankingConflictException("The account configuration changed. Refresh and retry.");
@@ -160,8 +162,10 @@ public sealed class BankAccountService(
             account.WorkflowEnabled = enabled;
             account.Version++;
             await db.SaveChangesAsync(cancellationToken);
+            var result = await ProjectAccounts(db.BankAccounts.AsNoTracking().Where(a => a.Id == accountId))
+                .SingleAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return Map(account);
+            return result;
         }
         catch
         {
@@ -209,8 +213,12 @@ public sealed class BankAccountService(
         return id.Length > 100 ? id[..100].TrimEnd() : id;
     }
 
-    private static BankAccountDto Map(BankAccount account) => new(
-        account.Id, account.WalletId, account.Wallet?.Name ?? string.Empty, account.BankName,
-        account.AccountIdentifier, account.Currency, account.TimeZoneId, account.BalanceBasis,
-        account.ImportProfileKey, true, account.WorkflowEnabled, account.IsActive, account.Version);
+    private IQueryable<BankAccountDto> ProjectAccounts(IQueryable<BankAccount> accounts) =>
+        accounts.Select(account => new BankAccountDto(
+            account.Id, account.WalletId, account.Wallet!.Name, account.BankName,
+            account.AccountIdentifier, account.Currency, account.TimeZoneId, account.BalanceBasis,
+            account.ImportProfileKey, true, account.WorkflowEnabled, account.IsActive, account.Version,
+            db.Users.Where(user => user.Id == account.Wallet.Agent!.UserId)
+                .Select(user => (user.FirstName + " " + user.LastName).Trim()).FirstOrDefault(),
+            account.Wallet.Agent!.Code));
 }

@@ -35,12 +35,14 @@
     @if (_selected is { } selected)
     {
     <MudText>@selected.BankName / @selected.Currency / @selected.BalanceBasis</MudText>
+    <MudText Typo="Typo.body2">Bank wallet: @selected.WalletName</MudText>
+    <MudText Typo="Typo.body2">Agent: @selected.AgentLabel</MudText>
     <MudLink Href="@($"/bank-accounts?accountId={selected.Id}")">Manage account</MudLink>
     <MudPaper Class="pa-4 my-4" Outlined="true">
         <MudSelect T="long" Label="Bank account" Value="_accountId" ValueChanged="ChangeAccountAsync" Disabled="Busy">
             @foreach (var account in _accounts)
             {
-                <MudSelectItem T="long" Value="@account.Id">@account.WalletName - @account.BankName (@account.AccountIdentifier)</MudSelectItem>
+                <MudSelectItem T="long" Value="@account.Id">@account.BankName - @account.AccountIdentifier - @account.WalletName - @account.AgentLabel</MudSelectItem>
             }
         </MudSelect>
         <MudDatePicker Label="Statement date" Date="_date" DateChanged="ChangeDateAsync"
