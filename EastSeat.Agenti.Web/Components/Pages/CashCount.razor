@@ -22,7 +22,8 @@
     <!-- Header with Session Status -->
     <MudGrid>
         <MudItem xs="12" sm="8">
-            <MudText Typo="Typo.h4" Class="mb-2">Cash Count</MudText>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="mb-2">Cash Count</MudText>
+            <MudText Typo="Typo.body2">Review the session status, then record or continue the permitted opening or closing count.</MudText>
             @if (_currentSession != null)
             {
                 <MudChip T="string" Color="@GetStatusColor(_currentSession.StatusColor)" Size="Size.Small">

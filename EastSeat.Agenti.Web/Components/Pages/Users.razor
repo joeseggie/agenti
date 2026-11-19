@@ -7,10 +7,11 @@
 @inject ISnackbar Snackbar
 @inject AuthenticationStateProvider AuthenticationStateProvider
 
+<PageTitle>Users - Agenti</PageTitle>
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
     <MudGrid>
         <MudItem xs="12" sm="8">
-            <MudText Typo="Typo.h4" Class="mb-2">Users</MudText>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="mb-2">Users</MudText>
             <MudText Typo="Typo.body2" Color="Color.Secondary">
                 Manage user accounts and roles
             </MudText>
@@ -21,10 +22,11 @@
         </MudItem>
     </MudGrid>
 
-    <MudTextField @bind-Value="search" Placeholder="Search users..." Adornment="Adornment.Start"
+    <MudTextField @bind-Value="search" @bind-Value:after="ResetPage" Label="Search users" Placeholder="Name, email or phone"
+        Immediate="true" DebounceInterval="250" Clearable="true" Adornment="Adornment.Start"
         AdornmentIcon="@Icons.Material.Filled.Search" FullWidth="true" Class="mt-4 mb-4" />
 
-    <MudTable Items="filtered" Dense="true" Hover="true" Striped="true" Elevation="2" Breakpoint="Breakpoint.Md">
+    <MudTable Items="filtered" RowsPerPage="10" @bind-CurrentPage="_page" Dense="true" Hover="true" Striped="true" Elevation="2" Breakpoint="Breakpoint.Sm">
     <HeaderContent>
         <MudTh>Full Name</MudTh>
         <MudTh>Email</MudTh>
@@ -56,6 +58,8 @@
                 StartIcon="@Icons.Material.Filled.ManageAccounts">Manage</MudButton>
         </MudTd>
     </RowTemplate>
+    <NoRecordsContent><MudText Class="pa-4">@(string.IsNullOrWhiteSpace(search) ? "No users to display." : "No users match your search. Clear the search to see all users.")</MudText></NoRecordsContent>
+    <PagerContent><MudTablePager PageSizeOptions="@(new int[] { 10, 25, 50 })" /></PagerContent>
 </MudTable>
 </MudContainer>
 
@@ -122,6 +126,8 @@
     private List<EastSeat.Agenti.Web.Features.Users.UserListItemDto> users = new();
     private List<EastSeat.Agenti.Shared.Domain.Entities.Branch> branches = new();
     private string? search;
+    private int _page;
+    private void ResetPage() => _page = 0;
     private string? currentUserId;
     private bool showCreateDialog;
     private MudForm? formRef;

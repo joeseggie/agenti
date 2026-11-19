@@ -13,7 +13,7 @@
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
     <MudGrid>
         <MudItem xs="12" sm="8">
-            <MudText Typo="Typo.h4" Class="mb-2">Wallet Types</MudText>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="mb-2">Wallet Types</MudText>
             <MudText Typo="Typo.body2" Color="Color.Secondary">
                 Manage wallet types for agent wallets
             </MudText>
@@ -53,7 +53,7 @@
         <MudGrid Class="mt-4">
             <MudItem xs="12">
                 <MudTable Items="@_walletTypes" Hover="true" Striped="true" Dense="true" Elevation="2"
-                    Breakpoint="Breakpoint.Md">
+                    RowsPerPage="10" Breakpoint="Breakpoint.Sm">
                     <HeaderContent>
                         <MudTh>Name</MudTh>
                         <MudTh>Type</MudTh>
@@ -119,6 +119,7 @@
                             @* Mobile: overflow menu *@
                             <MudHidden Breakpoint="Breakpoint.MdAndUp">
                                 <MudMenu Icon="@Icons.Material.Filled.MoreVert" Size="Size.Small"
+                                    AriaLabel="@($"Actions for {context.Name}")"
                                     AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
                                     <MudMenuItem Icon="@Icons.Material.Filled.Edit"
                                         OnClick="@(() => OpenEditDialog(context))">Edit</MudMenuItem>
@@ -136,6 +137,7 @@
                             </MudHidden>
                         </MudTd>
                     </RowTemplate>
+                    <PagerContent><MudTablePager PageSizeOptions="@(new int[] { 10, 25, 50 })" /></PagerContent>
                 </MudTable>
             </MudItem>
         </MudGrid>

@@ -14,7 +14,7 @@
 
 <PageTitle>Daily bank statements - Agenti</PageTitle>
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
-    <MudText Typo="Typo.h4">Daily bank statements</MudText>
+    <MudText Typo="Typo.h4" HtmlTag="h1">Daily bank statements</MudText>
     <MudText>Upload one complete statement for each Bank wallet for one selected date. Cash and Mobile Money need no statement.</MudText>
     <MudButton Href="/cashcount-approvals">Closing approvals</MudButton>
     <MudButton Href="/bank-accounts">Manage bank accounts</MudButton>
@@ -39,6 +39,8 @@
     <MudText Typo="Typo.body2">Agent: @selected.AgentLabel</MudText>
     <MudLink Href="@($"/bank-accounts?accountId={selected.Id}")">Manage account</MudLink>
     <MudPaper Class="pa-4 my-4" Outlined="true">
+        <MudText Typo="Typo.h6" HtmlTag="h2">Upload for the selected account and date</MudText>
+        <MudText Typo="Typo.body2" Class="mb-3">Check the agent, wallet and business date before choosing a file. Accepted revisions are retained; used statements are locked.</MudText>
         <MudSelect T="long" Label="Bank account" Value="_accountId" ValueChanged="ChangeAccountAsync" Disabled="Busy">
             @foreach (var account in _accounts)
             {
@@ -48,7 +50,7 @@
         <MudDatePicker Label="Statement date" Date="_date" DateChanged="ChangeDateAsync"
                        Editable="true" DateFormat="yyyy-MM-dd" Disabled="Busy" />
         <MudText Typo="Typo.body2" Class="my-2">Every TransactionDate must equal the selected date. Multi-day and empty statements are rejected.</MudText>
-        <InputFile @key="_fileKey" OnChange="SelectFile" accept=".csv" disabled="@Busy" />
+        <InputFile @key="_fileKey" OnChange="SelectFile" aria-label="Complete single-day CSV statement" accept=".csv" disabled="@Busy" />
         @if (_file != null)
         {
             <MudText>@_file.Name</MudText>
@@ -64,17 +66,17 @@
                    Color="Color.Primary" Variant="Variant.Filled">Upload statement</MudButton>
         <MudButton OnClick="RefreshAsync" Disabled="Busy">Refresh statements</MudButton>
     </MudPaper>
-    <MudText Typo="Typo.h6">Statement history for the selected account and date</MudText>
-    <MudTable Items="_imports" Dense="true" Hover="true">
+    <MudText Typo="Typo.h6" HtmlTag="h2">Statement history for the selected account and date</MudText>
+    <MudTable Items="_imports" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
         <HeaderContent>
             <MudTh>Revision</MudTh><MudTh>File</MudTh><MudTh>Rows</MudTh>
             <MudTh>Debits</MudTh><MudTh>Credits</MudTh><MudTh>Status</MudTh><MudTh>Replacement reason</MudTh>
         </HeaderContent>
         <RowTemplate>
-            <MudTd>@context.Revision</MudTd><MudTd><MudLink Href="@($"/closing-statement-evidence/{context.Id}")">@context.FileName</MudLink></MudTd><MudTd>@context.RowCount</MudTd>
-            <MudTd>@context.TotalDebits.ToString("N2")</MudTd><MudTd>@context.TotalCredits.ToString("N2")</MudTd>
-            <MudTd>@(context.IsUsed ? "Used - locked" : context.Id == _imports[0].Id ? "Ready" : "Superseded")</MudTd>
-            <MudTd>@context.ReplacementReason</MudTd>
+            <MudTd DataLabel="Revision">@context.Revision</MudTd><MudTd DataLabel="File"><MudLink Href="@($"/closing-statement-evidence/{context.Id}")">@context.FileName</MudLink></MudTd><MudTd DataLabel="Rows">@context.RowCount</MudTd>
+            <MudTd DataLabel="Debits">@context.TotalDebits.ToString("N2")</MudTd><MudTd DataLabel="Credits">@context.TotalCredits.ToString("N2")</MudTd>
+            <MudTd DataLabel="Status">@(context.IsUsed ? "Used - locked" : context.Id == _imports[0].Id ? "Ready" : "Superseded")</MudTd>
+            <MudTd DataLabel="Replacement reason">@context.ReplacementReason</MudTd>
         </RowTemplate>
         <NoRecordsContent><MudText>No accepted statement for this account and date.</MudText></NoRecordsContent>
     </MudTable>

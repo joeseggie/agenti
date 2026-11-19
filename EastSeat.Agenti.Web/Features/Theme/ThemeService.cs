@@ -102,6 +102,20 @@ public class ThemeService : IThemeService
         return true;
     }
 
+    public void UpdateSystemPreference(string systemPreference)
+    {
+        if (systemPreference is not (ThemePreferenceConstants.Light or ThemePreferenceConstants.Dark))
+            throw new ArgumentException("System preference must be light or dark.", nameof(systemPreference));
+
+        _systemPreference = systemPreference;
+        var effectiveTheme = ResolveEffectiveTheme(_userPreference, systemPreference);
+        if (_effectiveTheme == effectiveTheme)
+            return;
+
+        _effectiveTheme = effectiveTheme;
+        ThemeChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     private static string ResolveEffectiveTheme(string userPreference, string? systemPreference)
     {
         return userPreference switch

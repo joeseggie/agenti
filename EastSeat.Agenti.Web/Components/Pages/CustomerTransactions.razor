@@ -16,8 +16,8 @@
 
 <PageTitle>Customer Transactions - Agenti</PageTitle>
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
-    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
-        <MudText Typo="Typo.h4">Customer transactions</MudText>
+    <MudStack Row="true" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+        <MudText Typo="Typo.h4" HtmlTag="h1">Customer transactions</MudText>
         <MudButton OnClick="LoadAsync" Disabled="Busy" Variant="Variant.Outlined">Refresh</MudButton>
     </MudStack>
     <MudText Class="mb-3">Record the receipt and actual cash/bank movements. Entries contribute to the session tally; they do not directly update wallet balances.</MudText>
@@ -31,12 +31,19 @@
     }
     @if (_current != null)
     {
-        <MudAlert Severity="Severity.Info" Class="my-3">@_current.StatusText</MudAlert>
+        <MudPaper Outlined="true" Class="pa-3 my-3">
+            <MudText Typo="Typo.subtitle2">Session status: @_current.StatusText</MudText>
+            @if (_current.SessionDate.HasValue)
+            {
+                <MudText Typo="Typo.body2">Business date: @_current.SessionDate.Value.ToString("yyyy-MM-dd") (Uganda)</MudText>
+            }
+            <MudLink Href="/cashcount">Review current count and prerequisites</MudLink>
+        </MudPaper>
     }
     @if (_options != null)
     {
         <MudPaper Class="pa-4 my-4" Outlined="true">
-            <MudText Typo="Typo.h6">Capture a receipt</MudText>
+            <MudText Typo="Typo.h6" HtmlTag="h2">Capture a receipt</MudText>
             <MudGrid Class="mt-1">
                 <MudItem xs="12" sm="6">
                     <MudSelect T="long" Label="Bank wallet" @bind-Value="_form.BankAccountId" Disabled="Busy">
@@ -82,7 +89,7 @@
                 <MudItem xs="12"><MudTextField T="string" Label="Explanation / notes" @bind-Value="_form.Notes" Lines="3" Disabled="Busy" /></MudItem>
                 <MudItem xs="12">
                     <MudText Typo="Typo.body2">Receipt evidence (JPEG, PNG or PDF)</MudText>
-                    <InputFile OnChange="UploadReceiptAsync" accept=".jpg,.jpeg,.png,.pdf" disabled="@Busy" />
+                    <InputFile OnChange="UploadReceiptAsync" aria-label="Receipt evidence" accept=".jpg,.jpeg,.png,.pdf" disabled="@Busy" />
                     @if (_form.EvidenceFileId.HasValue)
                     {
                         <MudLink Href="@($"/banking-evidence/{_form.EvidenceFileId}")" Target="_blank">Attached receipt</MudLink>

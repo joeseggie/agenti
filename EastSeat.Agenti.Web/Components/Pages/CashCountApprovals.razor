@@ -17,9 +17,9 @@
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
     <MudGrid>
         <MudItem xs="12" sm="8">
-            <MudText Typo="Typo.h4" Class="mb-2">Cash Count Approvals</MudText>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="mb-2">Cash Count Approvals</MudText>
             <MudText Typo="Typo.body2" Color="Color.Secondary">
-                Review and approve or reject pending cash counts
+                Review opening counts, closing submissions and wallet adjustments. Reconciliation and approval remain separate.
             </MudText>
         </MudItem>
         <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
@@ -47,7 +47,7 @@
     else
     {
         <MudTable Items="@_pending" Hover="true" Striped="true" Dense="true" Elevation="2" Class="mt-4"
-            Breakpoint="Breakpoint.Md">
+            Breakpoint="Breakpoint.Sm">
             <HeaderContent>
                 <MudTh>Agent</MudTh>
                 <MudTh>Type</MudTh>
@@ -106,10 +106,12 @@
                     <MudStack Row="true" Spacing="1" Justify="Justify.Center">
                         <MudTooltip Text="Approve">
                             <MudIconButton Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small"
+                                aria-label="@($"Approve {context.AgentName}'s count")"
                                 OnClick="@(() => ApproveAsync(context))" Disabled="_isProcessing" />
                         </MudTooltip>
                         <MudTooltip Text="Reject">
                             <MudIconButton Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small"
+                                aria-label="@($"Reject {context.AgentName}'s count")"
                                 OnClick="@(() => ShowRejectDialogAsync(context))" Disabled="_isProcessing" />
                         </MudTooltip>
                     </MudStack>
@@ -128,7 +130,7 @@
     }
 
     @* Pending Wallet Adjustments Section *@
-    <MudText Typo="Typo.h5" Class="mt-6 mb-2">Wallet Adjustments</MudText>
+    <MudText Typo="Typo.h5" HtmlTag="h2" Class="mt-6 mb-2">Wallet Adjustments</MudText>
     <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">
         Review and approve or reject pending wallet adjustments
     </MudText>
@@ -142,7 +144,7 @@
     else if (_pendingAdjustments.Count > 0)
     {
         <MudTable Items="@_pendingAdjustments" Hover="true" Striped="true" Dense="true" Elevation="2"
-            Breakpoint="Breakpoint.Md">
+            Breakpoint="Breakpoint.Sm">
             <HeaderContent>
                 <MudTh>Agent</MudTh>
                 <MudTh>Wallet</MudTh>
@@ -170,10 +172,12 @@
                     <MudStack Row="true" Spacing="1" Justify="Justify.Center">
                         <MudTooltip Text="Approve">
                             <MudIconButton Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small"
+                                aria-label="@($"Approve {context.AgentName}'s wallet adjustment")"
                                 OnClick="@(() => ApproveAdjustmentAsync(context))" Disabled="_isProcessing" />
                         </MudTooltip>
                         <MudTooltip Text="Reject">
                             <MudIconButton Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small"
+                                aria-label="@($"Reject {context.AgentName}'s wallet adjustment")"
                                 OnClick="@(() => ShowRejectAdjustmentDialogAsync(context))" Disabled="_isProcessing" />
                         </MudTooltip>
                     </MudStack>

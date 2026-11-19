@@ -2,19 +2,21 @@
 @using Microsoft.AspNetCore.Authorization
 @using EastSeat.Agenti.Web.Features.CashSessions
 @using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Shared.Services
 @attribute [Authorize]
 @rendermode InteractiveServer
 @inject ICashSessionService CashSessionService
 @inject NavigationManager NavigationManager
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
+@inject ILogger<CashSessions> Logger
 
 <PageTitle>Cash Sessions - Agenti</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
     <MudGrid>
         <MudItem xs="12" sm="8">
-            <MudText Typo="Typo.h4" Class="mb-2">Cash Sessions</MudText>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="mb-2">Cash Sessions</MudText>
             <MudText Typo="Typo.body2" Color="Color.Secondary">
                 Branch-level daily cash sessions with agent participation
             </MudText>
@@ -27,28 +29,30 @@
         </MudItem>
     </MudGrid>
 
-    @if (_isLoading)
+    <MudGrid Class="mt-3">
+        <MudItem xs="12" sm="4">
+            <MudSelect T="CashSessionStatus?" Label="Session status" @bind-Value="_status" @bind-Value:after="ApplyFiltersAsync" Clearable="true" Disabled="_isLoading">
+                @foreach (var status in Enum.GetValues<CashSessionStatus>())
+                {
+                    <MudSelectItem T="CashSessionStatus?" Value="@((CashSessionStatus?)status)">@GetStatusText(status)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudDatePicker Label="From business date" @bind-Date="_from" @bind-Date:after="ApplyFiltersAsync" Editable="true" DateFormat="yyyy-MM-dd" Clearable="true" Disabled="_isLoading" />
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudDatePicker Label="To business date" @bind-Date="_to" @bind-Date:after="ApplyFiltersAsync" Editable="true" DateFormat="yyyy-MM-dd" Clearable="true" Disabled="_isLoading" />
+        </MudItem>
+    </MudGrid>
+    <MudButton OnClick="ClearFiltersAsync" Disabled="_isLoading" Class="mt-2">Clear filters</MudButton>
+    @if (_error != null)
     {
-        <MudGrid Class="mt-4">
-            <MudItem xs="12" Class="d-flex justify-center">
-                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
-            </MudItem>
-        </MudGrid>
+        <MudAlert Severity="Severity.Error" Class="mt-3">@_error</MudAlert>
     }
-    else if (_sessions.Count == 0)
-    {
-        <MudPaper Class="mt-8 pa-8 d-flex flex-column align-center" Elevation="0">
-            <MudIcon Icon="@Icons.Material.Filled.EventNote" Size="Size.Large" Color="Color.Default" Style="font-size: 4rem; opacity: 0.4;" />
-            <MudText Typo="Typo.h6" Class="mt-4" Color="Color.Default">No cash sessions yet</MudText>
-            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-1">
-                Cash sessions are created automatically when an opening count is performed.
-            </MudText>
-        </MudPaper>
-    }
-    else
-    {
-        <MudTable Items="@_sessions" Hover="true" Striped="true" Dense="true" Elevation="2" Class="mt-4"
-            Breakpoint="Breakpoint.Md">
+        <MudTable T="CashSessionListItemDto" @ref="_table" ServerData="LoadPageAsync" RowsPerPage="10"
+            Hover="true" Striped="true" Dense="true" Elevation="2" Class="mt-4"
+            Breakpoint="Breakpoint.Sm" Loading="_isLoading" data-testid="session-history">
             <HeaderContent>
                 <MudTh>Date</MudTh>
                 <MudTh Style="text-align: center;">Status</MudTh>
@@ -97,6 +101,7 @@
                 <MudTd DataLabel="Actions" Style="text-align: center;">
                     <MudTooltip Text="View Details">
                         <MudIconButton Icon="@Icons.Material.Filled.Visibility" Color="Color.Primary" Size="Size.Small"
+                            aria-label="@($"View session for {context.SessionDate:yyyy-MM-dd}")"
                             OnClick="@(() => ViewSession(context.Id))" />
                     </MudTooltip>
                     <AuthorizeView Roles="Admin,Supervisor">
@@ -105,39 +110,80 @@
                             {
                                 <MudTooltip Text="Close Session">
                                     <MudIconButton Icon="@Icons.Material.Filled.Close" Color="Color.Error" Size="Size.Small"
-                                        OnClick="@(() => ConfirmCloseSession(context))" />
+                                        aria-label="@($"Close session for {context.SessionDate:yyyy-MM-dd}")"
+                                        Disabled="_isLoading" OnClick="@(() => ConfirmCloseSession(context))" />
                                 </MudTooltip>
                             }
                         </Authorized>
                     </AuthorizeView>
                 </MudTd>
             </RowTemplate>
+            <NoRecordsContent>
+                <MudText Class="pa-4">@(_error != null ? "Session history is unavailable. Correct the filters or select Refresh to retry." :
+                    _status.HasValue || _from.HasValue || _to.HasValue ? "No sessions match these filters. Clear the filters to see all sessions." :
+                    "No cash sessions yet. Sessions are created when an opening count is performed.")</MudText>
+            </NoRecordsContent>
+            <PagerContent><MudTablePager PageSizeOptions="@PageSizes" /></PagerContent>
         </MudTable>
-    }
 </MudContainer>
 
 @code {
-    private List<CashSessionListItemDto> _sessions = [];
-    private bool _isLoading = true;
+    private MudTable<CashSessionListItemDto>? _table;
+    private bool _isLoading;
+    private bool _closing;
+    private string? _error;
+    private CashSessionStatus? _status;
+    private DateTime? _from;
+    private DateTime? _to;
+    private readonly SemaphoreSlim _queryLock = new(1, 1);
+    private static readonly int[] PageSizes = [10, 25, 50];
 
-    protected override async Task OnInitializedAsync()
+    private async Task ApplyFiltersAsync()
     {
-        await LoadSessionsAsync();
+        if (_table == null) return;
+        if (_table.CurrentPage == 0) await _table.ReloadServerData();
+        else _table.NavigateTo(0);
     }
 
-    private async Task LoadSessionsAsync()
+    private Task LoadSessionsAsync() => _table?.ReloadServerData() ?? Task.CompletedTask;
+    private Task ClearFiltersAsync()
     {
-        _isLoading = true;
-        StateHasChanged();
+        _status = null;
+        _from = null;
+        _to = null;
+        return ApplyFiltersAsync();
+    }
 
+    private async Task<TableData<CashSessionListItemDto>> LoadPageAsync(TableState state, CancellationToken token)
+    {
+        await _queryLock.WaitAsync(token);
+        _isLoading = true;
+        _error = null;
+        await InvokeAsync(StateHasChanged);
         try
         {
-            _sessions = await CashSessionService.GetCashSessionsAsync();
+            var result = await CashSessionService.GetCashSessionsPageAsync(new(state.Page, state.PageSize),
+                status: _status, from: _from.HasValue ? DateOnly.FromDateTime(_from.Value) : null,
+                to: _to.HasValue ? DateOnly.FromDateTime(_to.Value) : null, cancellationToken: token);
+            return new() { Items = result.Items, TotalItems = result.TotalCount };
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch (ArgumentException exception)
+        {
+            _error = exception.Message;
+            return new() { Items = [], TotalItems = 0 };
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError("Session history failed with {ExceptionType}.", exception.GetType().Name);
+            _error = "Session history could not be loaded. Select Refresh to retry.";
+            return new() { Items = [], TotalItems = 0 };
         }
         finally
         {
             _isLoading = false;
-            StateHasChanged();
+            _queryLock.Release();
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -148,6 +194,10 @@
 
     private async Task ConfirmCloseSession(CashSessionListItemDto session)
     {
+        if (_closing || _isLoading) return;
+        _closing = true;
+        try
+        {
         var parameters = new DialogParameters<MudMessageBox>
         {
             { x => x.Title, "Close Cash Session" },
@@ -164,20 +214,30 @@
         {
             await CloseSessionAsync(session.Id);
         }
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError("Session closure failed with {ExceptionType}.", exception.GetType().Name);
+            _error = "The closure could not be confirmed. Refresh the session status before trying again.";
+        }
+        finally { _closing = false; }
     }
 
     private async Task CloseSessionAsync(long sessionId)
     {
-        var (success, errorMessage) = await CashSessionService.CloseSessionAsync(sessionId);
+        await _queryLock.WaitAsync();
+        (bool success, string? errorMessage) result;
+        try { result = await CashSessionService.CloseSessionAsync(sessionId); }
+        finally { _queryLock.Release(); }
 
-        if (success)
+        if (result.success)
         {
             Snackbar.Add("Cash session closed successfully.", Severity.Success);
             await LoadSessionsAsync();
         }
         else
         {
-            Snackbar.Add(errorMessage ?? "Failed to close session.", Severity.Error);
+            Snackbar.Add(result.errorMessage ?? "Failed to close session.", Severity.Error);
         }
     }
 

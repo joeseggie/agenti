@@ -1,3 +1,6 @@
+using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
+
 namespace EastSeat.Agenti.Web.Features.CashSessions;
 
 /// <summary>
@@ -9,6 +12,10 @@ public interface ICashSessionService
     /// Gets all cash sessions with summary information (branch-level).
     /// </summary>
     Task<List<CashSessionListItemDto>> GetCashSessionsAsync(long? branchId = null);
+
+    Task<PagedResult<CashSessionListItemDto>> GetCashSessionsPageAsync(PageRequest page,
+        long? branchId = null, CashSessionStatus? status = null, DateOnly? from = null, DateOnly? to = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets cash session details by ID including all agents' opening and closing counts.

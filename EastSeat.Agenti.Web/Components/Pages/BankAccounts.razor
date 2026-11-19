@@ -12,9 +12,10 @@
 <PageTitle>Bank Accounts - Agenti</PageTitle>
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
     <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.SpaceBetween">
-        <MudText Typo="Typo.h4">Bank accounts</MudText>
+        <MudText Typo="Typo.h4" HtmlTag="h1">Bank accounts</MudText>
         <MudButton OnClick="LoadAsync" Disabled="Busy">Refresh</MudButton>
     </MudStack>
+    <MudText Typo="Typo.body2" Class="my-3">Select an agent's Bank wallet to review its account binding and enrollment. Statements are uploaded separately and never move money.</MudText>
     @if (Error != null) { <MudAlert Severity="Severity.Error" Class="my-3">@Error</MudAlert> }
     @if (Busy) { <MudProgressLinear Indeterminate="true" Class="my-3" /> }
     <MudExpansionPanels Class="my-3">

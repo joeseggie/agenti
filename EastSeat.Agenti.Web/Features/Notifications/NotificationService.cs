@@ -1,5 +1,6 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,26 +11,45 @@ public class NotificationService(IDbContextFactory<ApplicationDbContext> dbConte
     public async Task<List<NotificationListItemDto>> GetNotificationsAsync(string userId)
     {
         await using var dbContext = await dbContextFactory.CreateDbContextAsync();
-        return await dbContext.Notifications
+        return await Project(dbContext.Notifications
             .Where(n => n.RecipientUserId == userId)
-            .OrderByDescending(n => n.CreatedAt)
-            .Select(n => new NotificationListItemDto
-            {
-                Id = n.Id,
-                Title = n.Title,
-                Message = n.Message,
-                Priority = n.Priority,
-                Type = n.Type,
-                LinkUrl = n.LinkUrl,
-                SenderName = n.Sender != null
+            .OrderByDescending(n => n.CreatedAt)).ToListAsync();
+    }
+
+    public async Task<PagedResult<NotificationListItemDto>> GetNotificationsPageAsync(string userId, PageRequest page,
+        bool? isRead = null, string? search = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var query = dbContext.Notifications.AsNoTracking().Where(n => n.RecipientUserId == userId);
+        if (isRead.HasValue) query = query.Where(n => n.IsRead == isRead);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim().ToLowerInvariant();
+            query = query.Where(n => n.Message.ToLower().Contains(term) || (n.Title != null && n.Title.ToLower().Contains(term)));
+        }
+        var count = await query.CountAsync(cancellationToken);
+        var items = await Project(query.OrderByDescending(n => n.CreatedAt).ThenByDescending(n => n.Id)
+            .Skip(page.Offset).Take(page.PageSize)).ToListAsync(cancellationToken);
+        return new(items, count);
+    }
+
+    private static IQueryable<NotificationListItemDto> Project(IQueryable<Notification> query) =>
+        query.Select(n => new NotificationListItemDto
+        {
+            Id = n.Id,
+            Title = n.Title,
+            Message = n.Message,
+            Priority = n.Priority,
+            Type = n.Type,
+            LinkUrl = n.LinkUrl,
+            SenderName = n.Sender != null
                     ? (n.Sender.FirstName + " " + n.Sender.LastName).Trim()
                     : "System",
-                IsRead = n.IsRead,
-                CreatedAt = n.CreatedAt,
-                TransactionId = n.TransactionId
-            })
-            .ToListAsync();
-    }
+            IsRead = n.IsRead,
+            CreatedAt = n.CreatedAt,
+            TransactionId = n.TransactionId
+        });
 
     public async Task<int> GetUnreadCountAsync(string userId)
     {

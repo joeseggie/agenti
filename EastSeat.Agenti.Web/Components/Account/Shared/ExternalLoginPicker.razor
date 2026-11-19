@@ -5,16 +5,9 @@
 @inject SignInManager<ApplicationUser> SignInManager
 @inject IdentityRedirectManager RedirectManager
 
-@if (externalLogins.Length == 0)
+@if (externalLogins.Length > 0)
 {
-    <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true">
-        There are no external authentication services configured. See this
-        <MudLink Href="https://go.microsoft.com/fwlink/?LinkID=532715" Target="_blank">article about setting up external
-            services</MudLink>.
-    </MudAlert>
-}
-else
-{
+    <MudDivider Class="my-4"><MudText Typo="Typo.body2">Or continue with</MudText></MudDivider>
     <form action="Account/PerformExternalLogin" method="post">
         <AntiforgeryToken />
         <input type="hidden" name="ReturnUrl" value="@ReturnUrl" />
