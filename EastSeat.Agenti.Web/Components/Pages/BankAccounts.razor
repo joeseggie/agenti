@@ -35,6 +35,9 @@
                     <MudSelect T="BankBalanceBasis" Label="Confirmed balance basis" @bind-Value="_newAccount.BalanceBasis" Disabled="Busy">
                         @foreach (var basis in Enum.GetValues<BankBalanceBasis>()) { <MudSelectItem T="BankBalanceBasis" Value="@basis">@basis</MudSelectItem> }
                     </MudSelect>
+                    <MudCheckBox T="bool" @bind-Value="_newAccount.AllowMissingRunningBalances" Disabled="Busy"
+                                 Label="Allow statements without running balances" />
+                    <MudText Typo="Typo.body2">Off by default. When enabled, an all-blank RunningBalance column uses this wallet's approved opening at upload. Computed balances are not bank verification. Supplied balances remain mandatory on every row otherwise.</MudText>
                     <MudButton OnClick="CreateAccountAsync" Disabled="Busy" Color="Color.Primary" Variant="Variant.Filled">Save account binding</MudButton>
                 </MudStack>
             }
@@ -61,6 +64,7 @@
                 <MudText Typo="Typo.body2">Bank wallet: @_selected.WalletName</MudText>
                 <MudText Typo="Typo.body2">Agent: @_selected.AgentLabel</MudText>
                 <MudText>New-session enrollment: @(_selected.WorkflowEnabled ? "Enabled" : "Paused")</MudText>
+                <MudText>Statements without running balances: @(_selected.AllowMissingRunningBalances ? "Allowed with approved opening" : "Not allowed")</MudText>
                 <MudText Typo="Typo.body2">Enrollment controls new cash sessions, not CSV statement uploads. Existing sessions and financial safeguards remain unchanged.</MudText>
                 <MudStack Row="true" Wrap="Wrap.Wrap">
                     <MudButton OnClick="ToggleWorkflowAsync" Disabled="Busy" Color="Color.Warning">
@@ -78,6 +82,9 @@
                         <MudSelect T="BankBalanceBasis" Label="Balance basis" @bind-Value="_editAccount.BalanceBasis" Disabled="Busy">
                             @foreach (var basis in Enum.GetValues<BankBalanceBasis>()) { <MudSelectItem T="BankBalanceBasis" Value="@basis">@basis</MudSelectItem> }
                         </MudSelect>
+                        <MudCheckBox T="bool" @bind-Value="_editAccount.AllowMissingRunningBalances" Disabled="Busy"
+                                     Label="Allow statements without running balances" />
+                        <MudText Typo="Typo.body2">Applies to future uploads only. All RunningBalance cells must be blank or all supplied. Blank cells require this wallet's approved opening for the statement date before upload. Existing statements and reports keep their original balance source.</MudText>
                         <MudButton OnClick="ConfigureAsync" Disabled="Busy">Save configuration</MudButton>
                     </MudStack>
                 </MudExpansionPanel>
@@ -112,7 +119,8 @@
         _editAccount = new BankAccountForm
         {
             WalletId = _selected.WalletId, BankName = _selected.BankName, AccountIdentifier = _selected.AccountIdentifier,
-            TimeZoneId = _selected.TimeZoneId, BalanceBasis = _selected.BalanceBasis, ImportProfileKey = _selected.ImportProfileKey
+            TimeZoneId = _selected.TimeZoneId, BalanceBasis = _selected.BalanceBasis, ImportProfileKey = _selected.ImportProfileKey,
+            AllowMissingRunningBalances = _selected.AllowMissingRunningBalances
         };
     }, queueIfBusy: true);
 

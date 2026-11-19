@@ -15,6 +15,7 @@ public class BankAccount
     public BankBalanceBasis BalanceBasis { get; set; }
     public string? ImportProfileKey { get; set; }
     public bool ImportProfileVerified { get; set; }
+    public bool AllowMissingRunningBalances { get; set; }
     public bool WorkflowEnabled { get; set; }
     public bool IsActive { get; set; } = true;
     public int Version { get; set; }

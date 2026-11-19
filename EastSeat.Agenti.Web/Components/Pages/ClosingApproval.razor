@@ -97,6 +97,12 @@
                 <MudAlert Severity="@(report.Succeeded ? Severity.Success : Severity.Warning)" Class="my-3">
                     Reconciliation: @(report.Succeeded ? "Success" : "Failed"). Saved report #@report.Id.
                 </MudAlert>
+                @if (report.Wallets.Any(w => w.BalanceSource == StatementBalanceSource.ApprovedOpening))
+                {
+                    <MudAlert Severity="Severity.Info" Class="my-3">
+                        Some balances were computed from approved opening counts, not supplied by the bank. Success for those wallets means arithmetic agreement only, without independent bank-balance verification.
+                    </MudAlert>
+                }
                 <MudText>Run by @report.PerformedByUserId at @UgandaTime(report.PerformedAt) (Uganda). Results and inputs are locked; reruns are not supported.</MudText>
                 <MudText Typo="Typo.h6" HtmlTag="h2" Class="mt-3">Saved reconciliation results</MudText>
                 <MudTable Items="report.Wallets" Dense="true" Class="my-3" Breakpoint="Breakpoint.Sm">
@@ -106,14 +112,26 @@
                     </HeaderContent>
                     <RowTemplate>
                         <MudTd DataLabel="Bank wallet / account">@context.WalletName / @context.BankName / @context.AccountIdentifier (@context.Currency)</MudTd>
-                        <MudTd DataLabel="Opening">@context.OpeningBalance.ToString("N2")</MudTd><MudTd DataLabel="Debits">@context.TotalDebits.ToString("N2")</MudTd>
-                        <MudTd DataLabel="Credits">@context.TotalCredits.ToString("N2")</MudTd><MudTd DataLabel="Calculated closing">@context.ExpectedClosing.ToString("N2")</MudTd>
-                        <MudTd DataLabel="Submitted closing">@context.SubmittedClosing.ToString("N2")</MudTd><MudTd DataLabel="Difference">@context.Difference.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Opening">@context.OpeningBalance.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Debits">@context.TotalDebits.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Credits">@context.TotalCredits.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Calculated closing">@context.ExpectedClosing.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Submitted closing">@context.SubmittedClosing.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Difference">@context.Difference.ToString("N2")</MudTd>
                         <MudTd DataLabel="Result">
-                            <strong>@(context.Succeeded ? "Success" : "Failed")</strong>
-                            <MudText Typo="Typo.caption">@context.Explanation</MudText>
-                            <MudLink Href="@($"/closing-statement-evidence/{context.StatementId}")">Statement #@context.StatementId, revision @context.StatementRevision</MudLink>
-                            <MudText Typo="Typo.caption">Statement opening @context.StatementOpening.ToString("N2"), ending @context.StatementClosing.ToString("N2")</MudText>
+                            <MudStack Spacing="1">
+                                <strong>@(context.Succeeded ? "Success" : "Failed")</strong>
+                                <MudText Typo="Typo.caption">@context.Explanation</MudText>
+                                <MudLink Href="@($"/closing-statement-evidence/{context.StatementId}")">Statement #@context.StatementId, revision @context.StatementRevision</MudLink>
+                                @if (context.BalanceSource == StatementBalanceSource.ApprovedOpening)
+                                {
+                                    <MudText Typo="Typo.caption">Computed from approved opening #@context.OpeningCountId: @context.StatementOpening.ToString("N2"), computed ending @context.StatementClosing.ToString("N2")</MudText>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.caption">Bank-reported statement opening @context.StatementOpening.ToString("N2"), ending @context.StatementClosing.ToString("N2")</MudText>
+                                }
+                            </MudStack>
                         </MudTd>
                     </RowTemplate>
                 </MudTable>

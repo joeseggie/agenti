@@ -19,7 +19,7 @@ Use the Centenary **Account Transaction Report** as the source, then map its row
 | Account Number, Date From/To, currency, Opening Balance, Total Credits/Debits | Not CSV transaction columns | Select the bound Bank account and one statement date in Agenti. Obtain a complete single-day export; cross-check its account, currency and totals. Empty and multi-day statements are rejected. Do not add these metadata as extra CSV columns. |
 | Book Balance / Available Balance | Not `RunningBalance` | Do not substitute unless Finance confirms it is the same balance basis as the account binding. |
 
-Use the [shipped CSV template](../EastSeat.Agenti.Web/wwwroot/templates/agenti-bank-statement-v1.csv) and [column guide](../EastSeat.Agenti.Web/wwwroot/templates/agenti-bank-statement-v1-guide.txt). Remove report title rows, subtotal/total rows, and other non-transaction lines; do not remove actual transaction rows. The CSV must have the exact seven headers, in order, and no additional columns.
+Use the [shipped CSV template](../EastSeat.Agenti.Web/wwwroot/templates/agenti-bank-statement-v2.csv) and [column guide](../EastSeat.Agenti.Web/wwwroot/templates/agenti-bank-statement-v2-guide.txt). Remove report title rows, subtotal/total rows, and other non-transaction lines; do not remove actual transaction rows. The CSV must have the exact seven headers, in order, and no additional columns.
 
 Preserve the source workbook locally as finance evidence under the organization's approved handling rules. Upload only the prepared CSV to Agenti; statement uploads are private evidence. Do not upload source statements to public repositories, issue trackers, or unapproved conversion services.
 

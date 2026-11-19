@@ -1,0 +1,29 @@
+Agenti universal bank statement CSV - schema version 2
+
+The first row must contain these exact headers in this exact order:
+TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance
+
+TransactionDate: required, yyyy-MM-dd; every row must equal the selected statement date.
+TransactionTime: optional actual HH:mm:ss in the bank account time zone. Leave blank when absent. Never invent a time.
+Reference: optional bank reference.
+Description: required bank narration.
+Debit: positive amount with exactly two decimal places. Leave blank for a credit.
+Credit: positive amount with exactly two decimal places. Leave blank for a debit.
+RunningBalance: bank balance after this row, exactly two decimal places; negative balances are allowed.
+
+Exactly one of Debit and Credit must be populated on each transaction row. Quote comma thousands separators (for example "1,234.50") as CSV fields. Do not include currency symbols, spaces, formulas, extra columns or totals rows. Save UTF-8 text (Excel: "CSV UTF-8 (Comma delimited)"). Preserve bank ledger order and all genuine transactions for the selected date.
+
+RunningBalance must be supplied on every row OR blank on every row. Mixed blank/populated balances are rejected. The RunningBalance header is always required. Version 1 files with fully supplied balances remain compatible.
+
+For all-blank balances (for example ABSA), an Admin must first enable "Allow statements without running balances" on that account. The default is off for all accounts. An approved opening count for the same agent, Bank wallet and business date must exist BEFORE upload. Its recorded wallet amount, never the total count or live wallet balance, seeds the computation:
+Computed balance = approved wallet opening + cumulative credits - cumulative debits.
+
+Agenti retains the original CSV unchanged, the computed balances, and the opening-count reference. These balances are not bank-reported evidence. Changing the account setting affects future uploads only. A fully populated file always retains the existing bank-balance chain and opening/ending anchor checks, even on an opted-in account.
+
+Empty/header-only and multi-day statements remain rejected. Do not fabricate a zero-value row. Upload one complete statement per Bank account/day. Cash and Mobile Money need no statement. Confirm the account and full-day coverage; the CSV cannot independently establish either.
+
+Reconciliation uses the same approved opening used at upload and the submitted wallet closing. A changed baseline blocks the run; it is not silently recomputed. Arithmetic agreement can receive Success and ordinary Admin/Supervisor approval, with explicit disclosure that bank balances were not supplied. A difference remains Failed and requires the existing separate Admin exception approval.
+
+A changed file or approved opening baseline requires an explicit replacement with a reason before reconciliation, even if the CSV is identical. Prior evidence is retained. Used statements and recorded reports are locked; no reruns or settlement replay. All Bank wallets must be reconciled together.
+
+Daily arithmetic is not proof of statement completeness, individual transactions, account identity or an exact session cutoff.
