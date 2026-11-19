@@ -102,4 +102,22 @@ public class StatementReconciliationSettingTests
         Assert.True((await fixture.Db.WalletTypes.AsNoTracking().SingleAsync(t => t.Id == tracked.Id)).RequiresStatementReconciliation);
         Assert.True(Assert.Single(await fixture.Db.WalletTypeReconciliationAudits.ToListAsync()).Required);
     }
+
+    [Fact]
+    public async Task TrackedWalletTypeDeletedElsewhere_UpdateReportsNotFound()
+    {
+        using var fixture = new BankingTestContext();
+        var tracked = new Shared.Domain.Entities.WalletType { Name = "Temp", Type = WalletTypeEnum.Custom };
+        fixture.Db.WalletTypes.Add(tracked);
+        await fixture.Db.SaveChangesAsync();
+        await fixture.Db.WalletTypes.Where(t => t.Id == tracked.Id).ExecuteDeleteAsync();
+
+        var result = await new WalletTypeService(fixture.Db).UpdateAsync(new WalletTypeFormModel
+        {
+            Id = tracked.Id, Name = "Renamed", Type = WalletTypeEnum.Custom, IsActive = true
+        });
+
+        Assert.False(result.Success);
+        Assert.Equal("Wallet type not found.", result.ErrorMessage);
+    }
 }

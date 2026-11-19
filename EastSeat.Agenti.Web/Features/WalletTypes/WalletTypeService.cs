@@ -102,6 +102,11 @@ public class WalletTypeService(ApplicationDbContext dbContext) : IWalletTypeServ
             }
             // The circuit-scoped context may hold stale values from an earlier edit.
             await dbContext.Entry(walletType).ReloadAsync();
+            if (dbContext.Entry(walletType).State == EntityState.Detached)
+            {
+                // FindAsync returned a tracked instance whose row has since been deleted.
+                return WalletTypeSaveResult.Error("Wallet type not found.");
+            }
 
             // Check for duplicate name (excluding current type)
             var duplicateExists = await dbContext.WalletTypes
