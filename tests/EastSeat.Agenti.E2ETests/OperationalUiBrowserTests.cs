@@ -144,7 +144,7 @@ public sealed class OperationalUiBrowserTests(DatabaseFixture database, ITestOut
         foreach (var route in new[] { "/", "/cashcount", "/customer-transactions", "/pending-transactions", "/bank-runs",
             "/cashcount-approvals", "/transaction-flags", "/agents", "/wallettypes", "/users", "/bank-statements", "/bank-accounts" })
         {
-            await page.GotoAsync(root + route);
+            await GotoWithNetworkRetryAsync(page, root + route);
             await Expect(page.GetByRole(AriaRole.Main)).ToHaveCountAsync(1);
             await Expect(page.Locator("main h1")).ToHaveCountAsync(1);
             await Expect(page.Locator("#blazor-error-ui")).Not.ToBeVisibleAsync();
@@ -188,6 +188,23 @@ public sealed class OperationalUiBrowserTests(DatabaseFixture database, ITestOut
         var select = page.Locator(".mud-input-control.mud-select").Filter(new() { Has = page.GetByText(label, new() { Exact = true }) });
         await select.Locator(".mud-input").ClickAsync();
         await page.Locator(".mud-popover-open").GetByText(option, new() { Exact = true }).ClickAsync();
+    }
+
+    private static async Task GotoWithNetworkRetryAsync(IPage page, string url)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await page.GotoAsync(url);
+                return;
+            }
+            catch (PlaywrightException exception) when (
+                attempt < 2 && exception.Message.Contains("net::ERR_NETWORK_CHANGED", StringComparison.Ordinal))
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)));
+            }
+        }
     }
 
     private static async Task CaptureLayoutsAsync(IPage page, string name)
