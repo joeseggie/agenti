@@ -53,7 +53,7 @@ builder.Services.AddScoped<IYourFeatureService, YourFeatureService>();
 ## Bank Statements and Reconciliation
 
 - New statement imports use the shipped, versioned universal CSV schema; do not restore bank-specific executable statement profiles or an Admin-editable parser.
-- Admin uploads complete, non-empty single-day statements and reconciles every captured Bank wallet together. Cash and Mobile Money need no statement. Supervisors may read and ordinarily approve a successful closing, but cannot upload, run or exception-approve.
+- Admin uploads complete, non-empty single-day statements and reconciles every captured Bank wallet together. Cash and Mobile Money need no statement. An Admin may waive statements per Bank wallet type (audited, frozen per run, shown as "Not reconciled"). Supervisors may read and ordinarily approve a successful closing, but cannot upload, run or exception-approve.
 - Reconciliation compares approved opening plus credits minus debits with submitted closing and statement balance anchors. It is daily arithmetic, not transaction matching or exact-cutoff certification; never fabricate times.
 - One immutable run per closing; used statements and submitted inputs are frozen. Replacements before use retain prior evidence and a reason. Approval is separate; Admin exception approval requires acknowledgement and a reason and never changes Failed to Success.
 - Preserve retired reconciliation history in the read-only archive. Do not restore matching, classifications, flags, baseline wizards, historical correction grants or reruns.

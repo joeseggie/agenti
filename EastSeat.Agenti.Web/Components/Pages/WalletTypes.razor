@@ -7,6 +7,8 @@
 @inject IWalletTypeService WalletTypeService
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
+@inject IStatementReconciliationSettingService ReconciliationSetting
+@inject AuthenticationStateProvider AuthState
 
 <PageTitle>Wallet Types - Agenti</PageTitle>
 
@@ -60,6 +62,7 @@
                         <MudTh>Description</MudTh>
                         <MudTh Style="text-align: center;">Denominations</MudTh>
                         <MudTh Style="text-align: center;">Wallets</MudTh>
+                        <MudTh Style="text-align: center;">Statement reconciliation</MudTh>
                         <MudTh Style="text-align: center;">Status</MudTh>
                         <MudTh Style="text-align: center;">Actions</MudTh>
                     </HeaderContent>
@@ -91,6 +94,25 @@
                             <MudChip T="string" Size="Size.Small" Color="Color.Info">
                                 @context.WalletCount
                             </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Statement reconciliation" Style="text-align: center;">
+                            @if (context.Type == WalletTypeEnum.Bank)
+                            {
+                                <MudChip T="string" Size="Size.Small"
+                                    Color="@(context.RequiresStatementReconciliation ? Color.Success : Color.Warning)">
+                                    @(context.RequiresStatementReconciliation ? "Required" : "Waived")
+                                </MudChip>
+                                @if (_isAdmin)
+                                {
+                                    <MudSwitch T="bool" Value="context.RequiresStatementReconciliation" Color="Color.Primary"
+                                        Size="Size.Small" Class="ml-1" aria-label="@($"Require statement reconciliation for {context.Name}")"
+                                        ValueChanged="@(v => ToggleReconciliation(context, v))" />
+                                }
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption">N/A</MudText>
+                            }
                         </MudTd>
                         <MudTd DataLabel="Status" Style="text-align: center;">
                             <MudChip T="string" Size="Size.Small"
@@ -171,6 +193,19 @@
             <MudItem xs="12" sm="6">
                 <MudSwitch @bind-Value="_form.IsActive" Label="Active" Color="Color.Success" />
             </MudItem>
+            @if (_isAdmin && _form.Id.HasValue && _form.Type == WalletTypeEnum.Bank)
+            {
+                <MudItem xs="12">
+                    <MudSwitch @bind-Value="_requiresStatement" Color="Color.Primary"
+                        Label="Require bank statement reconciliation at closing" />
+                    @if (!_requiresStatement)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Warning">
+                            Wallets of this type will be listed as "Not reconciled" in closing reports.
+                        </MudText>
+                    }
+                </MudItem>
+            }
         </MudGrid>
     </DialogContent>
     <DialogActions>
@@ -191,10 +226,46 @@
     private bool _isSaving = false;
     private bool _showDialog = false;
     private WalletTypeFormModel _form = new();
+    private bool _isAdmin;
+    private bool _requiresStatement = true;
+    private bool _originalRequiresStatement = true;
+    private string? _userId;
 
     protected override async Task OnInitializedAsync()
     {
+        var user = (await AuthState.GetAuthenticationStateAsync()).User;
+        _isAdmin = user.IsInRole(UserRole.Admin.ToString());
+        _userId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         await LoadWalletTypesAsync();
+    }
+
+    private async Task ToggleReconciliation(WalletTypeListItemDto walletType, bool required)
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+            "Statement reconciliation",
+            required
+                ? $"Require bank statement reconciliation for '{walletType.Name}' wallets?"
+                : $"Waive bank statement reconciliation for '{walletType.Name}' wallets? Closings without a saved reconciliation will list them as \"Not reconciled\".",
+            yesText: "Confirm", cancelText: "Cancel");
+        if (confirmed != true)
+            return;
+        await ApplyReconciliationAsync(walletType.Id, required);
+        await LoadWalletTypesAsync();
+    }
+
+    private async Task<bool> ApplyReconciliationAsync(long walletTypeId, bool required)
+    {
+        try
+        {
+            await ReconciliationSetting.SetRequiredAsync(_userId ?? string.Empty, walletTypeId, required);
+            Snackbar.Add("Statement reconciliation setting saved.", Severity.Success);
+            return true;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Microsoft.EntityFrameworkCore.DbUpdateException)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+            return false;
+        }
     }
 
     private async Task LoadWalletTypesAsync()
@@ -230,6 +301,8 @@
             SupportsDenominations = walletType.SupportsDenominations,
             IsActive = walletType.IsActive
         };
+        _requiresStatement = walletType.RequiresStatementReconciliation;
+        _originalRequiresStatement = walletType.RequiresStatementReconciliation;
         _showDialog = true;
     }
 
@@ -258,6 +331,11 @@
 
             if (result.Success)
             {
+                if (_isAdmin && _form.Id.HasValue && _form.Type == WalletTypeEnum.Bank &&
+                    _requiresStatement != _originalRequiresStatement)
+                {
+                    await ApplyReconciliationAsync(_form.Id.Value, _requiresStatement);
+                }
                 Snackbar.Add(_form.Id.HasValue ? "Wallet type updated successfully." : "Wallet type created successfully.",
                 Severity.Success);
                 CloseDialog();

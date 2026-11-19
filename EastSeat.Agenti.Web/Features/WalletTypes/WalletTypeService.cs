@@ -27,6 +27,7 @@ public class WalletTypeService(ApplicationDbContext dbContext) : IWalletTypeServ
                 IsSystem = wt.IsSystem,
                 IsActive = wt.IsActive,
                 SupportsDenominations = wt.SupportsDenominations,
+                RequiresStatementReconciliation = wt.RequiresStatementReconciliation,
                 WalletCount = wt.Wallets.Count,
                 CreatedAt = wt.CreatedAt
             })
@@ -47,6 +48,7 @@ public class WalletTypeService(ApplicationDbContext dbContext) : IWalletTypeServ
                 IsSystem = wt.IsSystem,
                 IsActive = wt.IsActive,
                 SupportsDenominations = wt.SupportsDenominations,
+                RequiresStatementReconciliation = wt.RequiresStatementReconciliation,
                 WalletCount = wt.Wallets.Count,
                 CreatedAt = wt.CreatedAt
             })
@@ -115,6 +117,12 @@ public class WalletTypeService(ApplicationDbContext dbContext) : IWalletTypeServ
                 return WalletTypeSaveResult.Error("Changing this type to Cash would give an agent more than one Cash wallet.");
             }
 
+            if (walletType.Type == WalletTypeEnum.Bank && model.Type != WalletTypeEnum.Bank &&
+                !walletType.RequiresStatementReconciliation)
+            {
+                return WalletTypeSaveResult.Error("Turn statement reconciliation back on before changing this type away from Bank.");
+            }
+
             walletType.Name = model.Name;
             walletType.Description = model.Description;
             walletType.Type = model.Type;
@@ -179,6 +187,11 @@ public class WalletTypeService(ApplicationDbContext dbContext) : IWalletTypeServ
         if (walletType.Wallets.Count > 0)
         {
             return WalletTypeSaveResult.Error("Cannot delete wallet type with existing wallets. Deactivate it instead.");
+        }
+
+        if (await dbContext.WalletTypeReconciliationAudits.AnyAsync(a => a.WalletTypeId == id))
+        {
+            return WalletTypeSaveResult.Error("Cannot delete wallet type with reconciliation setting history. Deactivate it instead.");
         }
 
         dbContext.WalletTypes.Remove(walletType);

@@ -19,7 +19,9 @@ public sealed class ClosingWalletResult : IImmutableBankingRecord
     public long RunId { get; set; }
     public long WalletId { get; set; }
     public long BankAccountId { get; set; }
-    public long StatementId { get; set; }
+    public long? StatementId { get; set; }
+    /// <summary>True when the wallet type's statement reconciliation was switched off when the run was saved.</summary>
+    public bool StatementWaived { get; set; }
     public string WalletName { get; set; } = string.Empty;
     public string BankName { get; set; } = string.Empty;
     public string AccountIdentifier { get; set; } = string.Empty;
@@ -34,6 +36,15 @@ public sealed class ClosingWalletResult : IImmutableBankingRecord
     public decimal Difference { get; set; }
     public bool Succeeded { get; set; }
     public string Explanation { get; set; } = string.Empty;
+}
+
+public sealed class WalletTypeReconciliationAudit : IImmutableBankingRecord
+{
+    public long Id { get; set; }
+    public long WalletTypeId { get; set; }
+    public bool Required { get; set; }
+    public string ChangedByUserId { get; set; } = string.Empty;
+    public DateTimeOffset ChangedAt { get; set; }
 }
 
 public sealed class ClosingApprovalDecision : IImmutableBankingRecord

@@ -14,6 +14,8 @@ public class WalletType
     public bool IsSystem { get; set; }
     public bool IsActive { get; set; } = true;
     public bool SupportsDenominations { get; set; }
+    /// <summary>When false, Bank wallets of this type are not reconciled against a statement at closing.</summary>
+    public bool RequiresStatementReconciliation { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 

@@ -30,6 +30,7 @@
                 <MudTd>
                     @(context.Type != WalletTypeEnum.Bank ? "Not required" :
                         !context.BankAccountId.HasValue ? "Missing account binding" :
+                        !context.StatementRequired ? "Statement waived" :
                         context.StatementId.HasValue ? "Ready" : "Missing statement")
                 </MudTd>
             </RowTemplate>
@@ -83,10 +84,17 @@
                         <MudTd>@context.TotalCredits.ToString("N2")</MudTd><MudTd>@context.ExpectedClosing.ToString("N2")</MudTd>
                         <MudTd>@context.SubmittedClosing.ToString("N2")</MudTd><MudTd>@context.Difference.ToString("N2")</MudTd>
                         <MudTd>
-                            <strong>@(context.Succeeded ? "Success" : "Failed")</strong>
+                                    <strong>@(context.StatementWaived ? "Not reconciled" : context.Succeeded ? "Success" : "Failed")</strong>
                             <MudText Typo="Typo.caption">@context.Explanation</MudText>
+                            @if (context.StatementWaived)
+                            {
+                                <MudText Typo="Typo.caption">Not reconciled – statement waived.</MudText>
+                            }
+                            else
+                            {
                             <MudLink Href="@($"/closing-statement-evidence/{context.StatementId}")">Statement #@context.StatementId, revision @context.StatementRevision</MudLink>
                             <MudText Typo="Typo.caption">Statement opening @context.StatementOpening.ToString("N2"), ending @context.StatementClosing.ToString("N2")</MudText>
+                            }
                         </MudTd>
                     </RowTemplate>
                 </MudTable>
