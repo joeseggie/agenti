@@ -10,7 +10,8 @@ public sealed record ClosingWalletResultDto(
     string WalletName, string BankName, string AccountIdentifier, string Currency, long? StatementId, int? StatementRevision,
     decimal OpeningBalance, decimal TotalDebits, decimal TotalCredits, decimal ExpectedClosing,
     decimal SubmittedClosing, decimal StatementOpening, decimal StatementClosing, decimal Difference,
-    bool Succeeded, string Explanation, bool StatementWaived = false);
+    bool Succeeded, string Explanation, StatementBalanceSource BalanceSource = StatementBalanceSource.BankReported,
+    long? OpeningCountId = null, bool StatementWaived = false);
 
 public sealed record ClosingReportDto(
     long Id, bool Succeeded, string PerformedByUserId, DateTimeOffset PerformedAt,

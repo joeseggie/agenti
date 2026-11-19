@@ -72,6 +72,12 @@
                 <MudAlert Severity="@(report.Succeeded ? Severity.Success : Severity.Warning)" Class="my-3">
                     Reconciliation: @(report.Succeeded ? "Success" : "Failed"). Saved report #@report.Id.
                 </MudAlert>
+                @if (report.Wallets.Any(w => w.BalanceSource == StatementBalanceSource.ApprovedOpening))
+                {
+                    <MudAlert Severity="Severity.Info" Class="my-3">
+                        Some balances were computed from approved opening counts, not supplied by the bank. Success for those wallets means arithmetic agreement only, without independent bank-balance verification.
+                    </MudAlert>
+                }
                 <MudText>Run by @report.PerformedByUserId at @UgandaTime(report.PerformedAt) (Uganda). Results and inputs are locked; reruns are not supported.</MudText>
                 <MudTable Items="report.Wallets" Dense="true" Class="my-3">
                     <HeaderContent>
@@ -84,13 +90,22 @@
                         <MudTd>@Reconciled(context, context.TotalCredits)</MudTd><MudTd>@Reconciled(context, context.ExpectedClosing)</MudTd>
                         <MudTd>@context.SubmittedClosing.ToString("N2")</MudTd><MudTd>@Reconciled(context, context.Difference)</MudTd>
                         <MudTd>
-                            <strong>@(context.StatementWaived ? "Not reconciled" : context.Succeeded ? "Success" : "Failed")</strong>
-                            <MudText Typo="Typo.caption">@context.Explanation</MudText>
-                            @if (!context.StatementWaived)
-                            {
-                                <MudLink Href="@($"/closing-statement-evidence/{context.StatementId}")">Statement #@context.StatementId, revision @context.StatementRevision</MudLink>
-                                <MudText Typo="Typo.caption">Statement opening @context.StatementOpening.ToString("N2"), ending @context.StatementClosing.ToString("N2")</MudText>
-                            }
+                            <MudStack Spacing="1">
+                                <strong>@(context.StatementWaived ? "Not reconciled" : context.Succeeded ? "Success" : "Failed")</strong>
+                                <MudText Typo="Typo.caption">@context.Explanation</MudText>
+                                @if (!context.StatementWaived)
+                                {
+                                    <MudLink Href="@($"/closing-statement-evidence/{context.StatementId}")">Statement #@context.StatementId, revision @context.StatementRevision</MudLink>
+                                    @if (context.BalanceSource == StatementBalanceSource.ApprovedOpening)
+                                    {
+                                        <MudText Typo="Typo.caption">Computed from approved opening #@context.OpeningCountId: @context.StatementOpening.ToString("N2"), computed ending @context.StatementClosing.ToString("N2")</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.caption">Bank-reported statement opening @context.StatementOpening.ToString("N2"), ending @context.StatementClosing.ToString("N2")</MudText>
+                                    }
+                                }
+                            </MudStack>
                         </MudTd>
                     </RowTemplate>
                 </MudTable>

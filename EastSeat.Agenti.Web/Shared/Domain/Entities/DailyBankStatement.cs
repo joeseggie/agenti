@@ -1,3 +1,5 @@
+using EastSeat.Agenti.Shared.Domain.Enums;
+
 namespace EastSeat.Agenti.Shared.Domain.Entities;
 
 public sealed class DailyBankStatement : IImmutableBankingRecord
@@ -14,6 +16,8 @@ public sealed class DailyBankStatement : IImmutableBankingRecord
     public string ContentHash { get; set; } = string.Empty;
     public string SchemaHash { get; set; } = string.Empty;
     public int SchemaVersion { get; set; }
+    public StatementBalanceSource BalanceSource { get; set; }
+    public long? OpeningCountId { get; set; }
     public byte[] Content { get; set; } = [];
     public decimal OpeningBalance { get; set; }
     public decimal ClosingBalance { get; set; }

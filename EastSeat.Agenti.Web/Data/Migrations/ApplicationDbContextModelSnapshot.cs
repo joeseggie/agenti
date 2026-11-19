@@ -144,6 +144,9 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<bool>("AllowMissingRunningBalances")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("BalanceBasis")
                         .IsRequired()
                         .HasMaxLength(40)
@@ -1726,6 +1729,13 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<string>("BalanceSource")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("BankReported");
+
                     b.Property<long>("BankAccountId")
                         .HasColumnType("bigint");
 
@@ -1755,6 +1765,9 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                     b.Property<decimal>("OpeningBalance")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
+
+                    b.Property<long?>("OpeningCountId")
+                        .HasColumnType("bigint");
 
                     b.Property<string>("ReplacementReason")
                         .HasMaxLength(2000)
@@ -1794,6 +1807,8 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .HasColumnType("character varying(450)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("OpeningCountId");
 
                     b.HasIndex("SupersedesId")
                         .IsUnique()
@@ -3675,6 +3690,11 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .HasForeignKey("BankAccountId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("EastSeat.Agenti.Shared.Domain.Entities.CashCount", null)
+                        .WithMany()
+                        .HasForeignKey("OpeningCountId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("EastSeat.Agenti.Shared.Domain.Entities.DailyBankStatement", null)
                         .WithMany()

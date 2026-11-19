@@ -10,12 +10,14 @@ public sealed class BankAccountForm
     public string TimeZoneId { get; set; } = "Africa/Kampala";
     public BankBalanceBasis BalanceBasis { get; set; }
     public string? ImportProfileKey { get; set; }
+    public bool AllowMissingRunningBalances { get; set; }
 }
 
 public sealed record BankAccountDto(
     long Id, long WalletId, string WalletName, string BankName, string AccountIdentifier, string Currency,
     string TimeZoneId, BankBalanceBasis BalanceBasis, string? ImportProfileKey, bool ProfileVerified,
-    bool WorkflowEnabled, bool IsActive, int Version, string? AgentName, string AgentCode)
+    bool WorkflowEnabled, bool IsActive, int Version, string? AgentName, string AgentCode,
+    bool AllowMissingRunningBalances = false)
 {
     public string AgentLabel =>
         $"{(string.IsNullOrWhiteSpace(AgentName) ? "Agent name unavailable" : AgentName.Trim())} ({AgentCode})";
