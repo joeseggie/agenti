@@ -289,6 +289,19 @@
 
     private async Task LoadVaultAsync()
     {
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (user?.Identity?.IsAuthenticated != true ||
+            !long.TryParse(user.FindFirst("BranchId")?.Value, out var branchId) || branchId <= 0)
+        {
+            _vault = null;
+            _pendingTransactions = [];
+            _error = "User is not associated with a branch. Please contact an administrator.";
+            _isLoading = false;
+            return;
+        }
+
+        _branchId = branchId;
+        _canApprove = user.IsInRole(UserRole.Admin.ToString());
         await _queryLock.WaitAsync();
         _isLoading = true;
         _error = null;
@@ -384,6 +397,8 @@
             {
                 Snackbar.Add(approve ? "Request approved." : "Request rejected.", Severity.Success);
                 await LoadVaultAsync();
+                if (_history is not null)
+                    await _history.ReloadServerData();
             }
         }
         catch (Exception exception)

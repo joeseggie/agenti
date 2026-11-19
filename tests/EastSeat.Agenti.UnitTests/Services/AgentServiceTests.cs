@@ -6,6 +6,7 @@ using EastSeat.Agenti.Web.Features.Agents;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace EastSeat.Agenti.UnitTests.Services;
 
@@ -13,6 +14,8 @@ namespace EastSeat.Agenti.UnitTests.Services;
 [Trait("Feature", "AgentManagement")]
 public class AgentServiceTests : IDisposable
 {
+    private readonly string _databaseName = Guid.NewGuid().ToString();
+    private readonly InMemoryDatabaseRoot _databaseRoot = new();
     private readonly ConcurrencyExceptionInterceptor _concurrencyExceptionInterceptor = new();
     private readonly ApplicationDbContext _dbContext;
     private readonly AgentService _sut;
@@ -22,7 +25,7 @@ public class AgentServiceTests : IDisposable
     {
         // Setup in-memory database
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .UseInMemoryDatabase(_databaseName, _databaseRoot)
             .AddInterceptors(_concurrencyExceptionInterceptor)
             .ConfigureWarnings(x => x.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
@@ -197,6 +200,36 @@ public class AgentServiceTests : IDisposable
         result.FirstName.Should().Be("John");
         result.LastName.Should().Be("Doe");
         result.Email.Should().Be("john@test.com");
+    }
+
+    [Fact]
+    public async Task GetAgentAsync_ReturnsFreshSnapshotWhenAnotherContextUpdatesAgent()
+    {
+        var user = UserBuilder.Default().WithEmail("fresh@test.com").Build();
+        _dbContext.Users.Add(user);
+        await _dbContext.SaveChangesAsync();
+        var agent = AgentBuilder.Default()
+            .WithCode("TEST")
+            .WithUserId(user.Id)
+            .WithBranchId(_testBranch.Id)
+            .Build();
+        _dbContext.Agents.Add(agent);
+        await _dbContext.SaveChangesAsync();
+
+        await _sut.GetAgentAsync(agent.Id);
+        await using (var otherContext = new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(_databaseName, _databaseRoot).Options))
+        {
+            var updatedAgent = await otherContext.Agents.SingleAsync(a => a.Id == agent.Id);
+            updatedAgent.Code = "UPDT";
+            updatedAgent.IsActive = false;
+            await otherContext.SaveChangesAsync();
+        }
+
+        var result = await _sut.GetAgentAsync(agent.Id);
+
+        result!.Code.Should().Be("UPDT");
+        result.IsActive.Should().BeFalse();
     }
 
     [Fact]

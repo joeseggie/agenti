@@ -2,6 +2,7 @@ using EastSeat.Agenti.IntegrationTests.Infrastructure;
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.UnitTests.Helpers;
+using EastSeat.Agenti.Web.Data;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.EntityFrameworkCore;
@@ -34,9 +35,10 @@ public sealed class OperationalUiBrowserTests(DatabaseFixture database, ITestOut
                 CreatedByUserId = scenario.Admin.Id, Amount = 100m, BalanceAfter = 10_000m,
                 Type = VaultTransactionType.ManualDeposit, Status = VaultTransactionStatus.Completed
             });
+        vault.CurrentBalance = 1_000_000m;
         var pending = new VaultTransaction
         {
-            VaultId = vault.Id, CreatedAt = BankingScenario.Now.AddDays(-2),
+            VaultId = vault.Id, CreatedAt = BankingScenario.Now.AddMinutes(1),
             CreatedByUserId = scenario.User.Id, Amount = 200m, Notes = "Synthetic request for review",
             Type = VaultTransactionType.ManualDeposit, Status = VaultTransactionStatus.Pending,
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(1)
@@ -114,6 +116,14 @@ public sealed class OperationalUiBrowserTests(DatabaseFixture database, ITestOut
         await Expect(page.GetByRole(AriaRole.Dialog)).ToContainTextAsync("UGX 200");
         await page.GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync();
         await Expect(page.GetByRole(AriaRole.Dialog)).ToHaveCountAsync(0);
+        await SelectAsync(page, "Transaction status", "Pending");
+        await Expect(history.Locator("tbody tr")).ToHaveCountAsync(1);
+        await Expect(history.Locator("tbody")).ToContainTextAsync("Pending");
+        await queue.GetByRole(AriaRole.Button, new() { Name = "Approve", Exact = true }).ClickAsync();
+        await page.GetByRole(AriaRole.Dialog).GetByRole(AriaRole.Button, new() { Name = "Approve request", Exact = true }).ClickAsync();
+        await Expect(page.GetByText("Request approved.", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(queue.Locator("tbody tr")).ToHaveCountAsync(0);
+        await Expect(history.Locator("tbody")).Not.ToContainTextAsync("Pending");
         await CaptureLayoutsAsync(page, "vault");
         await page.SetViewportSizeAsync(1280, 800);
 
@@ -150,9 +160,36 @@ public sealed class OperationalUiBrowserTests(DatabaseFixture database, ITestOut
             await Expect(page.Locator("#blazor-error-ui")).Not.ToBeVisibleAsync();
         }
         await Expect(page.Locator("nav a[href='cashcount-approvals'], .mud-navmenu a[href='cashcount-approvals']")).ToHaveCountAsync(1);
+        var unassignedSupervisor = new ApplicationUser
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            UserName = "unassigned-supervisor",
+            FirstName = "Unassigned",
+            LastName = "Supervisor",
+            Role = UserRole.Supervisor,
+            IsActive = true
+        };
+        db.Users.Add(unassignedSupervisor);
+        await db.SaveChangesAsync();
+        await using (var supervisorContext = await browser.NewContextAsync())
+        {
+            var supervisorCookie = app.Cookie(unassignedSupervisor);
+            await supervisorContext.AddCookiesAsync([new Cookie
+            {
+                Name = supervisorCookie.Name, Value = supervisorCookie.Value, Url = root, HttpOnly = true
+            }]);
+            var supervisorPage = await supervisorContext.NewPageAsync();
+            await supervisorPage.GotoAsync(root + "/vault");
+            var refresh = supervisorPage.GetByRole(AriaRole.Button, new() { Name = "Refresh", Exact = true });
+            await Expect(refresh).ToBeEnabledAsync();
+            await refresh.ClickAsync();
+            await Expect(supervisorPage.GetByTestId("vault-history")).ToHaveCountAsync(0);
+            await Expect(supervisorPage.GetByText("UGX 1,000,200", new() { Exact = true })).ToHaveCountAsync(0);
+        }
         await using var final = database.CreateContext();
-        Assert.Equal(VaultTransactionStatus.Pending, (await final.VaultTransactions.FindAsync(pending.Id))!.Status);
+        Assert.Equal(VaultTransactionStatus.Completed, (await final.VaultTransactions.FindAsync(pending.Id))!.Status);
         Assert.Equal(106, await final.VaultTransactions.CountAsync(t => t.VaultId == vault.Id));
+        Assert.Equal(1_000_200m, (await final.Vaults.FindAsync(vault.Id))!.CurrentBalance);
         Assert.Equal(14, await final.Notifications.CountAsync(n => n.RecipientUserId == scenario.Admin.Id && !n.IsRead));
         Assert.Empty(errors);
         await VerifyPublicAuthenticationAsync(browser, root);

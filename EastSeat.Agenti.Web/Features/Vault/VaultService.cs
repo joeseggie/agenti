@@ -21,6 +21,7 @@ public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telem
     public async Task<VaultDto?> GetVaultAsync(long branchId, CancellationToken cancellationToken = default)
     {
         var vault = await dbContext.Vaults
+            .AsNoTracking()
             .Include(v => v.Branch)
             .FirstOrDefaultAsync(v => v.BranchId == branchId, cancellationToken);
 
