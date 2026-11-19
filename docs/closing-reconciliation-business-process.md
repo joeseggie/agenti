@@ -101,7 +101,8 @@ retain the existing closing-approval process:
 
 ## Statement intake rules
 
-Use the release-shipped `agenti-bank-statement-v1` CSV template:
+Use the release-shipped `agenti-bank-statement-v2` CSV template (the headers are
+unchanged; fully populated v1 files remain compatible):
 
 ```csv
 TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance
@@ -114,6 +115,9 @@ TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalanc
 | Multi-day input | Reject the entire file or request, even if some rows match the requested date. |
 | Empty statement | Reject header-only and otherwise empty statements in this release. Do not invent a zero-value transaction. |
 | Valid amounts | Follow the shipped schema: exactly one positive Debit or Credit per row, amounts written with exactly two decimals, and a valid running-balance chain. |
+| Missing running balances | Default: rejected. Admin may enable **Allow statements without running balances** per account. Every balance must then be blank or every balance supplied; mixed files are rejected. Fully supplied balances always retain all existing checks. |
+| Computed balance prerequisite | All-blank files require the same agent's approved opening for that Bank wallet and business date **at upload**. Use its recorded wallet amount, never the count total, live balance or a zero fallback. Retain the opening-count ID and computed balance source with the unchanged CSV. |
+| Account policy changes | The setting defaults off for existing and new accounts. Changes affect future uploads only; accepted revisions and reports keep their original balance source. |
 | Actual times only | `TransactionTime` is optional. Preserve real supplied times; never invent midnight or a closing time for date-only rows. |
 | Complete statement | Upload one complete statement per bank account/date, not partial files to be merged. |
 | Account confirmation | Show the wallet, bank, and account identity. Admin must confirm that the file belongs to this account and covers the complete date. |
@@ -143,17 +147,29 @@ Use the persisted approved opening and submitted closing for the same agent,
 wallet, and business date. Never use live balances, which may have been zeroed by
 settlement or changed by a later session.
 
-A successful result requires exact agreement at two decimal places. Validate
-the statement's running balances and anchor its implied opening and ending
-balances to the approved opening and submitted closing. A consistent but
-offset running-balance chain must not produce a successful result.
+A successful result requires exact agreement at two decimal places. For
+bank-supplied running balances, validate the chain and anchor its implied opening
+and ending balances to the approved opening and submitted closing. A consistent
+but offset bank-reported chain must not produce a successful result.
+
+For an explicitly permitted all-blank file (such as an ABSA export), compute each
+balance at upload from the approved wallet opening plus successive credits minus
+debits. Reconciliation must use that exact opening count and wallet amount; a
+different baseline blocks the run instead of silently rebasing the statement.
+Validate the retained computed chain for consistency, but do not claim independent
+bank opening/ending verification. Arithmetic agreement may receive Success and
+ordinary Admin/Supervisor approval. Differences retain the existing Failed and
+Admin exception workflow.
 
 The report includes the closing identity, agent, business date, run actor/time,
 and, for each Bank wallet:
 
 - Wallet and bank-account identity, currency, and statement revision/reference.
 - Approved opening, total debits, total credits, and calculated closing.
-- Statement opening/ending balances, submitted closing, and difference.
+- Statement opening/ending balances, submitted closing, and difference. Clearly
+  distinguish bank-reported balances from balances **computed from approved
+  opening**, show the opening-count reference for the latter, and disclose that
+  no independent bank balances were supplied.
 - Success or Failed, with a specific explanation for failure.
 
 The overall result succeeds only when every Bank wallet succeeds. A positive

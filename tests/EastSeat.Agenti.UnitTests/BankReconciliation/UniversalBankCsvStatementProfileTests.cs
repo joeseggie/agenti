@@ -29,6 +29,81 @@ public class UniversalBankCsvStatementProfileTests
         Assert.Equal(new DateOnly(2026, 11, 1), parsed.Entries[0].ValueDate);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-100)]
+    [InlineData(1000)]
+    public async Task Parse_BlankBalances_UsesExplicitlyPermittedOpeningWithoutInventingTimes(decimal opening)
+    {
+        var parsed = await ParseAsync(
+            "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+            "2026-11-01,,REF-1,Deposit,,200.00,\n" +
+            "2026-11-01,,REF-2,Withdrawal,50.00,,",
+            "Africa/Kampala", opening, allowMissingBalances: true);
+
+        Assert.Equal(StatementBalanceSource.ApprovedOpening, parsed.BalanceSource);
+        Assert.Equal(opening, parsed.OpeningBalance);
+        Assert.Equal(opening + 150m, parsed.ClosingBalance);
+        Assert.Equal(new[] { opening + 200m, opening + 150m }, parsed.Entries.Select(e => e.RunningBalance));
+        Assert.All(parsed.Entries, e => Assert.False(e.HasPreciseTimestamp));
+    }
+
+    [Theory]
+    [InlineData(false, 1000, "explicitly allow")]
+    [InlineData(true, null, "approved opening")]
+    public async Task Parse_BlankBalances_RequiresPermissionAndBaseline(bool permitted, int? opening, string message)
+    {
+        var error = await Assert.ThrowsAsync<StatementParsingException>(() => ParseAsync(
+            "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+            "2026-11-01,,REF,Deposit,,200.00,", "Africa/Kampala", opening, allowMissingBalances: permitted));
+
+        Assert.Contains(message, error.Message);
+    }
+
+    [Theory]
+    [InlineData("", "1150.00")]
+    [InlineData("1200.00", "")]
+    [InlineData(" ", "")]
+    public async Task Parse_RejectsMixedBalancesEvenWhenPermitted(string first, string second)
+    {
+        var error = await Assert.ThrowsAsync<StatementParsingException>(() => ParseAsync(
+            "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+            $"2026-11-01,,REF-1,Deposit,,200.00,{first}\n" +
+            $"2026-11-01,,REF-2,Withdrawal,50.00,,{second}",
+            "Africa/Kampala", 1000m, allowMissingBalances: true));
+
+        Assert.Contains("Mixed balances", error.Message);
+    }
+
+    [Fact]
+    public async Task Parse_PopulatedBalances_AreNeverReplacedByApprovedOpening()
+    {
+        var csv = "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+            "2026-11-01,,REF-1,Deposit,,200.00,1200.00\n" +
+            "2026-11-01,,REF-2,Withdrawal,50.00,,1150.00";
+        var parsed = await ParseAsync(csv, "Africa/Kampala", 5000m, allowMissingBalances: true);
+
+        Assert.Equal(StatementBalanceSource.BankReported, parsed.BalanceSource);
+        Assert.Equal(1000m, parsed.OpeningBalance);
+        Assert.Equal(1150m, parsed.ClosingBalance);
+        await Assert.ThrowsAsync<StatementParsingException>(() =>
+            ParseAsync(csv.Replace("1150.00", "1151.00"), "Africa/Kampala", 5000m, allowMissingBalances: true));
+    }
+
+    [Theory]
+    [InlineData("9999999999999999.99", "0.01")]
+    [InlineData("-9999999999999999.99", "-0.01")]
+    [InlineData("1.001", "0.01")]
+    public async Task Parse_ComputedBalances_RejectsUnsupportedRangeOrPrecision(string baseline, string movement)
+    {
+        var opening = decimal.Parse(baseline, System.Globalization.CultureInfo.InvariantCulture);
+        var debit = movement.StartsWith('-') ? movement[1..] : "";
+        var credit = movement.StartsWith('-') ? "" : movement;
+        await Assert.ThrowsAsync<StatementParsingException>(() => ParseAsync(
+            "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+            $"2026-11-01,,REF,Movement,{debit},{credit},", "Africa/Kampala", opening, allowMissingBalances: true));
+    }
+
     [Fact]
     public async Task Parse_PreservesSelectedDatesAndConfirmedBalanceBasisAcrossTimeZones()
     {
@@ -210,11 +285,12 @@ public class UniversalBankCsvStatementProfileTests
     }
 
     private static Task<ParsedStatement> ParseAsync(
-        string csv, string zone, decimal? baseline, BankBalanceBasis basis = BankBalanceBasis.Ledger)
+        string csv, string zone, decimal? baseline, BankBalanceBasis basis = BankBalanceBasis.Ledger,
+        bool allowMissingBalances = false)
     {
         var profile = new UniversalBankCsvStatementProfile();
         var account = new StatementAccountContext(
-            "001234567890", "UGX", zone, basis, From, To, baseline);
+            "001234567890", "UGX", zone, basis, From, To, baseline, allowMissingBalances);
         var source = new MemoryStream(Encoding.UTF8.GetBytes(csv));
         return profile.ParseAsync(source, UniversalBankCsvStatementProfile.CsvContentType, account, CancellationToken.None);
     }

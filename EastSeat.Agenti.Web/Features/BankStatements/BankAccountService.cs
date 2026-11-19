@@ -58,6 +58,7 @@ public sealed class BankAccountService(
                 AccountIdentifier = form.AccountIdentifier.Trim(), Currency = wallet.Currency,
                 TimeZoneId = form.TimeZoneId, BalanceBasis = form.BalanceBasis,
                 ImportProfileKey = profile?.Key, ImportProfileVerified = profile?.IsVerified == true,
+                AllowMissingRunningBalances = form.AllowMissingRunningBalances,
                 CreatedAt = clock.UtcNow
             };
             db.BankAccounts.Add(account);
@@ -110,6 +111,7 @@ public sealed class BankAccountService(
             if (profile?.BankIdentifier != "*")
                 account.BankIdentifier = profile?.BankIdentifier ?? account.BankIdentifier;
             account.ImportProfileVerified = profile?.IsVerified == true;
+            account.AllowMissingRunningBalances = form.AllowMissingRunningBalances;
             account.Version++;
             await db.SaveChangesAsync(cancellationToken);
             var result = await ProjectAccounts(db.BankAccounts.AsNoTracking().Where(a => a.Id == accountId))
@@ -220,5 +222,5 @@ public sealed class BankAccountService(
             account.ImportProfileKey, true, account.WorkflowEnabled, account.IsActive, account.Version,
             db.Users.Where(user => user.Id == account.Wallet.Agent!.UserId)
                 .Select(user => (user.FirstName + " " + user.LastName).Trim()).FirstOrDefault(),
-            account.Wallet.Agent!.Code));
+            account.Wallet.Agent!.Code, account.AllowMissingRunningBalances));
 }

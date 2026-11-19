@@ -36,7 +36,7 @@ public sealed class UniversalBankCsvSchema
     {
         var assembly = typeof(UniversalBankCsvSchema).Assembly;
         var resource = assembly.GetManifestResourceNames()
-            .SingleOrDefault(name => name.EndsWith("agenti-bank-statement-v1.json", StringComparison.Ordinal))
+            .SingleOrDefault(name => name.EndsWith("agenti-bank-statement-v2.json", StringComparison.Ordinal))
             ?? throw new InvalidOperationException("The universal bank CSV schema resource is missing.");
         using var stream = assembly.GetManifestResourceStream(resource)
             ?? throw new InvalidOperationException("The universal bank CSV schema could not be opened.");

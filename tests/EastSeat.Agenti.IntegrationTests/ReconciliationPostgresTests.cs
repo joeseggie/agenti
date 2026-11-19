@@ -27,12 +27,14 @@ public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : Integ
         using var scenario = new BankingScenario(DbContext);
         var otherBank = scenario.AddWallet("ABSA", WalletTypeEnum.Bank, 200_000m);
         var account = scenario.BindBankAccount(otherBank);
+        account.AllowMissingRunningBalances = true;
         var mobile = scenario.AddWallet("Airtel", WalletTypeEnum.MobileMoney, 300_000m);
         scenario.AddApprovedOpening(withSettlement: true, additionalWallets: [otherBank, mobile]);
         var closing = scenario.AddSubmittedClosing();
         var clock = new BusinessClock(new BankingTestClock { Now = BankingScenario.Now.AddDays(1) });
         await scenario.UploadStatementAsync(scenario.Account, clock, BankingScenario.StatementCsv(scenario.Session.SessionDate, 1_000_000m));
-        await scenario.UploadStatementAsync(account, clock, BankingScenario.StatementCsv(scenario.Session.SessionDate, 200_000m));
+        await scenario.UploadStatementAsync(account, clock,
+            BankingScenario.StatementCsv(scenario.Session.SessionDate, 200_000m, includeBalances: false));
         ClosingReconciliationService Service(ApplicationDbContext db)
         {
             var access = new BankingAccessService(db, clock);
@@ -68,6 +70,9 @@ public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : Integ
         await using var verify = Fixture.CreateContext();
         Assert.Equal(1, await verify.ClosingReconciliationRuns.CountAsync());
         Assert.Equal(2, await verify.ClosingWalletResults.CountAsync());
+        var derived = await verify.DailyBankStatements.SingleAsync(s => s.BankAccountId == account.Id);
+        Assert.Equal(StatementBalanceSource.ApprovedOpening, derived.BalanceSource);
+        Assert.Equal(await verify.CashCounts.Where(c => c.IsOpening).Select(c => c.Id).SingleAsync(), derived.OpeningCountId);
         Assert.Equal(1, await verify.ClosingApprovalDecisions.CountAsync());
         Assert.Equal(CashCountStatus.Approved, (await verify.CashCounts.FindAsync(closing.Id))!.Status);
         Assert.Equal(1, await verify.CashCountAuditLogs.CountAsync(a => a.CashCountId == closing.Id && a.Action == CashCountAuditAction.Approved));
@@ -437,7 +442,9 @@ public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : Integ
             var migrations = db.Database.GetMigrations().ToList();
             var cutover = migrations.FindIndex(m => m.EndsWith("_ReplaceClosingReconciliation", StringComparison.Ordinal));
             await db.GetService<IMigrator>().MigrateAsync(migrations[cutover - 1]);
-            using var scenario = new BankingScenario(db);
+            await using var legacy = new BeforeDerivedBalancesContext(new DbContextOptionsBuilder<ApplicationDbContext>()
+                .UseNpgsql(connectionString.ConnectionString).Options);
+            using var scenario = new BankingScenario(legacy);
             scenario.AddApprovedOpening();
             var closing = scenario.AddSubmittedClosing();
             closing.Status = CashCountStatus.Approved;
@@ -447,8 +454,8 @@ public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : Integ
                 FileName = "archived-synthetic.csv", ContentType = "text/csv", Content = [1, 2, 3],
                 ContentHash = new string('a', 64), UploadedByUserId = scenario.Admin.Id, UploadedAt = BankingScenario.Now
             };
-            db.BankEvidenceFiles.Add(evidence);
-            await db.SaveChangesAsync();
+            legacy.BankEvidenceFiles.Add(evidence);
+            await legacy.SaveChangesAsync();
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO "BankStatementImports"
                 ("Id", "BankAccountId", "EvidenceFileId", "Status", "ProfileKey", "ProfileVersion", "Version", "Revision",
@@ -472,8 +479,8 @@ public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : Integ
                 RecordedByUserId = scenario.User.Id, OccurredAt = BankingScenario.Now,
                 OccurrenceDate = scenario.Session.SessionDate, RecordedAt = BankingScenario.Now
             };
-            db.CustomerMovements.Add(movement);
-            await db.SaveChangesAsync();
+            legacy.CustomerMovements.Add(movement);
+            await legacy.SaveChangesAsync();
             var originalSettlements = await db.SessionFloatSettlements.CountAsync();
             await db.Database.MigrateAsync();
             db.ChangeTracker.Clear();
@@ -498,6 +505,84 @@ public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : Integ
             }
             await Assert.ThrowsAsync<NotSupportedException>(() => db.GetService<IMigrator>().MigrateAsync(migrations[cutover - 1]));
             Assert.Equal(1, await db.BankStatementImports.CountAsync());
+            Assert.False(db.Database.HasPendingModelChanges());
+        }
+        finally
+        {
+            await using var drop = new NpgsqlCommand($"DROP DATABASE \"{databaseName}\" WITH (FORCE)", admin);
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
+    public async Task DerivedBalanceMigration_PreservesExistingStatementEvidenceAndProtectsNewProvenance()
+    {
+        var connectionString = new NpgsqlConnectionStringBuilder(Fixture.ConnectionString);
+        var databaseName = "agenti_derived_" + Guid.NewGuid().ToString("N");
+        await using var admin = new NpgsqlConnection(Fixture.ConnectionString);
+        await admin.OpenAsync();
+        await using (var create = new NpgsqlCommand($"CREATE DATABASE \"{databaseName}\"", admin))
+            await create.ExecuteNonQueryAsync();
+        connectionString.Database = databaseName;
+        try
+        {
+            var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseNpgsql(connectionString.ConnectionString).Options;
+            await using var db = new ApplicationDbContext(options);
+            var migrations = db.Database.GetMigrations().ToList();
+            var current = migrations.FindIndex(m => m.EndsWith("_AllowDerivedStatementBalances", StringComparison.Ordinal));
+            await db.GetService<IMigrator>().MigrateAsync(migrations[current - 1]);
+            await using var previous = new BeforeDerivedBalancesContext(options);
+            using var scenario = new BankingScenario(previous);
+            scenario.AddApprovedOpening();
+            var closing = scenario.AddSubmittedClosing();
+            var csv = BankingScenario.StatementCsv(scenario.Session.SessionDate, 1_000_000m);
+            var evidence = System.Text.Encoding.UTF8.GetBytes(csv);
+            var statement = new DailyBankStatement
+            {
+                BankAccountId = scenario.Account.Id, StatementDate = scenario.Session.SessionDate, Revision = 1,
+                Currency = "UGX", AccountIdentifier = scenario.Account.AccountIdentifier, FileName = "synthetic-v1.csv",
+                Content = evidence, ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(evidence)),
+                SchemaHash = new string('a', 64), SchemaVersion = 1,
+                OpeningBalance = 1_000_000m, ClosingBalance = 1_000_000m, TotalDebits = 1m, TotalCredits = 1m,
+                UploadedByUserId = scenario.Admin.Id, UploadedAt = BankingScenario.Now,
+                Rows =
+                [
+                    new() { Sequence = 1, TransactionDate = scenario.Session.SessionDate, Description = "Synthetic debit", Debit = 1m, RunningBalance = 999_999m },
+                    new() { Sequence = 2, TransactionDate = scenario.Session.SessionDate, Description = "Synthetic credit", Credit = 1m, RunningBalance = 1_000_000m }
+                ]
+            };
+            previous.DailyBankStatements.Add(statement);
+            await previous.SaveChangesAsync();
+
+            await db.Database.MigrateAsync();
+
+            var migrated = await db.DailyBankStatements.AsNoTracking().Include(s => s.Rows).SingleAsync();
+            Assert.Equal(StatementBalanceSource.BankReported, migrated.BalanceSource);
+            Assert.Null(migrated.OpeningCountId);
+            Assert.Equal(evidence, migrated.Content);
+            Assert.Equal(statement.ContentHash, migrated.ContentHash);
+            Assert.Equal(statement.SchemaHash, migrated.SchemaHash);
+            Assert.Equal(1, migrated.SchemaVersion);
+            Assert.Equal(2, migrated.Rows.Count);
+            var account = await db.BankAccounts.SingleAsync();
+            Assert.False(account.AllowMissingRunningBalances);
+            account.AllowMissingRunningBalances = true;
+            await db.SaveChangesAsync();
+            var clock = new BusinessClock(new BankingTestClock { Now = BankingScenario.Now.AddDays(1) });
+            var uploads = new DailyBankStatementService(db, new BankingAccessService(db, clock), clock,
+                new UniversalBankCsvStatementProfile(), Options.Create(new BankEvidenceOptions()));
+            using var content = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(
+                BankingScenario.StatementCsv(scenario.Session.SessionDate, 0m, includeBalances: false)));
+            var derived = await uploads.UploadAsync(scenario.Admin.Id,
+                new DailyStatementUpload(account.Id, scenario.Session.SessionDate, true, statement.Id,
+                    "New complete synthetic export without balances."), "synthetic-v2.csv", content);
+            Assert.Equal(StatementBalanceSource.ApprovedOpening, derived.BalanceSource);
+            Assert.NotNull(derived.OpeningCountId);
+            var error = await Assert.ThrowsAsync<PostgresException>(() =>
+                db.GetService<IMigrator>().MigrateAsync(migrations[current - 1]));
+            Assert.Contains("Cannot remove computed-balance provenance", error.MessageText);
+            Assert.Equal(2, await db.DailyBankStatements.CountAsync());
+            Assert.Equal(CashCountStatus.PendingApproval, (await db.CashCounts.FindAsync(closing.Id))!.Status);
             Assert.False(db.Database.HasPendingModelChanges());
         }
         finally

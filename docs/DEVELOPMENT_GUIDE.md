@@ -236,11 +236,16 @@ Add to `appsettings.json`:
 The banking workflow separates closing submission (one provisional internal settlement)
 from later administrator financial approval. Legacy sessions retain their original
 rules. Statement intake is a Web Admin workflow that uses one shipped, versioned
-universal CSV contract (`agenti-bank-statement-v1`); there is no per-bank parser
+universal CSV contract (`agenti-bank-statement-v2`); there is no per-bank parser
 verification or sample-fixture gate, and Admins cannot upload or edit a schema. A
 date-only CSV supports a transaction-date daily control and does not certify exact
 session cutoffs. A synthetic JSON profile exists only in the test assemblies so the
 browser journey can exercise the upload flow.
+
+Accounts default to requiring bank-supplied running balances. Admins may explicitly
+allow all-blank balances per account; such uploads require the same wallet's approved
+opening count and retain computed-balance provenance. Mixed balances are rejected.
+Fully supplied v1-format files remain compatible and retain bank-anchor checks.
 
 Use the .NET 10 SDK. PostgreSQL integration and browser tests start their own
 PostgreSQL 16 Testcontainers with generated credentials and random ports. They

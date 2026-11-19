@@ -1,6 +1,7 @@
 using System.Data;
 using System.Security.Cryptography;
 using EastSeat.Agenti.Shared.Domain.Entities;
+using EastSeat.Agenti.Shared.Domain.Enums;
 using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.EntityFrameworkCore;
@@ -35,7 +36,8 @@ public sealed class DailyBankStatementService(
             .OrderByDescending(s => s.Revision)
             .Select(s => new DailyBankStatementDto(s.Id, s.BankAccountId, s.StatementDate, s.Revision, s.FileName,
                 s.OpeningBalance, s.TotalDebits, s.TotalCredits, s.ClosingBalance, s.Rows.Count, s.UploadedAt,
-                db.ClosingWalletResults.Any(r => r.StatementId == s.Id), s.ReplacementReason))
+                db.ClosingWalletResults.Any(r => r.StatementId == s.Id), s.ReplacementReason,
+                s.BalanceSource, s.OpeningCountId))
             .ToListAsync(cancellationToken);
     }
 
@@ -43,7 +45,7 @@ public sealed class DailyBankStatementService(
         string userId, DailyStatementUpload request, string fileName, Stream content,
         CancellationToken cancellationToken = default)
     {
-        await access.RequireAccountAsync(userId, request.BankAccountId, adminOnly: true, cancellationToken);
+        var scope = await access.RequireAccountAsync(userId, request.BankAccountId, adminOnly: true, cancellationToken);
         if (!request.ConfirmAccountAndCompleteDay)
             throw new BankingRuleException("Confirm that the file belongs to this bank account and covers the complete selected day.");
         if (request.StatementDate == default || request.StatementDate > clock.Today)
@@ -88,13 +90,16 @@ public sealed class DailyBankStatementService(
                     request.ReplacementReason.Trim().Length is < 10 or > 2000))
                 throw new BankingRuleException("Replacing a statement requires a reason between 10 and 2,000 characters.");
 
+            var opening = account.AllowMissingRunningBalances
+                ? await FindApprovedOpeningAsync(scope, request.StatementDate, cancellationToken) : null;
             buffer.Position = 0;
             ParsedStatement parsed;
             try
             {
                 parsed = await parser.ParseAsync(buffer, UniversalBankCsvStatementProfile.CsvContentType,
                     new StatementAccountContext(account.AccountIdentifier, account.Currency, account.TimeZoneId,
-                        account.BalanceBasis, request.StatementDate, request.StatementDate), cancellationToken);
+                        account.BalanceBasis, request.StatementDate, request.StatementDate, opening?.Amount,
+                        account.AllowMissingRunningBalances), cancellationToken);
             }
             catch (StatementParsingException exception)
             {
@@ -120,6 +125,8 @@ public sealed class DailyBankStatementService(
                 Currency = account.Currency, AccountIdentifier = account.AccountIdentifier,
                 FileName = safeName, ContentHash = hash, Content = bytes,
                 SchemaHash = parser.SchemaHash, SchemaVersion = parser.Version,
+                BalanceSource = parsed.BalanceSource,
+                OpeningCountId = parsed.BalanceSource == StatementBalanceSource.ApprovedOpening ? opening?.CountId : null,
                 OpeningBalance = parsed.OpeningBalance, ClosingBalance = parsed.ClosingBalance,
                 TotalDebits = debits, TotalCredits = credits,
                 UploadedByUserId = userId, UploadedAt = clock.UtcNow,
@@ -139,7 +146,8 @@ public sealed class DailyBankStatementService(
             await transaction.CommitAsync(cancellationToken);
             return new DailyBankStatementDto(statement.Id, account.Id, statement.StatementDate, statement.Revision,
                 safeName, statement.OpeningBalance, debits, credits, statement.ClosingBalance,
-                statement.Rows.Count, statement.UploadedAt, false, statement.ReplacementReason);
+                statement.Rows.Count, statement.UploadedAt, false, statement.ReplacementReason,
+                statement.BalanceSource, statement.OpeningCountId);
         }
         catch
         {
@@ -147,5 +155,23 @@ public sealed class DailyBankStatementService(
             db.ChangeTracker.Clear();
             throw;
         }
+    }
+
+    private async Task<(long CountId, decimal Amount)?> FindApprovedOpeningAsync(
+        BankAccountScope account, DateOnly date, CancellationToken cancellationToken)
+    {
+        var openings = await db.CashCounts.AsNoTracking().Where(c => c.IsOpening &&
+            c.AgentId == account.AgentId && c.CountDate == date && c.Status == CashCountStatus.Approved &&
+            c.CashSession!.BranchId == account.BranchId && c.CashSession.SessionDate == date)
+            .Select(c => c.Id).Take(2).ToListAsync(cancellationToken);
+        if (openings.Count > 1)
+            throw new BankingRuleException("Multiple approved openings exist for this agent and statement date; investigate before uploading.");
+        if (openings.Count == 0)
+            return null;
+        var wallets = await CashCountWalletReader.ReadAsync(db, openings[0], cancellationToken);
+        var wallet = wallets.SingleOrDefault(w => w.Id == account.WalletId &&
+            w.Type == WalletTypeEnum.Bank && w.Currency == account.Currency &&
+            (!w.BankAccountId.HasValue || w.BankAccountId == account.Id));
+        return wallet == null ? null : (openings[0], wallet.Amount);
     }
 }

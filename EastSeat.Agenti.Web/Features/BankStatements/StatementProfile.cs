@@ -4,12 +4,14 @@ namespace EastSeat.Agenti.Web.Features.BankStatements;
 
 public sealed record StatementAccountContext(
     string AccountIdentifier, string Currency, string TimeZoneId, BankBalanceBasis BalanceBasis,
-    DateOnly? CoverageFromDate = null, DateOnly? CoverageToDate = null, decimal? OpeningBaseline = null);
+    DateOnly? CoverageFromDate = null, DateOnly? CoverageToDate = null, decimal? OpeningBaseline = null,
+    bool AllowMissingRunningBalances = false);
 
 public sealed record ParsedStatement(
     string AccountIdentifier, string Currency, BankBalanceBasis BalanceBasis,
     DateTimeOffset CoverageFrom, DateTimeOffset CoverageTo, decimal OpeningBalance, decimal ClosingBalance,
-    bool CompleteCoverage, IReadOnlyList<ParsedStatementEntry> Entries);
+    bool CompleteCoverage, IReadOnlyList<ParsedStatementEntry> Entries,
+    StatementBalanceSource BalanceSource = StatementBalanceSource.BankReported);
 
 public sealed record ParsedStatementEntry(
     string SourceLocation, string RawData, string? TransactionNumber, string? Reference,

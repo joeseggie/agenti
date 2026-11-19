@@ -1,6 +1,7 @@
 @page "/bank-statements"
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Forms
+@using EastSeat.Agenti.Shared.Domain.Enums
 @using EastSeat.Agenti.Shared.Services
 @using EastSeat.Agenti.Web.Features.BankStatements
 @inherits BankingPageBase
@@ -19,7 +20,8 @@
     <MudButton Href="/cashcount-approvals">Closing approvals</MudButton>
     <MudButton Href="/bank-accounts">Manage bank accounts</MudButton>
     <MudButton OnClick="ReloadAsync" Disabled="Busy">Refresh</MudButton>
-    <MudButton Href="/templates/agenti-bank-statement-v1.csv" Download="agenti-bank-statement-v1.csv">Download CSV template</MudButton>
+    <MudButton Href="/templates/agenti-bank-statement-v2.csv" Download="agenti-bank-statement-v2.csv">Download CSV template</MudButton>
+    <MudButton Href="/templates/agenti-bank-statement-v2-guide.txt" Download="agenti-bank-statement-v2-guide.txt">CSV column guide</MudButton>
     @if (Error != null)
     {
         <MudAlert Severity="Severity.Error" Class="my-3">@Error</MudAlert>
@@ -38,6 +40,16 @@
     <MudText Typo="Typo.body2">Bank wallet: @selected.WalletName</MudText>
     <MudText Typo="Typo.body2">Agent: @selected.AgentLabel</MudText>
     <MudLink Href="@($"/bank-accounts?accountId={selected.Id}")">Manage account</MudLink>
+    <MudAlert Severity="Severity.Info" Class="my-2">
+        @if (selected.AllowMissingRunningBalances)
+        {
+            <span>RunningBalance may be blank on every row. Upload requires this wallet's approved opening for the statement date; balances will be computed, not bank-verified. Fully supplied balances retain all bank-balance checks. Mixed blank/populated balances are rejected.</span>
+        }
+        else
+        {
+            <span>RunningBalance is required on every row. An Admin can allow all-blank balances in this account's configuration.</span>
+        }
+    </MudAlert>
     <MudPaper Class="pa-4 my-4" Outlined="true">
         <MudSelect T="long" Label="Bank account" Value="_accountId" ValueChanged="ChangeAccountAsync" Disabled="Busy">
             @foreach (var account in _accounts)
@@ -68,11 +80,24 @@
     <MudTable Items="_imports" Dense="true" Hover="true">
         <HeaderContent>
             <MudTh>Revision</MudTh><MudTh>File</MudTh><MudTh>Rows</MudTh>
-            <MudTh>Debits</MudTh><MudTh>Credits</MudTh><MudTh>Status</MudTh><MudTh>Replacement reason</MudTh>
+            <MudTh>Debits</MudTh><MudTh>Credits</MudTh><MudTh>Balance source</MudTh><MudTh>Status</MudTh><MudTh>Replacement reason</MudTh>
         </HeaderContent>
         <RowTemplate>
             <MudTd>@context.Revision</MudTd><MudTd><MudLink Href="@($"/closing-statement-evidence/{context.Id}")">@context.FileName</MudLink></MudTd><MudTd>@context.RowCount</MudTd>
             <MudTd>@context.TotalDebits.ToString("N2")</MudTd><MudTd>@context.TotalCredits.ToString("N2")</MudTd>
+            <MudTd DataLabel="Balance source">
+                <MudStack Spacing="0">
+                    @if (context.BalanceSource == StatementBalanceSource.ApprovedOpening)
+                    {
+                        <MudText Typo="Typo.body2">Computed from approved opening #@context.OpeningCountId</MudText>
+                        <MudText Typo="Typo.caption">No bank-reported balances</MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2">Bank-reported balances</MudText>
+                    }
+                </MudStack>
+            </MudTd>
             <MudTd>@(context.IsUsed ? "Used - locked" : context.Id == _imports[0].Id ? "Ready" : "Superseded")</MudTd>
             <MudTd>@context.ReplacementReason</MudTd>
         </RowTemplate>
@@ -171,6 +196,8 @@
             _file.Name, stream);
         ResetSelection();
         _accepted = $"Statement accepted for {saved.StatementDate:yyyy-MM-dd}: {saved.RowCount} rows, revision {saved.Revision}.";
+        if (saved.BalanceSource == StatementBalanceSource.ApprovedOpening)
+            _accepted += $" Balances computed from approved opening #{saved.OpeningCountId}; no bank-reported balances were supplied.";
         await LoadImportsAsync();
     });
 }
