@@ -6,17 +6,25 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IJSRuntime JS
 @inject NavigationManager NavigationManager
-@implements IDisposable
+@inject ILogger<MainLayout> Logger
+@inject ISnackbar Snackbar
+@implements IAsyncDisposable
 
-<MudThemeProvider @ref="_themeProvider" Theme="@_currentTheme" IsDarkMode="@_isDarkMode" />
+<MudThemeProvider Theme="@_currentTheme" IsDarkMode="@_isDarkMode" ObserveSystemThemeChange="false" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
 
+<a class="skip-link" href="#main-content" @onclick="SkipToMainContentAsync" @onclick:preventDefault>Skip to main content</a>
+
 <MudLayout>
     <MudAppBar Elevation="0" Color="Color.Default" Class="app-topbar">
-        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
-            OnClick="@ToggleDrawer" aria-label="Toggle navigation" />
+        <AuthorizeView>
+            <Authorized>
+                <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+                    OnClick="@ToggleDrawer" aria-label="Toggle navigation" />
+            </Authorized>
+        </AuthorizeView>
         <MudIcon Icon="@Icons.Material.Filled.AccountBalance" Color="Color.Secondary" Size="Size.Medium" />
         <MudStack Spacing="0" Class="ml-3">
             <MudText Typo="Typo.h6" Class="app-brand-title">Agenti</MudText>
@@ -27,23 +35,17 @@
             <Authorized>
                 <MudBadge Content="@_unreadCount" Visible="@(_unreadCount > 0)" Color="Color.Error" Overlap="true">
                     <MudIconButton Icon="@Icons.Material.Filled.Notifications"
-                        Color="Color.Inherit"
+                        Color="@(_notificationRefreshFailed ? Color.Warning : Color.Inherit)"
                         OnClick="@(() => NavigationManager.NavigateTo("/notifications"))"
-                        Title="Notifications" />
+                        Title="@NotificationLabel" aria-label="@NotificationLabel" />
                 </MudBadge>
 
                 <form id="logout-form" action="Account/Logout" method="post" style="display:none">
                     <AntiforgeryToken />
                     <input type="hidden" name="ReturnUrl" value="/" />
                 </form>
-                <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
-                    <ActivatorContent>
-                        <MudIconButton Color="Color.Inherit" Title="User menu" aria-label="User menu">
-                            <MudAvatar Size="Size.Small" Color="Color.Secondary">
-                                @GetInitials(context.User.Identity?.Name)
-                            </MudAvatar>
-                        </MudIconButton>
-                    </ActivatorContent>
+                <MudMenu Icon="@Icons.Material.Filled.AccountCircle" AriaLabel="User menu" Color="Color.Inherit"
+                    AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
                     <ChildContent>
                         <MudMenuItem Disabled="true">
                             <MudText Typo="Typo.body2"><strong>@context.User.Identity?.Name</strong></MudText>
@@ -66,89 +68,102 @@
         </AuthorizeView>
     </MudAppBar>
 
-    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="0" Class="app-drawer"
-        Variant="DrawerVariant.Responsive" Breakpoint="Breakpoint.Md">
-        <NavMenu />
-    </MudDrawer>
+    <AuthorizeView>
+        <Authorized>
+            <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="0" Class="app-drawer"
+                Variant="DrawerVariant.Responsive" Breakpoint="Breakpoint.Md">
+                <NavMenu />
+            </MudDrawer>
+        </Authorized>
+    </AuthorizeView>
 
     <MudMainContent Class="app-main-content pt-16 px-4">
-        @Body
+        <main id="main-content" tabindex="-1" @ref="_mainContent">
+            @Body
+        </main>
     </MudMainContent>
 </MudLayout>
 
 <div id="blazor-error-ui" data-nosnippet>
     An unhandled error has occurred.
     <a href="." class="reload">Reload</a>
-    <span class="dismiss">🗙</span>
+    <button type="button" class="dismiss" aria-label="Dismiss error message">X</button>
 </div>
 
 @code {
     private bool _drawerOpen = true;
-    private MudThemeProvider? _themeProvider;
+    private ElementReference _mainContent;
+    private DotNetObjectReference<MainLayout>? _themeReference;
+    private IJSObjectReference? _themeWatcher;
+    private Task? _themeInitializationTask;
     private bool _isDarkMode = false;
     private MudTheme _currentTheme = AppThemes.LightTheme;
-    private DotNetObjectReference<MainLayout>? _dotNetHelper;
+    private string _themePreference = ThemePreferenceConstants.System;
     private int _unreadCount;
-    private CancellationTokenSource? _notificationCts;
+    private bool _notificationRefreshFailed;
+    private readonly CancellationTokenSource _notificationCts = new();
+    private Task? _notificationTask;
+    private bool _disposed;
+
+    private string NotificationLabel => _notificationRefreshFailed
+        ? "Notifications (unread count temporarily unavailable)"
+        : _unreadCount == 0 ? "Notifications" : $"Notifications ({_unreadCount} unread)";
 
     protected override async Task OnInitializedAsync()
     {
-        // Auto-close drawer on navigation (for mobile overlay mode)
         NavigationManager.LocationChanged += OnLocationChanged;
-
-        // Detect system theme
-        string? systemPreference = null;
-        try
-        {
-            systemPreference = await JS.InvokeAsync<string>("themeHelpers.getSystemThemePreference");
-        }
-        catch
-        {
-            systemPreference = "light";
-        }
-
-        // Initialize theme service
-        await ThemeService.InitializeAsync(systemPreference);
+        await ThemeService.InitializeAsync(null);
+        _themePreference = await ThemeService.GetUserPreferenceAsync();
         ThemeService.ThemeChanged += OnThemeChanged;
-
-        // Set initial theme
         _isDarkMode = ThemeService.IsDarkMode;
         _currentTheme = _isDarkMode ? AppThemes.DarkTheme : AppThemes.LightTheme;
-
-        // Watch system theme changes
-        try
-        {
-            _dotNetHelper = DotNetObjectReference.Create(this);
-            await JS.InvokeVoidAsync("themeHelpers.watchSystemThemePreference", _dotNetHelper);
-        }
-        catch
-        {
-            // If JS interop fails, continue without system theme watching
-        }
-
-        // Start periodic notification count refresh
-        _ = RefreshNotificationCountPeriodically();
     }
 
-    private async Task RefreshNotificationCountPeriodically()
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        _notificationCts = new CancellationTokenSource();
-        var token = _notificationCts.Token;
+        if (!firstRender)
+            return;
 
-        // Initial load
-        await RefreshUnreadCountAsync();
+        _notificationTask = RefreshNotificationCountPeriodically(_notificationCts.Token);
+        _themeInitializationTask = InitializeBrowserThemeAsync();
+        await _themeInitializationTask;
+    }
 
+    private async Task InitializeBrowserThemeAsync()
+    {
+        try
+        {
+            var systemPreference = await JS.InvokeAsync<string>("themeHelpers.getSystemThemePreference");
+            if (_disposed)
+                return;
+
+            ThemeService.UpdateSystemPreference(systemPreference);
+            _themeReference = DotNetObjectReference.Create(this);
+            _themeWatcher = await JS.InvokeAsync<IJSObjectReference>(
+                "themeHelpers.watchSystemThemePreference", _themeReference);
+        }
+        catch (JSDisconnectedException)
+        {
+            Logger.LogDebug("The circuit disconnected before system theme detection completed.");
+        }
+        catch (JSException exception)
+        {
+            Logger.LogWarning("System theme detection failed with {ExceptionType}.", exception.GetType().Name);
+            Snackbar.Add("System theme detection is unavailable. You can still choose a theme from the user menu.", Severity.Warning);
+        }
+    }
+
+    private async Task RefreshNotificationCountPeriodically(CancellationToken token)
+    {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         try
         {
+            await RefreshUnreadCountAsync();
             while (await timer.WaitForNextTickAsync(token))
-            {
                 await RefreshUnreadCountAsync();
-            }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
-            // Expected on dispose
         }
     }
 
@@ -160,13 +175,26 @@
             var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             if (userId is not null)
             {
-                _unreadCount = await NotificationService.GetUnreadCountAsync(userId);
-                await InvokeAsync(StateHasChanged);
+                var unreadCount = await NotificationService.GetUnreadCountAsync(userId);
+                if (!_disposed && (unreadCount != _unreadCount || _notificationRefreshFailed))
+                {
+                    _unreadCount = unreadCount;
+                    _notificationRefreshFailed = false;
+                    await InvokeAsync(StateHasChanged);
+                }
             }
         }
-        catch
+        catch (Exception exception)
         {
-            // Silently ignore polling errors
+            if (_disposed)
+                return;
+
+            Logger.LogWarning("Notification refresh failed with {ExceptionType}.", exception.GetType().Name);
+            if (!_notificationRefreshFailed)
+            {
+                _notificationRefreshFailed = true;
+                await InvokeAsync(StateHasChanged);
+            }
         }
     }
 
@@ -174,6 +202,8 @@
     {
         await JS.InvokeVoidAsync("submitForm", "logout-form");
     }
+
+    private async Task SkipToMainContentAsync() => await _mainContent.FocusAsync();
 
     private void ToggleDrawer()
     {
@@ -196,7 +226,10 @@
             ThemePreferenceConstants.Dark => ThemePreferenceConstants.System,
             _ => ThemePreferenceConstants.Light
         };
-        await ThemeService.SetUserPreferenceAsync(newPref);
+        if (await ThemeService.SetUserPreferenceAsync(newPref))
+            _themePreference = newPref;
+        else
+            Snackbar.Add("Your theme preference could not be saved. Please try again.", Severity.Error);
     }
 
     private void OnThemeChanged(object? sender, EventArgs e)
@@ -207,32 +240,42 @@
     }
 
     [JSInvokable]
-    public async Task OnSystemThemeChanged(string newTheme)
+    public Task OnSystemThemeChanged(string systemPreference) => InvokeAsync(() =>
     {
-        var userPref = await ThemeService.GetUserPreferenceAsync();
-        if (userPref == ThemePreferenceConstants.System)
-        {
-            await ThemeService.InitializeAsync(newTheme);
-        }
-    }
+        if (!_disposed)
+            ThemeService.UpdateSystemPreference(systemPreference);
+    });
 
-    private static string GetInitials(string? name)
+    private string GetThemeLabel() => _themePreference switch
     {
-        if (string.IsNullOrWhiteSpace(name)) return "?";
-        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length >= 2
-            ? $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant()
-            : name[..1].ToUpperInvariant();
-    }
+        ThemePreferenceConstants.Light => "Use dark theme",
+        ThemePreferenceConstants.Dark => "Use system theme",
+        _ => "Use light theme"
+    };
 
-    private string GetThemeLabel() => _isDarkMode ? "Light Mode" : "Dark Mode";
-
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
+        _disposed = true;
         NavigationManager.LocationChanged -= OnLocationChanged;
         ThemeService.ThemeChanged -= OnThemeChanged;
-        _notificationCts?.Cancel();
-        _notificationCts?.Dispose();
-        _dotNetHelper?.Dispose();
+        await _notificationCts.CancelAsync();
+        if (_themeInitializationTask is not null)
+            await _themeInitializationTask;
+        if (_themeWatcher is not null)
+        {
+            try
+            {
+                await _themeWatcher.InvokeVoidAsync("dispose");
+                await _themeWatcher.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                Logger.LogDebug("The circuit disconnected before theme observer cleanup.");
+            }
+        }
+        _themeReference?.Dispose();
+        if (_notificationTask is not null)
+            await _notificationTask;
+        _notificationCts.Dispose();
     }
 }

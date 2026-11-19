@@ -7,34 +7,50 @@
 @inject NavigationManager NavigationManager
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
+@inject PersistentComponentState ApplicationState
+@inject ILogger<Agents> Logger
+@implements IDisposable
 
 <PageTitle>Agents - Agenti</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
-    <MudGrid>
-        <MudItem xs="12" sm="8">
-            <MudText Typo="Typo.h4" Class="mb-2">Agents</MudText>
-            <MudText Typo="Typo.body2" Color="Color.Secondary">
+    <div class="agents-header">
+        <div>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="mb-2">Agents</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Default">
                 Manage agents and their wallet configurations
             </MudText>
-        </MudItem>
-        <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
+        </div>
+        <div class="agents-header-actions">
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Refresh"
+                OnClick="LoadAgentsAsync" Disabled="@ActionsDisabled">
+                @(_isLoading ? "Refreshing..." : "Refresh")
+            </MudButton>
             <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                OnClick="OpenCreateDialog">
+                OnClick="OpenCreateDialog" Disabled="@ActionsDisabled">
                 Add Agent
             </MudButton>
-        </MudItem>
-    </MudGrid>
+        </div>
+    </div>
 
-    @if (_isLoading)
+    @if (_listError is not null)
     {
-        <MudGrid Class="mt-4">
-            <MudItem xs="12" Class="d-flex justify-center">
-                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
-            </MudItem>
-        </MudGrid>
+        <MudAlert Severity="Severity.Error" Class="mt-4">@_listError</MudAlert>
     }
-    else if (_agents.Count == 0)
+    @if (!_showAgentDialog && _isLoadingUsers)
+    {
+        <MudAlert Severity="Severity.Info" Class="mt-4">
+            Agent data is still loading. Actions will be available when that request finishes.
+        </MudAlert>
+    }
+    @if (_isLoading && !_hasLoaded)
+    {
+        <div class="d-flex justify-center align-center gap-3 mt-4" role="status">
+            <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+            <MudText>Loading agents...</MudText>
+        </div>
+    }
+    else if (_hasLoaded && _agents.Count == 0)
     {
         <MudPaper Class="mt-8 pa-8 d-flex flex-column align-center" Elevation="0">
             <MudIcon Icon="@Icons.Material.Filled.People" Size="Size.Large" Color="Color.Default" Style="font-size: 4rem; opacity: 0.4;" />
@@ -43,17 +59,38 @@
                 Create your first agent to get started.
             </MudText>
             <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                OnClick="OpenCreateDialog" Class="mt-4">
+                OnClick="OpenCreateDialog" Disabled="@ActionsDisabled" Class="mt-4">
                 Add Agent
             </MudButton>
         </MudPaper>
     }
-    else
+    else if (_hasLoaded)
     {
+        <div class="agents-filters">
+            <div>
+                <MudTextField T="string" @bind-Value="_search" @bind-Value:after="ApplyFilters"
+                    Label="Search agents" Placeholder="Name, code, email or phone"
+                    Variant="Variant.Outlined" Immediate="true" DebounceInterval="250"
+                    Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+            </div>
+            <div>
+                <MudSelect T="bool?" @bind-Value="_activeFilter" @bind-Value:after="ApplyFilters"
+                    Label="Agent status" Variant="Variant.Outlined" AnchorOrigin="Origin.BottomCenter">
+                    <MudSelectItem T="bool?" Value="@((bool?)null)">All agents</MudSelectItem>
+                    <MudSelectItem T="bool?" Value="@((bool?)true)">Active</MudSelectItem>
+                    <MudSelectItem T="bool?" Value="@((bool?)false)">Inactive</MudSelectItem>
+                </MudSelect>
+            </div>
+            <MudButton OnClick="ClearFilters" Disabled="@(!HasFilters)" Color="Color.Primary">Clear filters</MudButton>
+        </div>
+        <MudText Typo="Typo.body2" Class="mt-2">
+            @_filteredAgents.Count of @_agents.Count agents. Wallet counts and balances include active wallets only.
+        </MudText>
         <MudGrid Class="mt-4">
             <MudItem xs="12">
-                <MudTable Items="@_agents" Hover="true" Striped="true" Dense="true" Elevation="2"
-                    Breakpoint="Breakpoint.Md">
+                <MudTable Items="@_filteredAgents" Hover="true" Striped="true" Dense="true" Elevation="2"
+                    Breakpoint="Breakpoint.Md" Class="agents-list"
+                    @bind-CurrentPage="_agentPage" @bind-RowsPerPage="_agentsPerPage" aria-label="Agents">
                     <HeaderContent>
                         <MudTh>Code</MudTh>
                         <MudTh>Name</MudTh>
@@ -69,14 +106,16 @@
                         </MudTd>
                         <MudTd DataLabel="Name">@context.FullName</MudTd>
                         <MudTd DataLabel="Contact">
-                            @if (!string.IsNullOrEmpty(context.Email))
-                            {
-                                <MudText Typo="Typo.caption">@context.Email</MudText>
-                            }
-                            @if (!string.IsNullOrEmpty(context.PhoneNumber))
-                            {
-                                <MudText Typo="Typo.caption">@context.PhoneNumber</MudText>
-                            }
+                            <div class="agent-contact">
+                                @if (!string.IsNullOrEmpty(context.Email))
+                                {
+                                    <MudText Typo="Typo.caption" HtmlTag="p">@context.Email</MudText>
+                                }
+                                @if (!string.IsNullOrEmpty(context.PhoneNumber))
+                                {
+                                    <MudText Typo="Typo.caption" HtmlTag="p">@context.PhoneNumber</MudText>
+                                }
+                            </div>
                         </MudTd>
                         <MudTd DataLabel="Wallets" Style="text-align: center;">
                             <MudChip T="string" Size="Size.Small" Color="Color.Info">
@@ -98,21 +137,27 @@
                             <MudHidden Breakpoint="Breakpoint.SmAndDown">
                                 <MudButtonGroup Size="Size.Small" Variant="Variant.Text">
                                     <MudIconButton Icon="@Icons.Material.Filled.Visibility" Color="Color.Primary"
-                                        OnClick="@(() => ViewAgent(context.Id))" Title="View Details" />
+                                        OnClick="@(() => ViewAgent(context.Id))" Title="View Details"
+                                        aria-label="@($"View {context.FullName}")" Disabled="@ActionsDisabled" />
                                     <MudIconButton Icon="@Icons.Material.Filled.Wallet" Color="Color.Info"
-                                        OnClick="@(() => OpenWalletDialog(context))" Title="Manage Wallets" />
+                                        OnClick="@(() => OpenWalletDialog(context))" Title="Manage Wallets"
+                                        aria-label="@($"Manage wallets for {context.FullName}")" Disabled="@ActionsDisabled" />
                                     <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Default"
-                                        OnClick="@(() => OpenEditDialog(context))" Title="Edit" />
+                                        OnClick="@(() => OpenEditDialog(context))" Title="Edit"
+                                        aria-label="@($"Edit {context.FullName}")" Disabled="@ActionsDisabled" />
                                     <MudIconButton
                                         Icon="@(context.IsActive? Icons.Material.Filled.Block : Icons.Material.Filled.CheckCircle)"
                                         Color="@(context.IsActive? Color.Warning: Color.Success)"
                                         OnClick="@(() => ToggleStatus(context))"
-                                        Title="@(context.IsActive ? "Deactivate" : "Activate")" />
+                                        Title="@(context.IsActive ? "Deactivate" : "Activate")"
+                                        aria-label="@($"{(context.IsActive ? "Deactivate" : "Activate")} {context.FullName}")"
+                                        Disabled="@ActionsDisabled" />
                                 </MudButtonGroup>
                             </MudHidden>
                             @* Mobile: overflow menu *@
                             <MudHidden Breakpoint="Breakpoint.MdAndUp">
                                 <MudMenu Icon="@Icons.Material.Filled.MoreVert" Size="Size.Small"
+                                    AriaLabel="@($"Actions for {context.FullName}")" Disabled="@ActionsDisabled"
                                     AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
                                     <MudMenuItem Icon="@Icons.Material.Filled.Visibility"
                                         OnClick="@(() => ViewAgent(context.Id))">View</MudMenuItem>
@@ -129,6 +174,12 @@
                             </MudHidden>
                         </MudTd>
                     </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText Class="pa-4" role="status">No agents match these filters. Clear filters to see all agents.</MudText>
+                    </NoRecordsContent>
+                    <PagerContent>
+                        <MudTablePager PageSizeOptions="@(new[] { 10, 25, 50 })" />
+                    </PagerContent>
                 </MudTable>
             </MudItem>
         </MudGrid>
@@ -136,24 +187,37 @@
 </MudContainer>
 
 <!-- Agent Form Dialog -->
-<MudDialog @bind-Visible="_showAgentDialog" Options="@(new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true })">
+<MudDialog @bind-Visible="_showAgentDialog" Options="@AgentDialogOptions"
+    DefaultFocus="@(_agentFormError is null ? DefaultFocus.Element : DefaultFocus.None)">
     <TitleContent>
-        <MudText Typo="Typo.h6">@(_agentForm.Id.HasValue ? "Edit Agent" : "Add Agent")</MudText>
+        <MudText Typo="Typo.h6" HtmlTag="h2">@(_agentForm.Id.HasValue ? "Edit Agent" : "Add Agent")</MudText>
     </TitleContent>
     <DialogContent>
         @if (_isLoadingUsers)
         {
-            <div class="d-flex justify-center pa-4">
+            <div class="d-flex justify-center align-center gap-3 pa-4" role="status">
                 <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+                <MudText>Loading agent data...</MudText>
             </div>
         }
-        else
+        @if (_agentFormError is not null)
+        {
+            <AgentFormError Message="@_agentFormError" @key="_agentErrorVersion">
+                @if (!_agentFormLoaded && !_isLoadingUsers)
+                {
+                    <MudButton OnClick="LoadAgentFormAsync" Color="Color.Primary">Retry loading</MudButton>
+                }
+            </AgentFormError>
+        }
+        @if (_agentFormLoaded)
         {
             <MudGrid>
                 @if (!_agentForm.Id.HasValue)
                 {
                     <MudItem xs="12">
                         <MudSelect T="string" @bind-Value="_agentForm.UserId" Label="Select User" Variant="Variant.Outlined"
+                            @bind-Value:after="ClearAgentValidationError"
+                            Disabled="@(_isSaving || _saveUnconfirmed)"
                             Required="true" RequiredError="User is required" AnchorOrigin="Origin.BottomCenter">
                             @if (_availableUsers.Count == 0)
                             {
@@ -181,14 +245,17 @@
                             if (selectedUser != null)
                             {
                                 <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mt-2">
-                                    <MudText Typo="Typo.caption"><strong>Name:</strong> @selectedUser.FullName</MudText>
-                                    <MudText Typo="Typo.caption"><strong>Email:</strong> @selectedUser.Email</MudText>
+                                    <MudText Typo="Typo.caption" HtmlTag="p"><strong>Name:</strong> @selectedUser.FullName</MudText>
+                                    @if (!string.IsNullOrEmpty(selectedUser.Email))
+                                    {
+                                        <MudText Typo="Typo.caption" HtmlTag="p"><strong>Email:</strong> @selectedUser.Email</MudText>
+                                    }
                                     @if (!string.IsNullOrEmpty(selectedUser.PhoneNumber))
                                     {
-                                        <MudText Typo="Typo.caption"><strong>Phone:</strong> @selectedUser.PhoneNumber</MudText>
+                                        <MudText Typo="Typo.caption" HtmlTag="p"><strong>Phone:</strong> @selectedUser.PhoneNumber</MudText>
                                     }
-                                    <MudText Typo="Typo.caption"><strong>Agent Code:</strong> @GenerateCodePreview(selectedUser)
-                                        (auto-generated)</MudText>
+                                    <MudText Typo="Typo.caption" HtmlTag="p"><strong>Agent Code:</strong> @GenerateCodePreview(selectedUser)
+                                        (preview; final code is assigned on save)</MudText>
                                 </MudAlert>
                             }
                         }
@@ -204,11 +271,13 @@
                     </MudItem>
                     <MudItem xs="12" sm="6">
                         <MudTextField @bind-Value="_agentForm.Code" Label="Agent Code" Variant="Variant.Outlined" Required="true"
-                            RequiredError="Code is required" />
+                            @bind-Value:after="ClearAgentValidationError"
+                            RequiredError="Code is required" Disabled="@(_isSaving || _saveUnconfirmed)" />
                     </MudItem>
                 }
                 <MudItem xs="12" sm="6">
                     <MudSelect T="long?" @bind-Value="_agentForm.BranchId" Label="Branch" Variant="Variant.Outlined"
+                        Disabled="@(_isSaving || _saveUnconfirmed)"
                         AnchorOrigin="Origin.BottomCenter">
                         <MudSelectItem T="long?" Value="@(null as long?)">-- Select Branch --</MudSelectItem>
                         @foreach (var branch in _branches)
@@ -218,20 +287,26 @@
                     </MudSelect>
                 </MudItem>
                 <MudItem xs="12" sm="6">
-                    <MudSwitch @bind-Value="_agentForm.IsActive" Label="Active" Color="Color.Success" />
+                    <MudSwitch @bind-Value="_agentForm.IsActive" Label="Active" Color="Color.Success" Disabled="@(_isSaving || _saveUnconfirmed)" />
                 </MudItem>
             </MudGrid>
+            @if (!_saveUnconfirmed)
+            {
+                <MudText Typo="Typo.caption" Class="mt-4">Cancel discards unsaved changes.</MudText>
+            }
         }
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="CloseAgentDialog" Color="Color.Default">Cancel</MudButton>
+        <MudButton OnClick="CloseAgentDialog" Color="Color.Default" Disabled="@_isSaving">
+            @(_saveUnconfirmed ? "Close" : "Cancel")
+        </MudButton>
         <MudButton OnClick="SaveAgent" Color="Color.Primary" Variant="Variant.Filled"
-            Disabled="@(_isSaving || (!_agentForm.Id.HasValue && _availableUsers.Count == 0))">
+            Disabled="@(_isSaving || _isLoadingUsers || !_agentFormLoaded || _saveUnconfirmed || (!_agentForm.Id.HasValue && _availableUsers.Count == 0))">
             @if (_isSaving)
             {
                 <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
             }
-            Save
+            @(_isSaving ? "Saving..." : "Save")
         </MudButton>
     </DialogActions>
 </MudDialog>
@@ -347,13 +422,33 @@
 
 @code {
     private List<AgentListItemDto> _agents = [];
+    private IReadOnlyList<AgentListItemDto> _filteredAgents = [];
+    private string? _search;
+    private bool? _activeFilter;
+    private int _agentPage;
+    private int _agentsPerPage = 10;
+    private bool _hasLoaded;
+    private string? _listError;
+    private PersistingComponentStateSubscription _persistingSubscription;
     private List<AvailableUserDto> _availableUsers = [];
     private List<BranchDto> _branches = [];
-    private bool _isLoading = true;
+    private bool _isLoading;
     private bool _isLoadingUsers = false;
     private bool _isSaving = false;
     private bool _showAgentDialog = false;
     private AgentFormModel _agentForm = new();
+    private bool _agentFormLoaded;
+    private string? _agentFormError;
+    private bool _saveUnconfirmed;
+    private int _agentDialogVersion;
+    private int _agentErrorVersion;
+    private static readonly DialogOptions AgentDialogOptions = new()
+    {
+        MaxWidth = MaxWidth.Small, FullWidth = true, BackdropClick = false, CloseOnEscapeKey = false
+    };
+
+    private bool ActionsDisabled => !RendererInfo.IsInteractive || _isLoading || _isLoadingUsers || _isSaving;
+    private bool HasFilters => !string.IsNullOrWhiteSpace(_search) || _activeFilter.HasValue;
 
     // Wallet dialog state
     private bool _showWalletDialog = false;
@@ -366,23 +461,77 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadAgentsAsync();
+        if (ApplicationState.TryTakeFromJson<List<AgentListItemDto>>("agents-list", out var restored)
+            && restored is not null)
+        {
+            _agents = restored;
+            _hasLoaded = true;
+            UpdateFilteredAgents();
+        }
+        else
+            await LoadAgentsAsync();
+
+        _persistingSubscription = ApplicationState.RegisterOnPersisting(PersistAgents, InteractiveServer);
+    }
+
+    private Task PersistAgents()
+    {
+        if (_hasLoaded && _listError is null)
+            ApplicationState.PersistAsJson("agents-list", _agents);
+        return Task.CompletedTask;
     }
 
     private async Task LoadAgentsAsync()
     {
+        if (_isLoading || _isLoadingUsers)
+            return;
+
         _isLoading = true;
-        StateHasChanged();
+        _listError = null;
 
         try
         {
             _agents = await AgentService.GetAgentsAsync();
+            _hasLoaded = true;
+            UpdateFilteredAgents();
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError("Agent list loading failed with {ExceptionType}.", exception.GetType().Name);
+            _listError = _hasLoaded
+                ? "Agents could not be refreshed. Previously loaded information is still shown. Select Refresh to try again."
+                : "Agents could not be loaded. Select Refresh to try again.";
         }
         finally
         {
             _isLoading = false;
-            StateHasChanged();
         }
+    }
+
+    private void ApplyFilters()
+    {
+        _agentPage = 0;
+        UpdateFilteredAgents();
+    }
+
+    private void UpdateFilteredAgents()
+    {
+        var search = _search?.Trim();
+        _filteredAgents = _agents.Where(agent =>
+            (!_activeFilter.HasValue || agent.IsActive == _activeFilter.Value)
+            && (string.IsNullOrEmpty(search)
+                || agent.FullName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                || agent.Code.Contains(search, StringComparison.OrdinalIgnoreCase)
+                || agent.Email?.Contains(search, StringComparison.OrdinalIgnoreCase) == true
+                || agent.PhoneNumber?.Contains(search, StringComparison.OrdinalIgnoreCase) == true)).ToArray();
+        _agentPage = Math.Min(_agentPage, Math.Max(0, (_filteredAgents.Count - 1) / _agentsPerPage));
+    }
+
+    private void ClearFilters()
+    {
+        _search = string.Empty;
+        _activeFilter = null;
+        ApplyFilters();
     }
 
     private void ViewAgent(long agentId)
@@ -390,90 +539,131 @@
         NavigationManager.NavigateTo($"/agents/{agentId}");
     }
 
-    private async Task OpenCreateDialog()
-    {
-        _agentForm = new AgentFormModel { IsActive = true };
-        _showAgentDialog = true;
-        _isLoadingUsers = true;
-        StateHasChanged();
+    private Task OpenCreateDialog() => OpenAgentDialog(null);
 
+    private Task OpenEditDialog(AgentListItemDto agent) => OpenAgentDialog(agent.Id);
+
+    private async Task OpenAgentDialog(long? agentId)
+    {
+        if (ActionsDisabled)
+            return;
+
+        _agentForm = new AgentFormModel { Id = agentId, IsActive = true };
+        _agentFormLoaded = false;
+        _saveUnconfirmed = false;
+        _agentFormError = null;
+        _showAgentDialog = true;
+        await LoadAgentFormAsync();
+    }
+
+    private async Task LoadAgentFormAsync()
+    {
+        if (_isLoadingUsers || _isSaving || !_showAgentDialog)
+            return;
+
+        var version = ++_agentDialogVersion;
+        _isLoadingUsers = true;
+        _agentFormLoaded = false;
+        _agentFormError = null;
         try
         {
-            var users = await AgentService.GetAvailableUsersAsync();
-            var branches = await AgentService.GetBranchesAsync();
-            _availableUsers = users;
-            _branches = branches;
+            if (_agentForm.Id is { } agentId)
+            {
+                var agentDetail = await AgentService.GetAgentAsync(agentId);
+                if (version != _agentDialogVersion)
+                    return;
+                if (agentDetail is null)
+                {
+                    SetAgentFormError("This agent is no longer available. Cancel and refresh the agent list.");
+                    return;
+                }
+                var branches = await AgentService.GetBranchesAsync();
+                if (version != _agentDialogVersion)
+                    return;
+                _agentForm = new AgentFormModel
+                {
+                    Id = agentDetail.Id,
+                    Code = agentDetail.Code,
+                    BranchId = agentDetail.BranchId,
+                    IsActive = agentDetail.IsActive
+                };
+                _branches = branches;
+                _availableUsers = [];
+            }
+            else
+            {
+                var users = await AgentService.GetAvailableUsersAsync();
+                if (version != _agentDialogVersion)
+                    return;
+                var branches = await AgentService.GetBranchesAsync();
+                if (version != _agentDialogVersion)
+                    return;
+                _availableUsers = users;
+                _branches = branches;
+            }
+            _agentFormLoaded = true;
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError("Agent form loading failed with {ExceptionType}.", exception.GetType().Name);
+            if (version == _agentDialogVersion)
+                SetAgentFormError("Agent data could not be loaded. Retry loading or cancel.");
         }
         finally
         {
             _isLoadingUsers = false;
-            StateHasChanged();
-        }
-    }
-
-    private async Task OpenEditDialog(AgentListItemDto agent)
-    {
-        _showAgentDialog = true;
-
-        try
-        {
-            // Load agent details including BranchId
-            var agentDetail = await AgentService.GetAgentAsync(agent.Id);
-            if (agentDetail != null)
-            {
-                _agentForm = new AgentFormModel
-                {
-                    Id = agent.Id,
-                    Code = agent.Code,
-                    BranchId = agentDetail.BranchId,
-                    IsActive = agent.IsActive
-                };
-            }
-            else
-            {
-                _agentForm = new AgentFormModel
-                {
-                    Id = agent.Id,
-                    Code = agent.Code,
-                    IsActive = agent.IsActive
-                };
-            }
-
-            var branches = await AgentService.GetBranchesAsync();
-            _branches = branches;
-            _availableUsers = []; // Not needed for edit
-        }
-        catch (Exception ex)
-        {
-            Snackbar.Add($"Failed to load agent details: {ex.Message}", Severity.Error);
         }
     }
 
     private void CloseAgentDialog()
     {
+        if (!_isSaving)
+            ResetAgentDialog();
+    }
+
+    private void ResetAgentDialog()
+    {
+        _agentDialogVersion++;
         _showAgentDialog = false;
+        _agentFormLoaded = false;
+        _agentFormError = null;
         _agentForm = new();
         _availableUsers = [];
     }
 
+    private void SetAgentFormError(string message)
+    {
+        _agentFormError = message;
+        _agentErrorVersion++;
+    }
+
+    private void ClearAgentValidationError()
+    {
+        if (!_saveUnconfirmed)
+            _agentFormError = null;
+    }
+
     private async Task SaveAgent()
     {
+        if (_isSaving || _isLoadingUsers || !_agentFormLoaded || _saveUnconfirmed)
+            return;
+
         // Validation for new agents - only need to select a user (code is auto-generated)
         if (!_agentForm.Id.HasValue && string.IsNullOrEmpty(_agentForm.UserId))
         {
-            Snackbar.Add("Please select a user.", Severity.Warning);
+            SetAgentFormError("Select a user before saving.");
             return;
         }
 
         // Validation for editing - code is required
         if (_agentForm.Id.HasValue && string.IsNullOrWhiteSpace(_agentForm.Code))
         {
-            Snackbar.Add("Please enter an agent code.", Severity.Warning);
+            SetAgentFormError("Enter an agent code before saving.");
             return;
         }
 
         _isSaving = true;
-        StateHasChanged();
+        _agentFormError = null;
 
         try
         {
@@ -484,18 +674,23 @@
             if (result.Success)
             {
                 Snackbar.Add(_agentForm.Id.HasValue ? "Agent updated successfully." : "Agent created successfully.", Severity.Success);
-                CloseAgentDialog();
+                ResetAgentDialog();
                 await LoadAgentsAsync();
             }
             else
             {
-                Snackbar.Add(result.ErrorMessage ?? "Failed to save agent.", Severity.Error);
+                SetAgentFormError(result.ErrorMessage ?? "The agent was not saved. Review your input and try again.");
             }
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError("Agent save could not be confirmed after {ExceptionType}.", exception.GetType().Name);
+            _saveUnconfirmed = true;
+            SetAgentFormError("The save could not be confirmed. Close this dialog and refresh the agent list before trying again.");
         }
         finally
         {
             _isSaving = false;
-            StateHasChanged();
         }
     }
 
@@ -644,4 +839,10 @@
         Shared.Domain.Enums.WalletTypeEnum.Bank => "🏦",
         _ => "💰"
     };
+
+    public void Dispose()
+    {
+        _agentDialogVersion++;
+        _persistingSubscription.Dispose();
+    }
 }

@@ -1,6 +1,7 @@
 using System.Data;
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Notifications;
 using Microsoft.ApplicationInsights;
@@ -20,6 +21,7 @@ public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telem
     public async Task<VaultDto?> GetVaultAsync(long branchId, CancellationToken cancellationToken = default)
     {
         var vault = await dbContext.Vaults
+            .AsNoTracking()
             .Include(v => v.Branch)
             .FirstOrDefaultAsync(v => v.BranchId == branchId, cancellationToken);
 
@@ -54,25 +56,47 @@ public class VaultService(ApplicationDbContext dbContext, TelemetryClient? telem
             query = query.Where(t => t.Status != VaultTransactionStatus.Expired);
         }
 
-        return await query
-            .Take(take)
-            .Select(t => new VaultTransactionListItemDto
-            {
-                Id = t.Id,
-                Type = t.Type,
-                Status = t.Status,
-                Amount = t.Amount,
-                BalanceAfter = t.BalanceAfter,
-                CreatedAt = t.CreatedAt,
-                ApprovedAt = t.ApprovedAt,
-                CreatedBy = t.CreatedByUser != null ? t.CreatedByUser.FullName : string.Empty,
-                ApprovedBy = t.ApprovedByUser != null ? t.ApprovedByUser.FullName : null,
-                Notes = t.Notes,
-                CashSessionId = t.CashSessionId,
-                ExpiresAt = t.ExpiresAt
-            })
-            .ToListAsync(cancellationToken);
+        return await ProjectTransactions(query.Take(take)).ToListAsync(cancellationToken);
     }
+
+    public async Task<PagedResult<VaultTransactionListItemDto>> GetHistoryPageAsync(long branchId, PageRequest page,
+        VaultTransactionStatus? status = null, VaultTransactionType? type = null, CancellationToken cancellationToken = default)
+    {
+        if (status.HasValue && !Enum.IsDefined(status.Value))
+            throw new ArgumentOutOfRangeException(nameof(status));
+        if (type.HasValue && !Enum.IsDefined(type.Value))
+            throw new ArgumentOutOfRangeException(nameof(type));
+        var query = dbContext.VaultTransactions.AsNoTracking().Where(t => t.Vault!.BranchId == branchId);
+        if (status.HasValue) query = query.Where(t => t.Status == status);
+        if (type.HasValue) query = query.Where(t => t.Type == type);
+        var count = await query.CountAsync(cancellationToken);
+        var items = await ProjectTransactions(query.OrderByDescending(t => t.CreatedAt).ThenByDescending(t => t.Id)
+            .Skip(page.Offset).Take(page.PageSize)).ToListAsync(cancellationToken);
+        return new(items, count);
+    }
+
+    public Task<List<VaultTransactionListItemDto>> GetPendingTransactionsAsync(long branchId,
+        CancellationToken cancellationToken = default) =>
+        ProjectTransactions(dbContext.VaultTransactions.AsNoTracking()
+            .Where(t => t.Vault!.BranchId == branchId && t.Status == VaultTransactionStatus.Pending)
+            .OrderBy(t => t.ExpiresAt).ThenBy(t => t.Id)).ToListAsync(cancellationToken);
+
+    private static IQueryable<VaultTransactionListItemDto> ProjectTransactions(IQueryable<VaultTransaction> query) =>
+        query.Select(t => new VaultTransactionListItemDto
+        {
+            Id = t.Id,
+            Type = t.Type,
+            Status = t.Status,
+            Amount = t.Amount,
+            BalanceAfter = t.BalanceAfter,
+            CreatedAt = t.CreatedAt,
+            ApprovedAt = t.ApprovedAt,
+            CreatedBy = t.CreatedByUser != null ? t.CreatedByUser.FullName : string.Empty,
+            ApprovedBy = t.ApprovedByUser != null ? t.ApprovedByUser.FullName : null,
+            Notes = t.Notes,
+            CashSessionId = t.CashSessionId,
+            ExpiresAt = t.ExpiresAt
+        });
 
     public async Task<VaultOperationResult> WithdrawForSessionAsync(long sessionId, long branchId, decimal amount, string userId, bool ensureTransaction = true, CancellationToken cancellationToken = default)
     {

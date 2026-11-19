@@ -11,7 +11,7 @@
 
 <PageTitle>Closing approval - Agenti</PageTitle>
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
-    <MudText Typo="Typo.h4">Closing approval</MudText>
+    <MudText Typo="Typo.h4" HtmlTag="h1">Closing approval</MudText>
     <MudButton Href="/cashcount-approvals">Back to approvals</MudButton>
     <MudButton OnClick="LoadAsync" Disabled="Busy">Refresh closing</MudButton>
     @if (Error != null)
@@ -20,17 +20,43 @@
     }
     @if (_review != null)
     {
-        <MudText Typo="Typo.h6">@_review.AgentName - @_review.BusinessDate.ToString("yyyy-MM-dd")</MudText>
-        <MudText>Closing status: @_review.Status</MudText>
-        <MudTable Items="_review.Wallets" Dense="true" Class="my-3">
+        <MudText Typo="Typo.h6" HtmlTag="h2">@_review.AgentName - @_review.BusinessDate.ToString("yyyy-MM-dd")</MudText>
+        <MudStack Row="true" Wrap="Wrap.Wrap" Class="my-3">
+            <MudChip T="string" Variant="Variant.Outlined">Closing status: @_review.Status</MudChip>
+            <MudChip T="string" Variant="Variant.Outlined">Reconciliation outcome: @(_review.Report == null ?
+                _review.Wallets.Any(w => w.Type == WalletTypeEnum.Bank) ? "No saved report" : "Not required" :
+                _review.Report.Succeeded ? "Success" : "Failed")</MudChip>
+        </MudStack>
+        <MudText Typo="Typo.h6" HtmlTag="h2">Evidence readiness</MudText>
+        @if (_review.Report == null && _review.Wallets.Any(w => w.Type == WalletTypeEnum.Bank))
+        {
+            var bankWallets = _review.Wallets.Where(w => w.Type == WalletTypeEnum.Bank).ToList();
+            var ready = bankWallets.Count(w => w.BankAccountId.HasValue && w.StatementId.HasValue);
+            <MudAlert Severity="@(ready == bankWallets.Count ? Severity.Info : Severity.Warning)" Class="my-3">
+                @ready of @bankWallets.Count Bank wallets have statements for this business date.
+                All Bank wallets must be ready for one whole-closing run. Cash and Mobile Money need no statement.
+            </MudAlert>
+        }
+        <MudTable Items="_review.Wallets" Dense="true" Class="my-3" Breakpoint="Breakpoint.Sm">
             <HeaderContent><MudTh>Wallet</MudTh><MudTh>Type</MudTh><MudTh>Submitted closing</MudTh><MudTh>Statement</MudTh></HeaderContent>
             <RowTemplate>
-                <MudTd>@context.WalletName</MudTd><MudTd>@context.Type</MudTd>
-                <MudTd>@context.Currency @context.Amount.ToString("N2")</MudTd>
-                <MudTd>
+                <MudTd DataLabel="Wallet">@context.WalletName</MudTd><MudTd DataLabel="Type">@context.Type</MudTd>
+                <MudTd DataLabel="Submitted closing">@context.Currency @context.Amount.ToString("N2")</MudTd>
+                <MudTd DataLabel="Statement">
                     @(context.Type != WalletTypeEnum.Bank ? "Not required" :
                         !context.BankAccountId.HasValue ? "Missing account binding" :
                         context.StatementId.HasValue ? "Ready" : "Missing statement")
+                    @if (IsAdmin && context.Type == WalletTypeEnum.Bank && _review.Report == null)
+                    {
+                        @if (!context.BankAccountId.HasValue)
+                        {
+                            <MudLink Href="/bank-accounts" Class="d-block">Review account binding</MudLink>
+                        }
+                        else if (!context.StatementId.HasValue)
+                        {
+                            <MudLink Href="@($"/bank-statements?accountId={context.BankAccountId}&date={_review.BusinessDate:yyyy-MM-dd}")" Class="d-block">Upload statement for @context.WalletName</MudLink>
+                        }
+                    }
                 </MudTd>
             </RowTemplate>
         </MudTable>
@@ -78,17 +104,21 @@
                     </MudAlert>
                 }
                 <MudText>Run by @report.PerformedByUserId at @UgandaTime(report.PerformedAt) (Uganda). Results and inputs are locked; reruns are not supported.</MudText>
-                <MudTable Items="report.Wallets" Dense="true" Class="my-3">
+                <MudText Typo="Typo.h6" HtmlTag="h2" Class="mt-3">Saved reconciliation results</MudText>
+                <MudTable Items="report.Wallets" Dense="true" Class="my-3" Breakpoint="Breakpoint.Sm">
                     <HeaderContent>
                         <MudTh>Bank wallet / account</MudTh><MudTh>Opening</MudTh><MudTh>Debits</MudTh><MudTh>Credits</MudTh>
                         <MudTh>Calculated closing</MudTh><MudTh>Submitted closing</MudTh><MudTh>Difference</MudTh><MudTh>Result</MudTh>
                     </HeaderContent>
                     <RowTemplate>
-                        <MudTd>@context.WalletName / @context.BankName / @context.AccountIdentifier (@context.Currency)</MudTd>
-                        <MudTd>@context.OpeningBalance.ToString("N2")</MudTd><MudTd>@context.TotalDebits.ToString("N2")</MudTd>
-                        <MudTd>@context.TotalCredits.ToString("N2")</MudTd><MudTd>@context.ExpectedClosing.ToString("N2")</MudTd>
-                        <MudTd>@context.SubmittedClosing.ToString("N2")</MudTd><MudTd>@context.Difference.ToString("N2")</MudTd>
-                        <MudTd>
+                        <MudTd DataLabel="Bank wallet / account">@context.WalletName / @context.BankName / @context.AccountIdentifier (@context.Currency)</MudTd>
+                        <MudTd DataLabel="Opening">@context.OpeningBalance.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Debits">@context.TotalDebits.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Credits">@context.TotalCredits.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Calculated closing">@context.ExpectedClosing.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Submitted closing">@context.SubmittedClosing.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Difference">@context.Difference.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Result">
                             <MudStack Spacing="1">
                                 <strong>@(context.Succeeded ? "Success" : "Failed")</strong>
                                 <MudText Typo="Typo.caption">@context.Explanation</MudText>

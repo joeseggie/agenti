@@ -1,0 +1,30 @@
+.agents-header,
+.agents-header-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.agents-header {
+    justify-content: space-between;
+}
+
+.agents-filters {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(10rem, 14rem) auto;
+    gap: 1rem;
+    align-items: center;
+    margin-top: 1.5rem;
+}
+
+.agent-contact {
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+    .agents-filters {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.5rem;
+    }
+}

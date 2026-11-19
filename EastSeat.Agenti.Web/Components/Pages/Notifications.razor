@@ -1,239 +1,175 @@
 @page "/notifications"
 @using Microsoft.AspNetCore.Authorization
 @using EastSeat.Agenti.Web.Features.Notifications
-@using EastSeat.Agenti.Web.Features.Vaults
 @using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Shared.Services
 @attribute [Authorize]
 @rendermode InteractiveServer
 @inject INotificationService NotificationService
-@inject IVaultService VaultService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ISnackbar Snackbar
+@inject ILogger<Notifications> Logger
 
 <PageTitle>Notifications - Agenti</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
-    <MudGrid>
+    <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+        <div>
+            <MudText Typo="Typo.h4" HtmlTag="h1">Notifications</MudText>
+            <MudText Typo="Typo.body2">Messages and task reminders. Marking a message as read does not approve a financial request.</MudText>
+        </div>
+        <MudStack Row="true" Wrap="Wrap.Wrap">
+            <MudButton OnClick="RefreshAsync" Disabled="@(_loading || _actioning)" Variant="Variant.Outlined">Refresh</MudButton>
+            <MudButton OnClick="MarkAllAsReadAsync" Disabled="@(_loading || _actioning || _unreadCount == 0)"
+                StartIcon="@Icons.Material.Filled.DoneAll">Mark all as read</MudButton>
+        </MudStack>
+    </MudStack>
+    <MudGrid Class="mt-3">
         <MudItem xs="12" sm="8">
-            <MudText Typo="Typo.h4" Class="mb-2">Notifications</MudText>
-            <MudText Typo="Typo.body2" Color="Color.Secondary">
-                View your notifications from users and the system
-            </MudText>
+            <MudTextField T="string" Label="Search notifications" @bind-Value="_search" @bind-Value:after="ApplyFiltersAsync"
+                Immediate="true" DebounceInterval="300" Clearable="true" Disabled="_actioning"
+                Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
         </MudItem>
-        <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
-            <MudButton Variant="Variant.Filled" Color="Color.Primary"
-                StartIcon="@Icons.Material.Filled.DoneAll"
-                OnClick="MarkAllAsRead"
-                Disabled="@(_isLoading || !_notifications.Any(n => !n.IsRead))">
-                Mark All as Read
-            </MudButton>
+        <MudItem xs="12" sm="4">
+            <MudSelect T="string" Label="Read status" @bind-Value="_readStatus" @bind-Value:after="ApplyFiltersAsync" Disabled="_actioning">
+                <MudSelectItem Value="@("All")">All</MudSelectItem>
+                <MudSelectItem Value="@("Unread")">Unread</MudSelectItem>
+                <MudSelectItem Value="@("Read")">Read</MudSelectItem>
+            </MudSelect>
         </MudItem>
     </MudGrid>
-
-    @if (_isLoading)
+    @if (_error != null)
     {
-        <MudGrid Class="mt-4">
-            <MudItem xs="12" Class="d-flex justify-center">
-                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
-            </MudItem>
-        </MudGrid>
+        <MudAlert Severity="Severity.Error" Class="my-3">@_error</MudAlert>
     }
-    else if (_notifications.Count == 0)
+    @if (_userId != null)
     {
-        <MudPaper Class="mt-8 pa-8 d-flex flex-column align-center" Elevation="0">
-            <MudIcon Icon="@Icons.Material.Filled.NotificationsNone" Size="Size.Large" Color="Color.Default" Style="font-size: 4rem; opacity: 0.4;" />
-            <MudText Typo="Typo.h6" Class="mt-4" Color="Color.Default">No notifications yet</MudText>
-            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-1">
-                You will see notifications here when they are sent to you.
-            </MudText>
-        </MudPaper>
-    }
-    else
-    {
-        <MudTable Items="@_notifications" Hover="true" Striped="true" Dense="true"
-            Elevation="2" Breakpoint="Breakpoint.Md" Class="mt-4"
-            RowStyleFunc="@((NotificationListItemDto item, int _) => item.IsRead ? "" : "background-color: var(--mud-palette-primary-lighten); font-weight: bold;")">
+        <MudTable T="NotificationListItemDto" @ref="_table" ServerData="LoadPageAsync" RowsPerPage="10"
+            Hover="true" Striped="true" Dense="true" Breakpoint="Breakpoint.Sm" Class="mt-4" Loading="_loading" data-testid="notification-history">
             <HeaderContent>
-                <MudTh>Date</MudTh>
-                <MudTh>Sender</MudTh>
-                <MudTh>Message</MudTh>
-                <MudTh Style="text-align: center;">Priority</MudTh>
-                <MudTh Style="text-align: center;">Status</MudTh>
-                <MudTh Style="text-align: center;">Actions</MudTh>
+                <MudTh>Date (Uganda)</MudTh><MudTh>Sender</MudTh><MudTh>Message</MudTh>
+                <MudTh>Priority</MudTh><MudTh>Status</MudTh><MudTh>Actions</MudTh>
             </HeaderContent>
             <RowTemplate>
-                <MudTd DataLabel="Date">
-                    <MudText Typo="Typo.body2">@context.CreatedAt.LocalDateTime.ToString("dd MMM yyyy HH:mm")</MudText>
-                </MudTd>
-                <MudTd DataLabel="Sender">
-                    <MudText Typo="Typo.body2">@context.SenderName</MudText>
-                </MudTd>
+                <MudTd DataLabel="Date (Uganda)">@BusinessTimeText.Format(context.CreatedAt)</MudTd>
+                <MudTd DataLabel="Sender">@context.SenderName</MudTd>
                 <MudTd DataLabel="Message">
+                    @if (!string.IsNullOrWhiteSpace(context.Title))
+                    {
+                        <MudText Typo="Typo.subtitle2">@context.Title</MudText>
+                    }
                     <MudText Typo="Typo.body2">@context.Message</MudText>
                 </MudTd>
-                <MudTd DataLabel="Priority" Style="text-align: center;">
-                    <MudChip T="string" Size="Size.Small" Color="@GetPriorityColor(context.Priority)">
-                        @context.Priority
-                    </MudChip>
-                </MudTd>
-                <MudTd DataLabel="Status" Style="text-align: center;">
-                    @if (context.IsRead)
+                <MudTd DataLabel="Priority"><MudChip T="string" Size="Size.Small" Color="@GetPriorityColor(context.Priority)">@context.Priority</MudChip></MudTd>
+                <MudTd DataLabel="Status"><MudChip T="string" Size="Size.Small" Color="@(context.IsRead ? Color.Default : Color.Info)">@(context.IsRead ? "Read" : "Unread")</MudChip></MudTd>
+                <MudTd DataLabel="Actions">
+                    @if (context.TransactionId.HasValue)
                     {
-                        <MudChip T="string" Size="Size.Small" Color="Color.Default">Read</MudChip>
-                    }
-                    else
-                    {
-                        <MudChip T="string" Size="Size.Small" Color="Color.Info">Unread</MudChip>
-                    }
-                </MudTd>
-                <MudTd DataLabel="Actions" Style="text-align: center;">
-                    @if (context.TransactionId.HasValue && _isAdmin)
-                    {
-                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Success"
-                            OnClick="@(() => ApproveVaultTransaction(context.Id, context.TransactionId.Value))"
-                            Disabled="@_isActioning">
-                            Approve
-                        </MudButton>
-                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
-                            OnClick="@(() => RejectVaultTransaction(context.Id, context.TransactionId.Value))"
-                            Disabled="@_isActioning">
-                            Reject
-                        </MudButton>
+                        <AuthorizeView Policy="VaultApprove" Context="vaultReview">
+                            <MudButton Href="/vault" Size="Size.Small" Color="Color.Primary">Review vault request</MudButton>
+                        </AuthorizeView>
                     }
                     @if (!context.IsRead)
                     {
-                        <MudIconButton Icon="@Icons.Material.Filled.MarkEmailRead"
-                            Size="Size.Small"
-                            OnClick="@(() => MarkAsRead(context.Id))"
-                            Title="Mark as Read" />
+                        <MudButton OnClick="@(() => MarkAsReadAsync(context.Id))" Size="Size.Small" Disabled="@(_loading || _actioning)">Mark as read</MudButton>
                     }
                 </MudTd>
             </RowTemplate>
+            <NoRecordsContent>
+                <MudText Class="pa-4">@(_error != null ? "Notifications are unavailable. Select Refresh to retry." :
+                    _readStatus != "All" || !string.IsNullOrWhiteSpace(_search) ? "No notifications match these filters. Clear the search or choose All." :
+                    "No notifications yet. Messages and task reminders will appear here.")</MudText>
+            </NoRecordsContent>
+            <PagerContent><MudTablePager PageSizeOptions="@PageSizes" /></PagerContent>
         </MudTable>
     }
 </MudContainer>
 
 @code {
-    private List<NotificationListItemDto> _notifications = [];
-    private bool _isLoading = true;
-    private bool _isActioning = false;
-    private bool _isAdmin = false;
+    private MudTable<NotificationListItemDto>? _table;
     private string? _userId;
+    private string? _search;
+    private string _readStatus = "All";
+    private string? _error;
+    private bool _loading;
+    private bool _actioning;
+    private int _unreadCount;
+    private static readonly int[] PageSizes = [10, 25, 50];
 
     protected override async Task OnInitializedAsync()
     {
-        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        _userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        _isAdmin = authState.User.IsInRole(UserRole.Admin.ToString());
-        await LoadNotificationsAsync();
+        var auth = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _userId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (_userId == null) _error = "Your sign-in could not be verified. Sign in again to view notifications.";
     }
 
-    private async Task LoadNotificationsAsync()
+    private async Task<TableData<NotificationListItemDto>> LoadPageAsync(TableState state, CancellationToken token)
     {
-        if (_userId is null) return;
-
-        _isLoading = true;
-        StateHasChanged();
-
+        _loading = true;
+        _error = null;
+        await InvokeAsync(StateHasChanged);
         try
         {
-            _notifications = await NotificationService.GetNotificationsAsync(_userId);
+            var result = await NotificationService.GetNotificationsPageAsync(_userId!, new(state.Page, state.PageSize),
+                _readStatus == "All" ? null : _readStatus == "Read", _search, token);
+            _unreadCount = await NotificationService.GetUnreadCountAsync(_userId!);
+            token.ThrowIfCancellationRequested();
+            return new() { Items = result.Items, TotalItems = result.TotalCount };
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch (Exception exception)
+        {
+            Logger.LogError("Notification history failed with {ExceptionType}.", exception.GetType().Name);
+            _error = "Notifications could not be loaded. Select Refresh to retry.";
+            return new() { Items = [], TotalItems = 0 };
         }
         finally
         {
-            _isLoading = false;
-            StateHasChanged();
+            _loading = false;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
-    private async Task MarkAsRead(Guid notificationId)
+    private async Task ApplyFiltersAsync()
     {
-        if (_userId is null) return;
-
-        var result = await NotificationService.MarkAsReadAsync(notificationId, _userId);
-        if (result.Success)
-        {
-            Snackbar.Add("Notification marked as read.", Severity.Success);
-            await LoadNotificationsAsync();
-        }
-        else
-        {
-            Snackbar.Add(result.ErrorMessage ?? "Failed to mark notification as read.", Severity.Error);
-        }
+        if (_table == null) return;
+        if (_table.CurrentPage == 0) await _table.ReloadServerData();
+        else _table.NavigateTo(0);
     }
 
-    private async Task MarkAllAsRead()
+    private Task RefreshAsync() => _table?.ReloadServerData() ?? Task.CompletedTask;
+    private Task MarkAsReadAsync(Guid id) => UpdateReadStateAsync(() => NotificationService.MarkAsReadAsync(id, _userId!));
+    private Task MarkAllAsReadAsync() => UpdateReadStateAsync(() => NotificationService.MarkAllAsReadAsync(_userId!));
+
+    private async Task UpdateReadStateAsync(Func<Task<NotificationSaveResult>> action)
     {
-        if (_userId is null) return;
-
-        var result = await NotificationService.MarkAllAsReadAsync(_userId);
-        if (result.Success)
-        {
-            Snackbar.Add("All notifications marked as read.", Severity.Success);
-            await LoadNotificationsAsync();
-        }
-        else
-        {
-            Snackbar.Add(result.ErrorMessage ?? "Failed to mark notifications as read.", Severity.Error);
-        }
-    }
-
-    private async Task ApproveVaultTransaction(Guid notificationId, Guid transactionPublicId)
-    {
-        if (_userId is null) return;
-
-        _isActioning = true;
+        if (_userId == null || _actioning || _loading) return;
+        _actioning = true;
+        _error = null;
         try
         {
-            var result = await VaultService.ApproveManualAdjustmentByPublicIdAsync(transactionPublicId, _userId);
-            if (result.Success)
-            {
-                Snackbar.Add("Vault adjustment approved.", Severity.Success);
-                await NotificationService.MarkAsReadAsync(notificationId, _userId);
-                await LoadNotificationsAsync();
-            }
+            var result = await action();
+            if (!result.Success)
+                _error = result.ErrorMessage ?? "The read status could not be updated.";
             else
             {
-                Snackbar.Add(result.ErrorMessage ?? "Failed to approve adjustment.", Severity.Error);
+                Snackbar.Add("Read status updated.", Severity.Success);
+                await ApplyFiltersAsync();
             }
         }
-        finally
+        catch (Exception exception)
         {
-            _isActioning = false;
+            Logger.LogError("Notification update failed with {ExceptionType}.", exception.GetType().Name);
+            _error = "The update could not be confirmed. Refresh the list before trying again.";
         }
-    }
-
-    private async Task RejectVaultTransaction(Guid notificationId, Guid transactionPublicId)
-    {
-        if (_userId is null) return;
-
-        _isActioning = true;
-        try
-        {
-            var result = await VaultService.RejectManualAdjustmentByPublicIdAsync(transactionPublicId, _userId);
-            if (result.Success)
-            {
-                Snackbar.Add("Vault adjustment rejected.", Severity.Info);
-                await NotificationService.MarkAsReadAsync(notificationId, _userId);
-                await LoadNotificationsAsync();
-            }
-            else
-            {
-                Snackbar.Add(result.ErrorMessage ?? "Failed to reject adjustment.", Severity.Error);
-            }
-        }
-        finally
-        {
-            _isActioning = false;
-        }
+        finally { _actioning = false; }
     }
 
     private static Color GetPriorityColor(NotificationPriority priority) => priority switch
     {
-        NotificationPriority.Low => Color.Default,
-        NotificationPriority.Normal => Color.Info,
         NotificationPriority.High => Color.Warning,
         NotificationPriority.Urgent => Color.Error,
+        NotificationPriority.Normal => Color.Info,
         _ => Color.Default
     };
 }

@@ -13,15 +13,15 @@
 
 <PageTitle>Register</PageTitle>
 
-<div class="register-page">
-    <MudContainer MaxWidth="MaxWidth.Small" Class="d-flex align-center justify-center" Style="min-height: 100vh;">
-        <MudCard Elevation="8" Class="pa-8 rounded-lg" Style="width: 100%; max-width: 450px;">
+<div class="auth-page">
+    <MudContainer MaxWidth="MaxWidth.Small" Class="auth-container">
+        <MudCard Elevation="2" Class="auth-card">
             <MudCardHeader Class="pb-0">
                 <CardHeaderContent>
                     <MudStack AlignItems="AlignItems.Center" Class="mb-4">
                         <MudIcon Icon="@Icons.Material.Filled.PersonAdd" Size="Size.Large" Color="Color.Secondary" Class="mb-2" />
-                        <MudText Typo="Typo.h4" Color="Color.Secondary">Create Account</MudText>
-                        <MudText Typo="Typo.body2" Color="Color.Dark">Join us today</MudText>
+                        <MudText Typo="Typo.h4" HtmlTag="h1" Color="Color.Primary">Create Account</MudText>
+                        <MudText Typo="Typo.body2">Create your Agenti account</MudText>
                     </MudStack>
                 </CardHeaderContent>
             </MudCardHeader>
@@ -82,15 +82,11 @@
                                Color="Color.Primary"
                                FullWidth="true"
                                Size="Size.Large"
-                               Class="mb-4 rounded-pill auth-button"
+                               Class="mb-4"
                                StartIcon="@Icons.Material.Filled.HowToReg">
                         Create Account
                     </MudButton>
                 </EditForm>
-
-                <MudDivider Class="my-4">
-                    <MudText Typo="Typo.body2" Color="Color.Dark">OR</MudText>
-                </MudDivider>
 
                 <ExternalLoginPicker />
 
@@ -106,24 +102,6 @@
         </MudCard>
     </MudContainer>
 </div>
-
-<style>
-    .register-page {
-        background: #ffffff;
-        min-height: 100vh;
-    }
-
-    .auth-button {
-        transition: all 0.3s ease;
-    }
-
-    .auth-button:hover {
-        background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%) !important;
-        box-shadow: 0 4px 15px rgba(25, 118, 210, 0.4);
-        transform: translateY(-2px);
-        color: #ffffff !important;
-    }
-</style>
 
 @code {
     private IEnumerable<IdentityError>? identityErrors;

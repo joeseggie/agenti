@@ -94,6 +94,22 @@ public class VaultServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetVaultAsync_ReturnsFreshBalanceWhenAnotherContextUpdatesVault()
+    {
+        await _sut.GetVaultAsync(_testBranch.Id);
+        await using (var otherContext = _dbContextFactory.CreateDbContext())
+        {
+            var updatedVault = await otherContext.Vaults.SingleAsync(v => v.Id == _testVault.Id);
+            updatedVault.CurrentBalance = 12_500m;
+            await otherContext.SaveChangesAsync();
+        }
+
+        var result = await _sut.GetVaultAsync(_testBranch.Id);
+
+        result!.CurrentBalance.Should().Be(12_500m);
+    }
+
+    [Fact]
     public async Task GetVaultAsync_WithNonExistentBranch_ReturnsNull()
     {
         // Act

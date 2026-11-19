@@ -19,7 +19,7 @@
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
     <MudGrid>
         <MudItem xs="12" sm="8">
-            <MudText Typo="Typo.h4" Class="mb-2">Bank Runs</MudText>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="mb-2">Bank Runs</MudText>
             <MudText Typo="Typo.body2" Color="Color.Secondary">
                 Record physical cash deposits made to a bank wallet during the session.
             </MudText>
@@ -53,6 +53,7 @@
             {
                 <span>An approved opening cash count is required before recording a bank run.</span>
             }
+            <MudLink Href="/cashcount" Class="ml-2">Review cash count and session prerequisites</MudLink>
         </MudAlert>
     }
 

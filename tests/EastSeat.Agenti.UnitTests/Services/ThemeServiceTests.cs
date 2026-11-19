@@ -5,6 +5,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Data.Sqlite;
 using Moq;
 using System.Security.Claims;
 
@@ -41,6 +42,56 @@ public class ThemeServiceTests : IDisposable
     {
         _dbContext.Database.EnsureDeleted();
         _dbContext.Dispose();
+    }
+
+    [Theory]
+    [InlineData(null, "dark", true, 1)]
+    [InlineData("light", "dark", false, 0)]
+    [InlineData("dark", "light", true, 0)]
+    public async Task UpdateSystemPreference_RespectsSavedPreference_WithoutReloadingUser(
+        string? savedPreference, string systemPreference, bool expectedDarkMode, int expectedEvents)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(connection).Options;
+        await using var db = new ApplicationDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var user = UserBuilder.Default().WithId("system-theme-user")
+            .WithThemePreference(savedPreference).Build();
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+        _authStateProviderMock.Setup(provider => provider.GetAuthenticationStateAsync())
+            .ReturnsAsync(new AuthenticationState(new ClaimsPrincipal(new ClaimsIdentity(
+                [new Claim(ClaimTypes.NameIdentifier, user.Id)], "test"))));
+        var factory = new Mock<IDbContextFactory<ApplicationDbContext>>();
+        factory.Setup(item => item.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new ApplicationDbContext(options));
+        var service = new ThemeService(factory.Object, _authStateProviderMock.Object);
+        await service.InitializeAsync(null);
+        var events = 0;
+        service.ThemeChanged += (_, _) => events++;
+
+        service.UpdateSystemPreference(systemPreference);
+        service.UpdateSystemPreference(systemPreference);
+
+        service.IsDarkMode.Should().Be(expectedDarkMode);
+        events.Should().Be(expectedEvents);
+        factory.Verify(item => item.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _authStateProviderMock.Verify(provider => provider.GetAuthenticationStateAsync(), Times.Once);
+        (await service.GetUserPreferenceAsync()).Should()
+            .Be(savedPreference ?? ThemePreferenceConstants.System);
+
+        (await service.SetUserPreferenceAsync(ThemePreferenceConstants.System)).Should().BeTrue();
+        service.IsDarkMode.Should().Be(systemPreference == ThemePreferenceConstants.Dark);
+    }
+
+    [Fact]
+    public void UpdateSystemPreference_InvalidValue_RejectsInput()
+    {
+        var action = () => _themeService.UpdateSystemPreference("invalid");
+
+        action.Should().Throw<ArgumentException>();
+        _themeService.IsDarkMode.Should().BeFalse();
     }
 
     #region InitializeAsync Tests

@@ -31,4 +31,6 @@ public interface IThemeService
     /// Initializes the theme service (loads user preference, detects system theme).
     /// </summary>
     Task InitializeAsync(string? systemPreference);
+
+    void UpdateSystemPreference(string systemPreference);
 }
