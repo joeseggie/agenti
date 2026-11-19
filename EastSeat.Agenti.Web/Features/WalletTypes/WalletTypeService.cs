@@ -100,6 +100,8 @@ public class WalletTypeService(ApplicationDbContext dbContext) : IWalletTypeServ
             {
                 return WalletTypeSaveResult.Error("Wallet type not found.");
             }
+            // The circuit-scoped context may hold stale values from an earlier edit.
+            await dbContext.Entry(walletType).ReloadAsync();
 
             // Check for duplicate name (excluding current type)
             var duplicateExists = await dbContext.WalletTypes

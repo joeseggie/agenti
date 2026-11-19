@@ -261,6 +261,11 @@
             Snackbar.Add("Statement reconciliation setting saved.", Severity.Success);
             return true;
         }
+        catch (Exception ex) when (EastSeat.Agenti.Shared.Services.BankingConcurrency.IsConflict(ex))
+        {
+            Snackbar.Add("Another change was made to this wallet type. Refresh and retry.", Severity.Error);
+            return false;
+        }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or Microsoft.EntityFrameworkCore.DbUpdateException)
         {
             Snackbar.Add(ex.Message, Severity.Error);
@@ -334,7 +339,12 @@
                 if (_isAdmin && _form.Id.HasValue && _form.Type == WalletTypeEnum.Bank &&
                     _requiresStatement != _originalRequiresStatement)
                 {
-                    await ApplyReconciliationAsync(_form.Id.Value, _requiresStatement);
+                    if (!await ApplyReconciliationAsync(_form.Id.Value, _requiresStatement))
+                    {
+                        // Details were saved; keep the dialog open so the Admin can retry the setting.
+                        await LoadWalletTypesAsync();
+                        return;
+                    }
                 }
                 Snackbar.Add(_form.Id.HasValue ? "Wallet type updated successfully." : "Wallet type created successfully.",
                 Severity.Success);

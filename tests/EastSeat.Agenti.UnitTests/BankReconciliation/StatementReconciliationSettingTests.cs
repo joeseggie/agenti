@@ -80,4 +80,26 @@ public class StatementReconciliationSettingTests
         fixture.Db.SaveChanges();
         Assert.False((await walletTypes.DeleteAsync(type.Id)).Success);
     }
+
+    [Fact]
+    public async Task StaleTrackedWalletType_IsReloadedBeforeSettingOrTypeChange()
+    {
+        using var fixture = new BankingTestContext();
+        var wallet = fixture.AddWallet("Bank", WalletTypeEnum.Bank, 1m);
+        var tracked = await fixture.Db.WalletTypes.SingleAsync(t => t.Id == wallet.WalletTypeId);
+        Assert.True(tracked.RequiresStatementReconciliation);
+        // Another Admin waives the type; the tracked entity keeps its stale value.
+        await fixture.Db.WalletTypes.Where(t => t.Id == tracked.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RequiresStatementReconciliation, false));
+
+        var change = await new WalletTypeService(fixture.Db).UpdateAsync(new WalletTypeFormModel
+        {
+            Id = tracked.Id, Name = tracked.Name, Type = WalletTypeEnum.Custom, IsActive = true
+        });
+        Assert.False(change.Success);
+
+        await Service(fixture).SetRequiredAsync(fixture.Admin.Id, tracked.Id, true);
+        Assert.True((await fixture.Db.WalletTypes.AsNoTracking().SingleAsync(t => t.Id == tracked.Id)).RequiresStatementReconciliation);
+        Assert.True(Assert.Single(await fixture.Db.WalletTypeReconciliationAudits.ToListAsync()).Required);
+    }
 }

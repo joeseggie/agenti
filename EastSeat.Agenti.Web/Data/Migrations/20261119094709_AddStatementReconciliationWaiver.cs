@@ -104,26 +104,7 @@ namespace EastSeat.Agenti.Web.Data.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropTable(
-                name: "WalletTypeReconciliationAudits");
-
-            migrationBuilder.DropColumn(
-                name: "RequiresStatementReconciliation",
-                table: "WalletTypes");
-
-            migrationBuilder.DropColumn(
-                name: "StatementWaived",
-                table: "ClosingWalletResults");
-
-            migrationBuilder.AlterColumn<long>(
-                name: "StatementId",
-                table: "ClosingWalletResults",
-                type: "bigint",
-                nullable: false,
-                defaultValue: 0L,
-                oldClrType: typeof(long),
-                oldType: "bigint",
-                oldNullable: true);
+            throw new NotSupportedException("Reverting would discard waiver audit history and waived run results. Use a reviewed, data-preserving forward migration.");
         }
     }
 }
