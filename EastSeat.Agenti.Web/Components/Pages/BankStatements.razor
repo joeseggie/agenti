@@ -70,7 +70,7 @@
         @if (_imports.Count > 0)
         {
             <MudTextField T="string" Label="Replacement reason" @bind-Value="_reason" Disabled="Busy"
-                          HelperText="A different file requires a reason of 10-2,000 characters; the previous version is retained." />
+                          HelperText="A changed file or approved opening requires a reason of 10-2,000 characters; the previous version is retained." />
         }
         <MudButton OnClick="UploadAsync" Disabled="@(Busy || _file == null || _accountId == 0 || !_confirmed)"
                    Color="Color.Primary" Variant="Variant.Filled">Upload statement</MudButton>

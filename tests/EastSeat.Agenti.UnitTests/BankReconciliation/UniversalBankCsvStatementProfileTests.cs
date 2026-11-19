@@ -73,6 +73,25 @@ public class UniversalBankCsvStatementProfileTests
             "Africa/Kampala", 1000m, allowMissingBalances: true));
 
         Assert.Contains("Mixed balances", error.Message);
+        Assert.Contains($"Row {(first.Length == 0 ? 2 : 3)}, RunningBalance", error.Message);
+    }
+
+    [Theory]
+    [InlineData(false, "explicitly allow")]
+    [InlineData(true, "Mixed balances")]
+    public async Task Parse_PartiallyBlankBalances_ReportsMissingRowsAndOtherRowErrors(bool permitted, string message)
+    {
+        var error = await Assert.ThrowsAsync<StatementParsingException>(() => ParseAsync(
+            "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
+            "2026-11-01,,REF-1,Deposit,,200.00,\n" +
+            "2026-11-01,,REF-2,Withdrawal,50.00,,1150.00\n" +
+            "2026-11-01,,REF-3,Invalid movement,10.00,10.00,",
+            "Africa/Kampala", 1000m, allowMissingBalances: permitted));
+
+        Assert.Contains(message, error.Message);
+        Assert.Contains("Row 2, RunningBalance", error.Message);
+        Assert.Contains("Row 4, RunningBalance", error.Message);
+        Assert.Contains("Row 4, Debit/Credit", error.Message);
     }
 
     [Fact]

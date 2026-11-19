@@ -77,22 +77,24 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
         }
 
         var balanceIndex = _schema.Column("RunningBalance");
-        var completeRows = records.Skip(1).Where(r => r.Fields.Count == _schema.Headers.Count).ToList();
+        var completeRows = records.Skip(1).Where(r => r.Fields.Count == _schema.Headers.Count);
         var hasBlankBalances = completeRows.Any(r => r.Fields[balanceIndex].Length == 0);
-        if (hasBlankBalances && completeRows.Any(r => r.Fields[balanceIndex].Length != 0))
-            throw new StatementParsingException("RunningBalance must be supplied on every row or blank on every row. Mixed balances are not supported.");
+        var mixedBalances = hasBlankBalances && completeRows.Any(r => r.Fields[balanceIndex].Length != 0);
+        var computeBalances = account.AllowMissingRunningBalances && hasBlankBalances && !mixedBalances;
         if (hasBlankBalances && !account.AllowMissingRunningBalances)
-            throw new StatementParsingException("This account requires RunningBalance on every row. An Admin must explicitly allow statements without running balances in the account configuration.");
-        if (hasBlankBalances && !account.OpeningBaseline.HasValue)
+            errors.Add("This account requires RunningBalance on every row. An Admin must explicitly allow statements without running balances in the account configuration.");
+        else if (mixedBalances)
+            errors.Add("RunningBalance must be supplied on every row or blank on every row. Mixed balances are not supported.");
+        if (computeBalances && !account.OpeningBaseline.HasValue)
             throw new StatementParsingException("An approved opening for this bank wallet and statement date is required before uploading a statement without running balances.");
-        if (hasBlankBalances && account.OpeningBaseline is decimal baseline &&
+        if (computeBalances && account.OpeningBaseline is decimal baseline &&
             (baseline < -MaximumAmount || baseline > MaximumAmount || decimal.Round(baseline, 2) != baseline))
             throw new StatementParsingException("The approved opening exceeds the supported monetary range or precision.");
 
         var entries = new List<ParsedStatementEntry>();
         DateOnly? priorDate = null;
         DateTimeOffset? priorPreciseAt = null;
-        decimal? opening = hasBlankBalances ? account.OpeningBaseline : null;
+        decimal? opening = computeBalances ? account.OpeningBaseline : null;
         decimal? priorBalance = opening;
         for (var index = 1; index < records.Count; index++)
         {
@@ -121,7 +123,7 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
             var debitOk = TryOptionalAmount(fields[debitIndex], debitSpec, out var debit);
             var creditOk = TryOptionalAmount(fields[creditIndex], creditSpec, out var credit);
             var runningBalance = 0m;
-            var balanceOk = hasBlankBalances || TryBalance(fields[balanceIndex], balanceSpec, out runningBalance);
+            var balanceOk = computeBalances || TryBalance(fields[balanceIndex], balanceSpec, out runningBalance);
             if (!debitOk) errors.Add($"Row {rowNumber}, Debit: enter a positive amount with exactly two decimal places or leave blank.");
             if (!creditOk) errors.Add($"Row {rowNumber}, Credit: enter a positive amount with exactly two decimal places or leave blank.");
             if (!balanceOk) errors.Add($"Row {rowNumber}, RunningBalance: enter an amount with exactly two decimal places.");
@@ -129,7 +131,7 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
             var timeIndex = _schema.Column("TransactionTime");
             var descriptionIndex = _schema.Column("Description");
             var referenceIndex = _schema.Column("Reference");
-            if (!debitOk || !creditOk || !balanceOk ||
+            if (!debitOk || !creditOk ||
                 !TryDate(fields[dateIndex], _schema.Definition("TransactionDate").Format!, out date) ||
                 (!string.IsNullOrEmpty(fields[timeIndex]) &&
                  !TryTime(fields[timeIndex], _schema.Definition("TransactionTime").Format!, out _)) ||
@@ -147,8 +149,10 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
                 continue;
             }
 
+            if (!balanceOk)
+                continue;
             var signedAmount = fields[debitIndex].Length == 0 ? credit : -debit;
-            if (hasBlankBalances)
+            if (computeBalances)
             {
                 runningBalance = (priorBalance ??
                     throw new StatementParsingException("An approved opening baseline is required.")) + signedAmount;
@@ -178,7 +182,7 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
             if (hasPreciseTime)
                 priorPreciseAt = occurredAt;
             opening ??= runningBalance - signedAmount;
-            if (priorBalance.HasValue && priorBalance.Value + signedAmount != runningBalance)
+            if (!mixedBalances && priorBalance.HasValue && priorBalance.Value + signedAmount != runningBalance)
                 errors.Add($"Row {rowNumber}, RunningBalance: does not equal the prior balance plus this movement.");
             priorBalance = runningBalance;
             entries.Add(new ParsedStatementEntry(
@@ -200,7 +204,7 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
         var to = AtLocalMidnight(account.CoverageToDate.Value.AddDays(1), zone);
         return new ParsedStatement(account.AccountIdentifier, account.Currency, account.BalanceBasis,
             from, to, openingBalance, closingBalance, true, entries,
-            hasBlankBalances ? StatementBalanceSource.ApprovedOpening : StatementBalanceSource.BankReported);
+            computeBalances ? StatementBalanceSource.ApprovedOpening : StatementBalanceSource.BankReported);
     }
 
     private static bool TryDate(string value, string format, out DateOnly date) =>

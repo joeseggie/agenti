@@ -121,7 +121,7 @@ TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalanc
 | Actual times only | `TransactionTime` is optional. Preserve real supplied times; never invent midnight or a closing time for date-only rows. |
 | Complete statement | Upload one complete statement per bank account/date, not partial files to be merged. |
 | Account confirmation | Show the wallet, bank, and account identity. Admin must confirm that the file belongs to this account and covers the complete date. |
-| Duplicate/replacement | An unchanged replay must not duplicate accepted data. A different replacement before reconciliation requires a reason and retains the earlier version. |
+| Duplicate/replacement | An unchanged file and baseline replay the current revision. A changed file or approved baseline before reconciliation requires a replacement reason and retains the earlier version. |
 | Used statement | Once a recorded reconciliation references a statement, it cannot be replaced for that run or silently change its result. |
 
 The CSV has no account identifier. Account confirmation is an Admin attestation,

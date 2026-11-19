@@ -97,9 +97,10 @@ date, schema identity, uploader/time and revision. There is no background import
 processor, preview/commit stage, baseline wizard, date range, or sequential-gap
 requirement.
 
-An identical file safely returns the current revision. A different file before
-use requires a replacement reason of 10-2,000 characters; older evidence remains
-available. Once used in a recorded run, that account/day cannot be replaced.
+An identical file safely returns the current revision if its approved opening
+baseline (when used) is unchanged. Before reconciliation, a changed file or
+changed baseline requires a replacement reason of 10-2,000 characters; older
+evidence remains available. Once used in a recorded run, that account/day cannot be replaced.
 Switching accounts/dates clears the unsubmitted file and confirmation.
 
 ## 5. Reconcile and separately approve

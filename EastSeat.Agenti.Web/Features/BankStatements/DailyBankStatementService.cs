@@ -76,7 +76,12 @@ public sealed class DailyBankStatementService(
             var previous = await db.DailyBankStatements.AsNoTracking()
                 .Where(s => s.BankAccountId == account.Id && s.StatementDate == request.StatementDate)
                 .OrderByDescending(s => s.Revision).FirstOrDefaultAsync(cancellationToken);
-            if (previous?.ContentHash == hash)
+            var sameFile = previous?.ContentHash == hash;
+            var checkDerivedReplay = sameFile && previous?.BalanceSource == StatementBalanceSource.ApprovedOpening;
+            var opening = checkDerivedReplay
+                ? await FindApprovedOpeningAsync(scope, request.StatementDate, cancellationToken) : null;
+            if (sameFile && (!checkDerivedReplay || (previous is not null && opening is { } baseline &&
+                previous.OpeningCountId == baseline.CountId && previous.OpeningBalance == baseline.Amount)))
             {
                 await transaction.CommitAsync(cancellationToken);
                 return (await GetAsync(userId, account.Id, request.StatementDate, cancellationToken))[0];
@@ -90,8 +95,8 @@ public sealed class DailyBankStatementService(
                     request.ReplacementReason.Trim().Length is < 10 or > 2000))
                 throw new BankingRuleException("Replacing a statement requires a reason between 10 and 2,000 characters.");
 
-            var opening = account.AllowMissingRunningBalances
-                ? await FindApprovedOpeningAsync(scope, request.StatementDate, cancellationToken) : null;
+            if (account.AllowMissingRunningBalances && !checkDerivedReplay)
+                opening = await FindApprovedOpeningAsync(scope, request.StatementDate, cancellationToken);
             buffer.Position = 0;
             ParsedStatement parsed;
             try

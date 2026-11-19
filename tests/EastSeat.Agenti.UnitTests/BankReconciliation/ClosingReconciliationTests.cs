@@ -129,7 +129,7 @@ public class ClosingReconciliationTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task DerivedStatement_LegacyOpeningWithoutSnapshot_CannotBeSilentlyRebased(bool changeOpening)
+    public async Task DerivedStatement_LegacyOpeningWithoutSnapshot_RequiresExplicitReplacementIfBaselineChanges(bool changeOpening)
     {
         using var fixture = new BankingTestContext();
         fixture.Account.AllowMissingRunningBalances = true;
@@ -145,8 +145,9 @@ public class ClosingReconciliationTests
         };
         fixture.Db.CashCounts.Add(opening);
         await fixture.Db.SaveChangesAsync();
-        var statement = await fixture.UploadStatementAsync(fixture.Account, Clock(),
-            BankingScenario.StatementCsv(fixture.Session.SessionDate, 0m, includeBalances: false));
+        var csv = BankingScenario.StatementCsv(fixture.Session.SessionDate, 0m, includeBalances: false);
+        var statement = await fixture.UploadStatementAsync(fixture.Account, Clock(), csv);
+        Assert.Equal(statement.Id, (await fixture.UploadStatementAsync(fixture.Account, Clock(), csv)).Id);
         Assert.Equal(opening.Id, statement.OpeningCountId);
         if (changeOpening) opening.Details.Single(d => d.WalletId == fixture.BankWallet.Id).Amount++;
         var closing = new CashCount
@@ -156,7 +157,7 @@ public class ClosingReconciliationTests
             Details =
             [
                 new() { WalletId = fixture.CashWallet.Id, Amount = 100_000m },
-                new() { WalletId = fixture.BankWallet.Id, Amount = 1_000_000m }
+                new() { WalletId = fixture.BankWallet.Id, Amount = changeOpening ? 1_000_001m : 1_000_000m }
             ]
         };
         fixture.Db.CashCounts.Add(closing);
@@ -168,6 +169,23 @@ public class ClosingReconciliationTests
                 Service(fixture).ReconcileAsync(fixture.Admin.Id, closing.Id));
             Assert.Contains("cannot rebase", error.Message);
             Assert.Empty(await fixture.Db.ClosingReconciliationRuns.ToListAsync());
+            const string reason = "The approved legacy opening changed.";
+            var noReason = await Assert.ThrowsAsync<BankingRuleException>(() =>
+                fixture.UploadStatementAsync(fixture.Account, Clock(), csv, statement.Id));
+            Assert.Contains("requires a reason", noReason.Message);
+            await Assert.ThrowsAsync<BankingConflictException>(() =>
+                fixture.UploadStatementAsync(fixture.Account, Clock(), csv, reason: reason));
+
+            var replacement = await fixture.UploadStatementAsync(fixture.Account, Clock(), csv, statement.Id, reason);
+            Assert.Equal(2, replacement.Revision);
+            Assert.Equal(opening.Id, replacement.OpeningCountId);
+            Assert.Equal(1_000_001m, replacement.OpeningBalance);
+            Assert.Equal(replacement.Id, (await fixture.UploadStatementAsync(fixture.Account, Clock(), csv)).Id);
+            var original = await fixture.Db.DailyBankStatements.AsNoTracking().SingleAsync(s => s.Id == statement.Id);
+            Assert.Equal(1_000_000m, original.OpeningBalance);
+            var report = (await Service(fixture).ReconcileAsync(fixture.Admin.Id, closing.Id)).Report!;
+            Assert.True(report.Succeeded);
+            Assert.Equal(replacement.Id, Assert.Single(report.Wallets).StatementId);
         }
         else
         {

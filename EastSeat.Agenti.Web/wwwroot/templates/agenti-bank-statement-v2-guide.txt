@@ -24,6 +24,6 @@ Empty/header-only and multi-day statements remain rejected. Do not fabricate a z
 
 Reconciliation uses the same approved opening used at upload and the submitted wallet closing. A changed baseline blocks the run; it is not silently recomputed. Arithmetic agreement can receive Success and ordinary Admin/Supervisor approval, with explicit disclosure that bank balances were not supplied. A difference remains Failed and requires the existing separate Admin exception approval.
 
-A changed file before reconciliation requires a replacement reason and retains prior evidence. Used statements and recorded reports are locked; no reruns or settlement replay. All Bank wallets must be reconciled together.
+A changed file or approved opening baseline requires an explicit replacement with a reason before reconciliation, even if the CSV is identical. Prior evidence is retained. Used statements and recorded reports are locked; no reruns or settlement replay. All Bank wallets must be reconciled together.
 
 Daily arithmetic is not proof of statement completeness, individual transactions, account identity or an exact session cutoff.
