@@ -57,7 +57,8 @@ bank follow-ups require evidence. The default evidence limit is 5 MB.
 1. Open the approval notification or `/cashcount-approvals`, then **Review closing**.
 2. Admin opens the separate `/bank-statements` page and uploads a complete
    universal CSV for **each Bank wallet**, for exactly the closing date.
-   Cash and Mobile Money require no statements.
+   Cash and Mobile Money require no statements, nor do Bank wallet types whose
+   statement reconciliation an Admin has waived (reported as "Not reconciled").
 3. Admin returns to the closing and selects **Reconcile closing**. Missing
    approved opening, binding or statement blocks the whole operation before any
    report is saved.

@@ -92,7 +92,8 @@ internal class BankingScenario : IDisposable
         wallets.AddRange(additionalWallets ?? []);
         var bindings = Db.BankAccounts.ToDictionary(a => a.WalletId, a => a.Id);
         var snapshots = wallets.Select(w => new CountedWalletSnapshot(
-            w.Id, w.Name, Db.WalletTypes.Find(w.WalletTypeId)!.Type, w.Currency,
+            // Project only Type: integration tests also seed through this helper at older migration schemas.
+            w.Id, w.Name, Db.WalletTypes.Where(t => t.Id == w.WalletTypeId).Select(t => t.Type).Single(), w.Currency,
             w.Id == BankWallet.Id ? bankAmount : w.Balance, Session.OpenedAt,
             bindings.TryGetValue(w.Id, out var accountId) ? accountId : null)).ToList();
         var opening = new CashCount

@@ -80,20 +80,16 @@
                     </HeaderContent>
                     <RowTemplate>
                         <MudTd>@context.WalletName / @context.BankName / @context.AccountIdentifier (@context.Currency)</MudTd>
-                        <MudTd>@context.OpeningBalance.ToString("N2")</MudTd><MudTd>@context.TotalDebits.ToString("N2")</MudTd>
-                        <MudTd>@context.TotalCredits.ToString("N2")</MudTd><MudTd>@context.ExpectedClosing.ToString("N2")</MudTd>
-                        <MudTd>@context.SubmittedClosing.ToString("N2")</MudTd><MudTd>@context.Difference.ToString("N2")</MudTd>
+                        <MudTd>@context.OpeningBalance.ToString("N2")</MudTd><MudTd>@Reconciled(context, context.TotalDebits)</MudTd>
+                        <MudTd>@Reconciled(context, context.TotalCredits)</MudTd><MudTd>@Reconciled(context, context.ExpectedClosing)</MudTd>
+                        <MudTd>@context.SubmittedClosing.ToString("N2")</MudTd><MudTd>@Reconciled(context, context.Difference)</MudTd>
                         <MudTd>
-                                    <strong>@(context.StatementWaived ? "Not reconciled" : context.Succeeded ? "Success" : "Failed")</strong>
+                            <strong>@(context.StatementWaived ? "Not reconciled" : context.Succeeded ? "Success" : "Failed")</strong>
                             <MudText Typo="Typo.caption">@context.Explanation</MudText>
-                            @if (context.StatementWaived)
+                            @if (!context.StatementWaived)
                             {
-                                <MudText Typo="Typo.caption">Not reconciled – statement waived.</MudText>
-                            }
-                            else
-                            {
-                            <MudLink Href="@($"/closing-statement-evidence/{context.StatementId}")">Statement #@context.StatementId, revision @context.StatementRevision</MudLink>
-                            <MudText Typo="Typo.caption">Statement opening @context.StatementOpening.ToString("N2"), ending @context.StatementClosing.ToString("N2")</MudText>
+                                <MudLink Href="@($"/closing-statement-evidence/{context.StatementId}")">Statement #@context.StatementId, revision @context.StatementRevision</MudLink>
+                                <MudText Typo="Typo.caption">Statement opening @context.StatementOpening.ToString("N2"), ending @context.StatementClosing.ToString("N2")</MudText>
                             }
                         </MudTd>
                     </RowTemplate>
@@ -159,6 +155,8 @@
     private Task ReconcileAsync() => UpdateReviewAsync(id => Reconciliation.ReconcileAsync(UserId, id));
     private Task ApproveAsync() => UpdateReviewAsync(id => Reconciliation.ApproveAsync(UserId, id, false));
     private Task ApproveExceptionAsync() => UpdateReviewAsync(id => Reconciliation.ApproveAsync(UserId, id, true, _reason, _acknowledged));
+    private static string Reconciled(ClosingWalletResultDto wallet, decimal amount) =>
+        wallet.StatementWaived ? "—" : amount.ToString("N2");
     private Task ApproveWithoutBanksAsync() => UpdateReviewAsync(async id =>
     {
         if (_review?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
