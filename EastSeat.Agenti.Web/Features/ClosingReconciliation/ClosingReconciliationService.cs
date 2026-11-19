@@ -32,11 +32,14 @@ public sealed class ClosingReconciliationService(
                     statements.FirstOrDefault(s => s.BankAccountId == accountId)?.Id);
             }).ToList(),
             run == null ? null : new ClosingReportDto(run.Id, run.Succeeded, run.PerformedByUserId, run.PerformedAt,
-                run.Wallets.OrderBy(w => w.WalletName).Select(w => new ClosingWalletResultDto(
-                    w.WalletName, w.BankName, w.AccountIdentifier, w.Currency, w.StatementId,
-                    statements.Single(s => s.Id == w.StatementId).Revision, w.OpeningBalance,
-                    w.TotalDebits, w.TotalCredits, w.ExpectedClosing, w.SubmittedClosing,
-                    w.StatementOpening, w.StatementClosing, w.Difference, w.Succeeded, w.Explanation)).ToList()),
+                run.Wallets.OrderBy(w => w.WalletName).Select(w =>
+                {
+                    var statement = statements.Single(s => s.Id == w.StatementId);
+                    return new ClosingWalletResultDto(w.WalletName, w.BankName, w.AccountIdentifier, w.Currency,
+                        w.StatementId, statement.Revision, w.OpeningBalance, w.TotalDebits, w.TotalCredits,
+                        w.ExpectedClosing, w.SubmittedClosing, w.StatementOpening, w.StatementClosing,
+                        w.Difference, w.Succeeded, w.Explanation, statement.BalanceSource, statement.OpeningCountId);
+                }).ToList()),
             approval == null ? null : new ClosingApprovalDto(
                 approval.IsException, approval.Reason, approval.ApprovedByUserId, approval.ApprovedAt),
             count.CashSession!.WorkflowVersion);
@@ -97,16 +100,22 @@ public sealed class ClosingReconciliationService(
                 if (start.Type != WalletTypeEnum.Bank || start.Currency != wallet.Currency ||
                     statement.Currency != wallet.Currency || account.Currency != wallet.Currency)
                     throw new BankingRuleException($"{wallet.Name}: opening, closing and statement currencies/types must agree.");
+                if (!Enum.IsDefined(statement.BalanceSource) ||
+                    statement.BalanceSource == StatementBalanceSource.BankReported && statement.OpeningCountId.HasValue)
+                    throw new BankingRuleException($"{wallet.Name}: stored statement balance source is inconsistent; investigation is required.");
+                var derived = statement.BalanceSource == StatementBalanceSource.ApprovedOpening;
+                if (derived && (statement.OpeningCountId != opening.Id || statement.OpeningBalance != start.Amount))
+                    throw new BankingRuleException($"{wallet.Name}: the approved opening differs from the baseline used at upload. Reconciliation cannot rebase the statement.");
                 var expected = start.Amount + statement.TotalCredits - statement.TotalDebits;
                 const decimal maximum = 9_999_999_999_999_999.99m;
                 if (Math.Abs(expected) > maximum || Math.Abs(wallet.Amount - expected) > maximum)
                     throw new BankingRuleException($"{wallet.Name}: calculated closing or difference exceeds the supported monetary range.");
                 var explanation = new List<string>();
-                if (statement.OpeningBalance != start.Amount)
+                if (!derived && statement.OpeningBalance != start.Amount)
                     explanation.Add("The statement opening differs from the approved opening.");
                 if (expected != wallet.Amount)
                     explanation.Add("Approved opening plus credits minus debits differs from the submitted closing.");
-                if (statement.ClosingBalance != wallet.Amount)
+                if (!derived && statement.ClosingBalance != wallet.Amount)
                     explanation.Add("The statement ending differs from the submitted closing.");
                 var rolling = statement.OpeningBalance;
                 foreach (var row in statement.Rows.OrderBy(r => r.Sequence))
@@ -127,7 +136,10 @@ public sealed class ClosingReconciliationService(
                     TotalCredits = statement.TotalCredits, ExpectedClosing = expected, SubmittedClosing = wallet.Amount,
                     StatementOpening = statement.OpeningBalance, StatementClosing = statement.ClosingBalance,
                     Difference = wallet.Amount - expected, Succeeded = explanation.Count == 0,
-                    Explanation = explanation.Count == 0 ? "Daily opening, statement movements and closing agree." : string.Join(" ", explanation)
+                    Explanation = (derived
+                        ? $"Balances computed from approved opening count #{statement.OpeningCountId}; no bank-reported balances were supplied. "
+                        : string.Empty) +
+                        (explanation.Count == 0 ? "Daily opening, statement movements and closing agree." : string.Join(" ", explanation))
                 });
                 // Upload and reconciliation contend on the same account version, freezing the selected revision.
                 account.Version++;
@@ -319,30 +331,19 @@ public sealed class ClosingReconciliationService(
         db.BankAccounts.Where(a => a.BranchId == count.CashSession!.BranchId && a.Wallet!.AgentId == count.AgentId)
             .OrderBy(a => a.Id).ToListAsync(cancellationToken);
 
-    private static BankAccount? Binding(WalletObservation wallet, List<BankAccount> accounts) =>
+    private static BankAccount? Binding(RecordedWalletBalance wallet, List<BankAccount> accounts) =>
         wallet.Type != WalletTypeEnum.Bank ? null :
         accounts.SingleOrDefault(a => a.WalletId == wallet.Id &&
             (!wallet.BankAccountId.HasValue || a.Id == wallet.BankAccountId));
 
-    private async Task<List<WalletObservation>> ReadWalletsAsync(CashCount count, CancellationToken cancellationToken)
-    {
-        var snapshot = await db.CashCountSnapshots.AsNoTracking()
-            .SingleOrDefaultAsync(s => s.CashCountId == count.Id, cancellationToken);
-        var wallets = snapshot == null
-            ? count.Details.Select(d => new WalletObservation(d.WalletId, d.Wallet!.Name,
-                d.Wallet.WalletType!.Type, d.Wallet.Currency, d.Amount, null)).ToList()
-            : CountSnapshotCodec.Deserialize(snapshot.WalletsJson).Select(w =>
-                new WalletObservation(w.WalletId, w.WalletName, w.WalletType, w.Currency, w.Amount, w.BankAccountId)).ToList();
-        if (wallets.Count == 0 || wallets.Select(w => w.Id).Distinct().Count() != wallets.Count)
-            throw new BankingRuleException("The cash count must contain distinct recorded wallet balances.");
-        return wallets.OrderBy(w => w.Id).ToList();
-    }
+    private Task<List<RecordedWalletBalance>> ReadWalletsAsync(CashCount count, CancellationToken cancellationToken) =>
+        CashCountWalletReader.ReadAsync(db, count.Id, cancellationToken);
 
     private static string InputHash(CashCount opening, CashCount closing,
-        List<WalletObservation> openingWallets, List<WalletObservation> closingWallets, List<BankAccount> accounts)
+        List<RecordedWalletBalance> openingWallets, List<RecordedWalletBalance> closingWallets, List<BankAccount> accounts)
     {
         // Only immutable identifiers and amounts: a wallet rename or a later snapshot must not invalidate the run.
-        static List<object> Stable(List<WalletObservation> wallets, List<BankAccount> accounts) =>
+        static List<object> Stable(List<RecordedWalletBalance> wallets, List<BankAccount> accounts) =>
             wallets.Select(w => (object)new { w.Id, w.Type, w.Currency, w.Amount, AccountId = Binding(w, accounts)?.Id }).ToList();
         return BankingRequestIdentity.Hash(new
         {
@@ -356,6 +357,4 @@ public sealed class ClosingReconciliationService(
             d.CashCount.CashSessionId == closing.CashSessionId && d.CashCount.Status == CashCountStatus.Approved &&
             d.Wallet!.WalletType!.Type == WalletTypeEnum.Bank, cancellationToken);
 
-    private sealed record WalletObservation(
-        long Id, string Name, WalletTypeEnum Type, string Currency, decimal Amount, long? BankAccountId);
 }

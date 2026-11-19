@@ -20,6 +20,9 @@ transaction or use exception approval to bypass missing evidence.
    statement cannot cover another wallet.
 5. Use **Account configuration** for permitted settings changes. Financial
    history protects the account's identity, currency, timezone, and balance basis.
+6. Only for accounts whose exports lack balances (such as ABSA), enable **Allow
+   statements without running balances**. It is off by default. Changing it
+   affects future uploads, not previously accepted evidence or reports.
 
 There is no bank-specific parser selector, uploaded parser, or editable schema.
 Use **Open statements** for the selected account. **Manage account** on the
@@ -48,8 +51,8 @@ settlement.
 
 ## 3. Prepare one day's CSV
 
-Download the [blank template](../EastSeat.Agenti.Web/wwwroot/templates/agenti-bank-statement-v1.csv)
-and [column guide](../EastSeat.Agenti.Web/wwwroot/templates/agenti-bank-statement-v1-guide.txt).
+Download the [blank template](../EastSeat.Agenti.Web/wwwroot/templates/agenti-bank-statement-v2.csv)
+and [column guide](../EastSeat.Agenti.Web/wwwroot/templates/agenti-bank-statement-v2-guide.txt).
 Convert the bank export outside Agenti, using approved local tools. Never send
 customer statements to public repositories or unapproved conversion services.
 
@@ -66,12 +69,18 @@ TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalanc
 | Reference | Optional bank reference as text; preserve leading zeroes. |
 | Description | Required bank narration. |
 | Debit / Credit | Exactly one positive amount per row, with two decimals; leave the opposite column blank. |
-| RunningBalance | Balance after this row, with two decimals. Debits decrease and credits increase it. |
+| RunningBalance | Balance after this row, with two decimals. Or leave every cell blank on an explicitly enabled account; mixed blank/populated balances are rejected. Keep the header. |
 
 Save UTF-8 CSV. Preserve bank ledger order. Quote fields containing commas,
 including thousands separators. Remove headings, subtotals and non-transaction
 rows, but retain all genuine transactions for the selected day. Do not upload
 XLSX, PDF, images, formulas, extra columns, or multi-day files.
+
+For all-blank balances, the same wallet's approved opening count for the selected
+date must exist before upload. Agenti uses that recorded Bank wallet amount,
+not the total opening cash count or live balance, to compute running balances.
+The source CSV stays unchanged and the opening-count reference is retained.
+Fully supplied balances keep all existing checks, even on an opted-in account.
 
 ## 4. Upload on the separate statement page
 
@@ -88,9 +97,10 @@ date, schema identity, uploader/time and revision. There is no background import
 processor, preview/commit stage, baseline wizard, date range, or sequential-gap
 requirement.
 
-An identical file safely returns the current revision. A different file before
-use requires a replacement reason of 10-2,000 characters; older evidence remains
-available. Once used in a recorded run, that account/day cannot be replaced.
+An identical file safely returns the current revision if its approved opening
+baseline (when used) is unchanged. Before reconciliation, a changed file or
+changed baseline requires a replacement reason of 10-2,000 characters; older
+evidence remains available. Once used in a recorded run, that account/day cannot be replaced.
 Switching accounts/dates clears the unsubmitted file and confirmation.
 
 ## 5. Reconcile and separately approve
@@ -105,7 +115,11 @@ The saved report compares each Bank wallet independently:
 Approved opening + statement credits - statement debits = submitted closing
 ```
 
-It also checks the statement's opening/ending anchors and running balances.
+It also checks bank-supplied opening/ending anchors and running balances.
+For all-blank files, the report labels balances **computed from approved opening**
+and discloses that the bank supplied no independent balances. The same opening
+count and wallet amount used at upload are required; a changed baseline blocks
+reconciliation. Arithmetic agreement still permits ordinary approval after Success.
 Every Bank wallet must succeed for overall Success; differences never net across
 wallets. This is daily arithmetic, not customer-transaction matching or exact
 session-cutoff certification.

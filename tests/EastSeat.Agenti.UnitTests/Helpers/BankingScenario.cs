@@ -196,13 +196,15 @@ internal class BankingScenario : IDisposable
             new DailyStatementUpload(account.Id, Session.SessionDate, true, previousId, reason), "synthetic.csv", content);
     }
 
-    public static string StatementCsv(DateOnly date, decimal opening, decimal netChange = 0m)
+    public static string StatementCsv(DateOnly date, decimal opening, decimal netChange = 0m, bool includeBalances = true)
     {
         var debit = netChange < 0 ? 1m - netChange : 1m;
         var credit = netChange > 0 ? 1m + netChange : 1m;
+        var firstBalance = includeBalances ? (opening - debit).ToString("F2", System.Globalization.CultureInfo.InvariantCulture) : "";
+        var lastBalance = includeBalances ? (opening + netChange).ToString("F2", System.Globalization.CultureInfo.InvariantCulture) : "";
         return "TransactionDate,TransactionTime,Reference,Description,Debit,Credit,RunningBalance\n" +
-            FormattableString.Invariant($"{date:yyyy-MM-dd},,SYNTHETIC-DEBIT,Synthetic debit,{debit:F2},,{opening - debit:F2}\n") +
-            FormattableString.Invariant($"{date:yyyy-MM-dd},,SYNTHETIC-CREDIT,Synthetic credit,,{credit:F2},{opening + netChange:F2}\n");
+            FormattableString.Invariant($"{date:yyyy-MM-dd},,SYNTHETIC-DEBIT,Synthetic debit,{debit:F2},,{firstBalance}\n") +
+            FormattableString.Invariant($"{date:yyyy-MM-dd},,SYNTHETIC-CREDIT,Synthetic credit,,{credit:F2},{lastBalance}\n");
     }
 
     public void Dispose()

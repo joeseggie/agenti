@@ -1,4 +1,5 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
+using EastSeat.Agenti.Shared.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace EastSeat.Agenti.Web.Data;
@@ -20,6 +21,9 @@ public partial class ApplicationDbContext
             entity.HasOne(e => e.BankAccount).WithMany().HasForeignKey(e => e.BankAccountId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<DailyBankStatement>().WithMany().HasForeignKey(e => e.SupersedesId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(e => e.UploadedByUserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<CashCount>().WithMany().HasForeignKey(e => e.OpeningCountId).OnDelete(DeleteBehavior.Restrict);
+            entity.Property(e => e.BalanceSource).HasConversion<string>().HasMaxLength(32)
+                .HasDefaultValue(StatementBalanceSource.BankReported);
             entity.Property(e => e.UploadedByUserId).HasMaxLength(450);
             entity.Property(e => e.Currency).HasMaxLength(3);
             entity.Property(e => e.AccountIdentifier).HasMaxLength(256);

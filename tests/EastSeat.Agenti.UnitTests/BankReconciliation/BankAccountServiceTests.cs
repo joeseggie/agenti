@@ -11,6 +11,33 @@ namespace EastSeat.Agenti.UnitTests.BankReconciliation;
 public class BankAccountServiceTests
 {
     [Fact]
+    public async Task MissingBalancePermission_DefaultsOffAndRequiresAdminWithCurrentVersion()
+    {
+        using var fixture = new BankingTestContext();
+        var service = CreateService(fixture);
+        var original = Assert.Single(await service.GetAccountsAsync(fixture.Admin.Id));
+        Assert.False(original.AllowMissingRunningBalances);
+        var form = new BankAccountForm
+        {
+            WalletId = original.WalletId, BankName = original.BankName,
+            AccountIdentifier = original.AccountIdentifier, TimeZoneId = original.TimeZoneId,
+            BalanceBasis = original.BalanceBasis, AllowMissingRunningBalances = true
+        };
+        fixture.User.Role = UserRole.Supervisor;
+        await fixture.Db.SaveChangesAsync();
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.ConfigureAsync(fixture.User.Id, original.Id, form, original.Version));
+        var changed = await service.ConfigureAsync(fixture.Admin.Id, original.Id, form, original.Version);
+        Assert.True(changed.AllowMissingRunningBalances);
+        Assert.True(Assert.Single(await service.GetAccountsAsync(fixture.Admin.Id)).AllowMissingRunningBalances);
+        form.AllowMissingRunningBalances = false;
+        await Assert.ThrowsAsync<BankingConflictException>(() =>
+            service.ConfigureAsync(fixture.Admin.Id, original.Id, form, original.Version));
+        var disabled = await service.ConfigureAsync(fixture.Admin.Id, original.Id, form, changed.Version);
+        Assert.False(disabled.AllowMissingRunningBalances);
+    }
+
+    [Fact]
     public async Task CreatingUniversalAccount_BoundsDerivedBankIdentifierLength()
     {
         using var fixture = new BankingTestContext();

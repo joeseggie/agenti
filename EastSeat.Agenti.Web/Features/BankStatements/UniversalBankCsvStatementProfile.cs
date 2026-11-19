@@ -8,6 +8,7 @@ namespace EastSeat.Agenti.Web.Features.BankStatements;
 
 public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
 {
+    private const decimal MaximumAmount = 9_999_999_999_999_999.99m;
     public const string ProfileKey = "agenti-universal-csv";
     public const string CsvContentType = "text/csv";
     private readonly UniversalBankCsvSchema _schema = UniversalBankCsvSchema.Load();
@@ -75,11 +76,26 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
             throw new StatementParsingException(string.Join(" ", errors));
         }
 
+        var balanceIndex = _schema.Column("RunningBalance");
+        var completeRows = records.Skip(1).Where(r => r.Fields.Count == _schema.Headers.Count);
+        var hasBlankBalances = completeRows.Any(r => r.Fields[balanceIndex].Length == 0);
+        var mixedBalances = hasBlankBalances && completeRows.Any(r => r.Fields[balanceIndex].Length != 0);
+        var computeBalances = account.AllowMissingRunningBalances && hasBlankBalances && !mixedBalances;
+        if (hasBlankBalances && !account.AllowMissingRunningBalances)
+            errors.Add("This account requires RunningBalance on every row. An Admin must explicitly allow statements without running balances in the account configuration.");
+        else if (mixedBalances)
+            errors.Add("RunningBalance must be supplied on every row or blank on every row. Mixed balances are not supported.");
+        if (computeBalances && !account.OpeningBaseline.HasValue)
+            throw new StatementParsingException("An approved opening for this bank wallet and statement date is required before uploading a statement without running balances.");
+        if (computeBalances && account.OpeningBaseline is decimal baseline &&
+            (baseline < -MaximumAmount || baseline > MaximumAmount || decimal.Round(baseline, 2) != baseline))
+            throw new StatementParsingException("The approved opening exceeds the supported monetary range or precision.");
+
         var entries = new List<ParsedStatementEntry>();
         DateOnly? priorDate = null;
         DateTimeOffset? priorPreciseAt = null;
-        decimal? opening = null;
-        decimal? priorBalance = null;
+        decimal? opening = computeBalances ? account.OpeningBaseline : null;
+        decimal? priorBalance = opening;
         for (var index = 1; index < records.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -106,7 +122,8 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
             var balanceSpec = _schema.Definition("RunningBalance");
             var debitOk = TryOptionalAmount(fields[debitIndex], debitSpec, out var debit);
             var creditOk = TryOptionalAmount(fields[creditIndex], creditSpec, out var credit);
-            var balanceOk = TryBalance(fields[_schema.Column("RunningBalance")], balanceSpec, out var runningBalance);
+            var runningBalance = 0m;
+            var balanceOk = computeBalances || TryBalance(fields[balanceIndex], balanceSpec, out runningBalance);
             if (!debitOk) errors.Add($"Row {rowNumber}, Debit: enter a positive amount with exactly two decimal places or leave blank.");
             if (!creditOk) errors.Add($"Row {rowNumber}, Credit: enter a positive amount with exactly two decimal places or leave blank.");
             if (!balanceOk) errors.Add($"Row {rowNumber}, RunningBalance: enter an amount with exactly two decimal places.");
@@ -114,7 +131,7 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
             var timeIndex = _schema.Column("TransactionTime");
             var descriptionIndex = _schema.Column("Description");
             var referenceIndex = _schema.Column("Reference");
-            if (!debitOk || !creditOk || !balanceOk ||
+            if (!debitOk || !creditOk ||
                 !TryDate(fields[dateIndex], _schema.Definition("TransactionDate").Format!, out date) ||
                 (!string.IsNullOrEmpty(fields[timeIndex]) &&
                  !TryTime(fields[timeIndex], _schema.Definition("TransactionTime").Format!, out _)) ||
@@ -132,7 +149,19 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
                 continue;
             }
 
+            if (!balanceOk)
+                continue;
             var signedAmount = fields[debitIndex].Length == 0 ? credit : -debit;
+            if (computeBalances)
+            {
+                runningBalance = (priorBalance ??
+                    throw new StatementParsingException("An approved opening baseline is required.")) + signedAmount;
+                if (Math.Abs(runningBalance) > MaximumAmount)
+                {
+                    errors.Add($"Row {rowNumber}, RunningBalance: the computed balance exceeds the supported monetary range.");
+                    continue;
+                }
+            }
             var timeText = fields[timeIndex];
             var hasPreciseTime = timeText.Length > 0;
             var time = hasPreciseTime && TryTime(timeText, _schema.Definition("TransactionTime").Format!, out var parsedTime)
@@ -153,7 +182,7 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
             if (hasPreciseTime)
                 priorPreciseAt = occurredAt;
             opening ??= runningBalance - signedAmount;
-            if (priorBalance.HasValue && priorBalance.Value + signedAmount != runningBalance)
+            if (!mixedBalances && priorBalance.HasValue && priorBalance.Value + signedAmount != runningBalance)
                 errors.Add($"Row {rowNumber}, RunningBalance: does not equal the prior balance plus this movement.");
             priorBalance = runningBalance;
             entries.Add(new ParsedStatementEntry(
@@ -174,7 +203,8 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
             throw new StatementParsingException("The selected end date exceeds the supported date range.");
         var to = AtLocalMidnight(account.CoverageToDate.Value.AddDays(1), zone);
         return new ParsedStatement(account.AccountIdentifier, account.Currency, account.BalanceBasis,
-            from, to, openingBalance, closingBalance, true, entries);
+            from, to, openingBalance, closingBalance, true, entries,
+            computeBalances ? StatementBalanceSource.ApprovedOpening : StatementBalanceSource.BankReported);
     }
 
     private static bool TryDate(string value, string format, out DateOnly date) =>
@@ -198,7 +228,7 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
                 ? @"^(?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2}$"
                 : @"^\d+\.\d{2}$", RegexOptions.CultureInvariant) ||
             !decimal.TryParse(value, NumberStyles.AllowThousands | NumberStyles.AllowDecimalPoint,
-                CultureInfo.InvariantCulture, out amount) || amount <= 0 ||
+                CultureInfo.InvariantCulture, out amount) || amount <= 0 || amount > MaximumAmount ||
             decimal.Round(amount, definition.Scale ?? 2) != amount)
             return false;
         return true;
@@ -213,7 +243,7 @@ public sealed class UniversalBankCsvStatementProfile : IStatementImportProfile
                 ? @"^-?(?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2}$"
                 : @"^-?\d+\.\d{2}$", RegexOptions.CultureInvariant) ||
             !decimal.TryParse(value, NumberStyles.AllowLeadingSign | NumberStyles.AllowThousands |
-                NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out amount) ||
+                NumberStyles.AllowDecimalPoint,                                 CultureInfo.InvariantCulture, out amount) || amount < -MaximumAmount || amount > MaximumAmount ||
             decimal.Round(amount, definition.Scale ?? 2) != amount)
             return false;
         return true;

@@ -1,9 +1,12 @@
+using EastSeat.Agenti.Shared.Domain.Enums;
+
 namespace EastSeat.Agenti.Web.Features.BankStatements;
 
 public sealed record DailyBankStatementDto(
     long Id, long BankAccountId, DateOnly StatementDate, int Revision, string FileName,
     decimal OpeningBalance, decimal TotalDebits, decimal TotalCredits, decimal ClosingBalance,
-    int RowCount, DateTimeOffset UploadedAt, bool IsUsed, string? ReplacementReason);
+    int RowCount, DateTimeOffset UploadedAt, bool IsUsed, string? ReplacementReason,
+    StatementBalanceSource BalanceSource, long? OpeningCountId);
 
 public sealed record DailyStatementUpload(
     long BankAccountId, DateOnly StatementDate, bool ConfirmAccountAndCompleteDay,
