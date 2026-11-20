@@ -578,9 +578,9 @@ public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : Integ
                     "New complete synthetic export without balances."), "synthetic-v2.csv", content);
             Assert.Equal(StatementBalanceSource.ApprovedOpening, derived.BalanceSource);
             Assert.NotNull(derived.OpeningCountId);
-            var error = await Assert.ThrowsAsync<PostgresException>(() =>
+            var error = await Assert.ThrowsAsync<NotSupportedException>(() =>
                 db.GetService<IMigrator>().MigrateAsync(migrations[current - 1]));
-            Assert.Contains("Cannot remove computed-balance provenance", error.MessageText);
+            Assert.Contains("waiver audit history", error.Message);
             Assert.Equal(2, await db.DailyBankStatements.CountAsync());
             Assert.Equal(CashCountStatus.PendingApproval, (await db.CashCounts.FindAsync(closing.Id))!.Status);
             Assert.False(db.Database.HasPendingModelChanges());
