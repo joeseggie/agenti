@@ -153,6 +153,7 @@ builder.Services.AddScoped<ICashCountService, CashCountService>();
 builder.Services.AddScoped<ICashSessionService, CashSessionService>();
 builder.Services.AddScoped<IAgentService, AgentService>();
 builder.Services.AddScoped<IWalletTypeService, WalletTypeService>();
+builder.Services.AddScoped<IStatementReconciliationSettingService, StatementReconciliationSettingService>();
 builder.Services.AddScoped<IVaultService, VaultService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<ILoginTelemetryService, LoginTelemetryService>();

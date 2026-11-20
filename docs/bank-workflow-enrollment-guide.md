@@ -9,6 +9,12 @@ supported. Cash and Mobile Money need no statement. A Bank wallet with genuinely
 no transactions cannot complete this release's reconciliation; do not invent a
 transaction or use exception approval to bypass missing evidence.
 
+If a bank's statements cannot be obtained, an Admin can switch **Statement
+reconciliation** off for that Bank wallet type on **Wallet types** (`/wallettypes`).
+Its wallets then need no statement (binding is still required) and appear as
+"Not reconciled" in closing reports. Each change is audited; switch it back on
+when statements become available.
+
 ## 1. Bind each Bank wallet
 
 1. Sign in as Admin and open **Bank accounts** (`/bank-accounts`).
@@ -136,7 +142,7 @@ opening. Operational closure, opening approval and vault funding still apply.
 
 | Problem | Action |
 |---|---|
-| Missing statement | Upload every required Bank account's complete file for the closing date, then retry. |
+| Missing statement | Upload every required Bank account's complete file for the closing date, then retry. If the bank's statements are unobtainable, an Admin may waive statement reconciliation for that wallet type. |
 | TransactionDate mismatch or multiple dates | Obtain a complete export for exactly the selected day. Do not silently discard rows. |
 | Empty statement | Unsupported this release; escalate the no-activity limitation. Never create a fake row. |
 | Bad header, amount, encoding, or balance chain | Correct the source conversion using the shipped guide. Nothing is partially accepted. |

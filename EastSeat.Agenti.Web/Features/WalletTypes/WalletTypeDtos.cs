@@ -14,6 +14,7 @@ public class WalletTypeListItemDto
     public bool IsSystem { get; set; }
     public bool IsActive { get; set; }
     public bool SupportsDenominations { get; set; }
+    public bool RequiresStatementReconciliation { get; set; } = true;
     public int WalletCount { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 
