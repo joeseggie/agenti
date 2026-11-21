@@ -15,6 +15,14 @@ wallets. It is not performed separately for each bank, does not match individual
 customer transactions, and does not certify balances at an exact session cutoff.
 Cash and Mobile Money wallets do not require statements.
 
+**Statement waiver.** An Admin can switch statement reconciliation off for a Bank
+wallet type on the Wallet Types page (table switch or Edit dialog). It is a standing
+setting, applied to any closing without a saved run. Waived wallets still need their
+bank-account binding, need no statement, appear in the saved report as "Not
+reconciled" (frozen per run, never counted as failures), and any uploaded statement
+for them is ignored. An all-waived closing is still run by the Admin and then
+approved ordinarily. Each change is recorded append-only (who, when, new value).
+
 Reconciliation and closing approval are separate decisions. A failed
 reconciliation remains failed even if an Admin subsequently approves the closing
 with an audited exception.

@@ -42,7 +42,7 @@ rules Copilot must not miss.
 - New statement imports use the shipped, versioned universal CSV schema.
   Do not restore bank-specific executable parsers or Admin-editable schemas.
 - Admin uploads complete, non-empty single-day statements and reconciles all Bank
-  wallets together once. Cash/Mobile Money require no statements.
+  wallets together once. Cash/Mobile Money require no statements. Admin may waive statements per Bank wallet type (audited; shown as "Not reconciled").
 - Compare approved opening plus credits minus debits with submitted closing and
   statement anchors. This is daily arithmetic, not matching or exact-cutoff
   certification; never fabricate times.

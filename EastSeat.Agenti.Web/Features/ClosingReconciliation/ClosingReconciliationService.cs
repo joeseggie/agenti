@@ -17,6 +17,7 @@ public sealed class ClosingReconciliationService(
         var (count, _) = await RequireClosingAsync(userId, closingCountId, cancellationToken);
         var wallets = await ReadWalletsAsync(count, cancellationToken);
         var accounts = await AccountsAsync(count, cancellationToken);
+        var required = await StatementRequirementsAsync(wallets, cancellationToken);
         var statements = await db.DailyBankStatements.AsNoTracking()
             .Where(s => s.StatementDate == count.CountDate && accounts.Select(a => a.Id).Contains(s.BankAccountId))
             .OrderByDescending(s => s.Revision).ToListAsync(cancellationToken);
@@ -29,16 +30,21 @@ public sealed class ClosingReconciliationService(
             {
                 var accountId = Binding(w, accounts)?.Id;
                 return new ClosingWalletDto(w.Id, w.Name, w.Type, w.Currency, w.Amount, accountId,
-                    statements.FirstOrDefault(s => s.BankAccountId == accountId)?.Id);
+                    statements.FirstOrDefault(s => s.BankAccountId == accountId)?.Id,
+                    w.Type != WalletTypeEnum.Bank || required.GetValueOrDefault(w.Id, true));
             }).ToList(),
             run == null ? null : new ClosingReportDto(run.Id, run.Succeeded, run.PerformedByUserId, run.PerformedAt,
                 run.Wallets.OrderBy(w => w.WalletName).Select(w =>
                 {
-                    var statement = statements.Single(s => s.Id == w.StatementId);
+                    var statement = w.StatementId.HasValue
+                        ? statements.Single(s => s.Id == w.StatementId.Value)
+                        : null;
                     return new ClosingWalletResultDto(w.WalletName, w.BankName, w.AccountIdentifier, w.Currency,
-                        w.StatementId, statement.Revision, w.OpeningBalance, w.TotalDebits, w.TotalCredits,
+                        w.StatementId, statement?.Revision, w.OpeningBalance, w.TotalDebits, w.TotalCredits,
                         w.ExpectedClosing, w.SubmittedClosing, w.StatementOpening, w.StatementClosing,
-                        w.Difference, w.Succeeded, w.Explanation, statement.BalanceSource, statement.OpeningCountId);
+                        w.Difference, w.Succeeded, w.Explanation,
+                        statement?.BalanceSource ?? StatementBalanceSource.BankReported, statement?.OpeningCountId,
+                        w.StatementWaived);
                 }).ToList()),
             approval == null ? null : new ClosingApprovalDto(
                 approval.IsException, approval.Reason, approval.ApprovedByUserId, approval.ApprovedAt),
@@ -74,13 +80,14 @@ public sealed class ClosingReconciliationService(
             var statements = await db.DailyBankStatements.AsNoTracking().Include(s => s.Rows)
                 .Where(s => s.StatementDate == count.CountDate && accounts.Select(a => a.Id).Contains(s.BankAccountId))
                 .OrderByDescending(s => s.Revision).ToListAsync(cancellationToken);
+            var required = await StatementRequirementsAsync(banks, cancellationToken);
             var missing = new List<string>();
             foreach (var wallet in banks)
             {
                 var account = Binding(wallet, accounts);
                 if (account == null)
                     missing.Add($"{wallet.Name}: bank account binding is missing");
-                else if (!statements.Any(s => s.BankAccountId == account.Id))
+                else if (required.GetValueOrDefault(wallet.Id, true) && !statements.Any(s => s.BankAccountId == account.Id))
                     missing.Add($"{wallet.Name}: statement for {count.CountDate:yyyy-MM-dd} is missing");
             }
             if (missing.Count > 0)
@@ -95,8 +102,22 @@ public sealed class ClosingReconciliationService(
             foreach (var wallet in banks)
             {
                 var account = Binding(wallet, accounts)!;
-                var statement = statements.First(s => s.BankAccountId == account.Id);
                 var start = openingWallets.Single(w => w.Id == wallet.Id);
+                if (!required.GetValueOrDefault(wallet.Id, true))
+                {
+                    if (start.Type != WalletTypeEnum.Bank || start.Currency != wallet.Currency || account.Currency != wallet.Currency)
+                        throw new BankingRuleException($"{wallet.Name}: opening, closing and account currencies/types must agree.");
+                    run.Wallets.Add(new ClosingWalletResult
+                    {
+                        WalletId = wallet.Id, BankAccountId = account.Id, StatementId = null, StatementWaived = true,
+                        WalletName = wallet.Name, BankName = account.BankName, AccountIdentifier = account.AccountIdentifier,
+                        Currency = wallet.Currency, OpeningBalance = start.Amount, SubmittedClosing = wallet.Amount,
+                        Succeeded = true,
+                        Explanation = "Not reconciled: statement reconciliation is switched off for this wallet type."
+                    });
+                    continue;
+                }
+                var statement = statements.First(s => s.BankAccountId == account.Id);
                 if (start.Type != WalletTypeEnum.Bank || start.Currency != wallet.Currency ||
                     statement.Currency != wallet.Currency || account.Currency != wallet.Currency)
                     throw new BankingRuleException($"{wallet.Name}: opening, closing and statement currencies/types must agree.");
@@ -326,6 +347,15 @@ public sealed class ClosingReconciliationService(
 
     private IQueryable<CashCount> Counts() => db.CashCounts.Include(c => c.Agent).ThenInclude(a => a!.User)
         .Include(c => c.CashSession).Include(c => c.Details).ThenInclude(d => d.Wallet).ThenInclude(w => w!.WalletType);
+
+    private async Task<Dictionary<long, bool>> StatementRequirementsAsync(
+        IEnumerable<RecordedWalletBalance> wallets, CancellationToken cancellationToken)
+    {
+        var ids = wallets.Where(w => w.Type == WalletTypeEnum.Bank).Select(w => w.Id).ToList();
+        var rows = await db.Wallets.AsNoTracking().Where(w => ids.Contains(w.Id))
+            .Select(w => new { w.Id, w.WalletType!.RequiresStatementReconciliation }).ToListAsync(cancellationToken);
+        return rows.ToDictionary(r => r.Id, r => r.RequiresStatementReconciliation);
+    }
 
     private Task<List<BankAccount>> AccountsAsync(CashCount count, CancellationToken cancellationToken) =>
         db.BankAccounts.Where(a => a.BranchId == count.CashSession!.BranchId && a.Wallet!.AgentId == count.AgentId)
