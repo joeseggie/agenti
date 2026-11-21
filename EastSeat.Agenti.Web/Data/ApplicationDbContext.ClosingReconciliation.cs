@@ -11,6 +11,7 @@ public partial class ApplicationDbContext
     public DbSet<ClosingReconciliationRun> ClosingReconciliationRuns => Set<ClosingReconciliationRun>();
     public DbSet<ClosingWalletResult> ClosingWalletResults => Set<ClosingWalletResult>();
     public DbSet<ClosingApprovalDecision> ClosingApprovalDecisions => Set<ClosingApprovalDecision>();
+    public DbSet<WalletTypeReconciliationAudit> WalletTypeReconciliationAudits => Set<WalletTypeReconciliationAudit>();
 
     private static void ConfigureClosingReconciliation(ModelBuilder builder)
     {
@@ -75,6 +76,13 @@ public partial class ApplicationDbContext
             entity.Property(e => e.StatementOpening).HasPrecision(18, 2);
             entity.Property(e => e.StatementClosing).HasPrecision(18, 2);
             entity.Property(e => e.Difference).HasPrecision(18, 2);
+        });
+        builder.Entity<WalletTypeReconciliationAudit>(entity =>
+        {
+            entity.HasIndex(e => e.WalletTypeId);
+            entity.HasOne<WalletType>().WithMany().HasForeignKey(e => e.WalletTypeId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ApplicationUser>().WithMany().HasForeignKey(e => e.ChangedByUserId).OnDelete(DeleteBehavior.Restrict);
+            entity.Property(e => e.ChangedByUserId).HasMaxLength(450);
         });
         builder.Entity<ClosingApprovalDecision>(entity =>
         {

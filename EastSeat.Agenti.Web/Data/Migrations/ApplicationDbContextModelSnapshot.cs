@@ -1474,12 +1474,15 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
-                    b.Property<long>("StatementId")
+                    b.Property<long?>("StatementId")
                         .HasColumnType("bigint");
 
                     b.Property<decimal>("StatementOpening")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
+
+                    b.Property<bool>("StatementWaived")
+                        .HasColumnType("boolean");
 
                     b.Property<decimal>("SubmittedClosing")
                         .HasPrecision(18, 2)
@@ -2602,6 +2605,9 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<bool>("RequiresStatementReconciliation")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("SupportsDenominations")
                         .HasColumnType("boolean");
 
@@ -2628,6 +2634,7 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                             IsActive = true,
                             IsSystem = true,
                             Name = "Cash",
+                            RequiresStatementReconciliation = true,
                             SupportsDenominations = true,
                             Type = "Cash"
                         },
@@ -2639,6 +2646,7 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                             IsActive = true,
                             IsSystem = true,
                             Name = "MTN Mobile Money",
+                            RequiresStatementReconciliation = true,
                             SupportsDenominations = false,
                             Type = "MobileMoney"
                         },
@@ -2650,6 +2658,7 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                             IsActive = true,
                             IsSystem = true,
                             Name = "Airtel Money",
+                            RequiresStatementReconciliation = true,
                             SupportsDenominations = false,
                             Type = "MobileMoney"
                         },
@@ -2661,9 +2670,41 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                             IsActive = true,
                             IsSystem = true,
                             Name = "Bank Account",
+                            RequiresStatementReconciliation = true,
                             SupportsDenominations = false,
                             Type = "Bank"
                         });
+                });
+
+            modelBuilder.Entity("EastSeat.Agenti.Shared.Domain.Entities.WalletTypeReconciliationAudit", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("ChangedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ChangedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<bool>("Required")
+                        .HasColumnType("boolean");
+
+                    b.Property<long>("WalletTypeId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChangedByUserId");
+
+                    b.HasIndex("WalletTypeId");
+
+                    b.ToTable("WalletTypeReconciliationAudits");
                 });
 
             modelBuilder.Entity("EastSeat.Agenti.Web.Data.ApplicationUser", b =>
@@ -3539,8 +3580,7 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                     b.HasOne("EastSeat.Agenti.Shared.Domain.Entities.DailyBankStatement", null)
                         .WithMany()
                         .HasForeignKey("StatementId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("EastSeat.Agenti.Shared.Domain.Entities.Wallet", null)
                         .WithMany()
@@ -3999,6 +4039,21 @@ namespace EastSeat.Agenti.Web.Data.Migrations
                     b.Navigation("RejectedByUser");
 
                     b.Navigation("Wallet");
+                });
+
+            modelBuilder.Entity("EastSeat.Agenti.Shared.Domain.Entities.WalletTypeReconciliationAudit", b =>
+                {
+                    b.HasOne("EastSeat.Agenti.Web.Data.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("ChangedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("EastSeat.Agenti.Shared.Domain.Entities.WalletType", null)
+                        .WithMany()
+                        .HasForeignKey("WalletTypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("EastSeat.Agenti.Web.Data.UserAuditLog", b =>

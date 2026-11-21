@@ -573,6 +573,114 @@ public class ClosingReconciliationTests
         Assert.Equal(CashCountStatus.Approved, approved.Status);
     }
 
+    private static void Waive(BankingScenario fixture, Wallet wallet, bool required = false)
+    {
+        var type = fixture.Db.WalletTypes.Single(t => t.Id == wallet.WalletTypeId);
+        type.RequiresStatementReconciliation = required;
+        fixture.Db.SaveChanges();
+    }
+
+    [Fact]
+    public async Task WaivedWallet_NeedsNoStatement_IsReportedNotReconciled_AndOrdinaryApprovalWorks()
+    {
+        using var fixture = new BankingTestContext();
+        var second = fixture.AddWallet("Waived bank", WalletTypeEnum.Bank, 200_000m);
+        fixture.BindBankAccount(second);
+        Waive(fixture, second);
+        fixture.AddApprovedOpening(additionalWallets: [second]);
+        var closing = fixture.AddSubmittedClosing();
+        await fixture.UploadStatementAsync(fixture.Account, Clock(), Csv(fixture));
+        var supervisor = AddReviewer(fixture, UserRole.Supervisor);
+        var service = Service(fixture);
+
+        var before = await service.GetAsync(fixture.Admin.Id, closing.Id);
+        Assert.Contains(before.Wallets, w => w.WalletName == "Waived bank" && !w.StatementRequired);
+
+        var report = (await service.ReconcileAsync(fixture.Admin.Id, closing.Id)).Report!;
+
+        Assert.True(report.Succeeded);
+        var waived = Assert.Single(report.Wallets, w => w.StatementWaived);
+        Assert.Equal("Waived bank", waived.WalletName);
+        Assert.Null(waived.StatementId);
+        Assert.Null(waived.StatementRevision);
+        Assert.Single(report.Wallets, w => !w.StatementWaived && w.StatementId.HasValue);
+        var approved = await service.ApproveAsync(supervisor.Id, closing.Id, false);
+        Assert.Equal(CashCountStatus.Approved, approved.Status);
+        Assert.False(approved.Approval!.IsException);
+    }
+
+    [Fact]
+    public async Task AllBanksWaived_AdminStillRuns_SupervisorCannot_AndUploadedStatementIsIgnored()
+    {
+        using var fixture = new BankingTestContext();
+        Waive(fixture, fixture.Db.Wallets.Include(w => w.WalletType).First(w => w.WalletType!.Type == WalletTypeEnum.Bank));
+        fixture.AddApprovedOpening();
+        var closing = fixture.AddSubmittedClosing();
+        await fixture.UploadStatementAsync(fixture.Account, Clock(), Csv(fixture, change: 50m));
+        var supervisor = AddReviewer(fixture, UserRole.Supervisor);
+        var service = Service(fixture);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.ReconcileAsync(supervisor.Id, closing.Id));
+        var report = (await service.ReconcileAsync(fixture.Admin.Id, closing.Id)).Report!;
+
+        Assert.True(report.Succeeded);
+        Assert.All(report.Wallets, w => Assert.True(w.StatementWaived));
+        Assert.Equal(CashCountStatus.Approved, (await service.ApproveAsync(supervisor.Id, closing.Id, false)).Status);
+    }
+
+    [Fact]
+    public async Task WaivedWallet_StillRequiresBankAccountBinding()
+    {
+        using var fixture = new BankingTestContext();
+        var second = fixture.AddWallet("Unbound waived", WalletTypeEnum.Bank, 200_000m);
+        Waive(fixture, second);
+        fixture.AddApprovedOpening(additionalWallets: [second]);
+        var closing = fixture.AddSubmittedClosing();
+        await fixture.UploadStatementAsync(fixture.Account, Clock(), Csv(fixture));
+        var error = await Assert.ThrowsAsync<BankingRuleException>(() => Service(fixture).ReconcileAsync(fixture.Admin.Id, closing.Id));
+        Assert.Contains("binding", error.Message);
+    }
+
+    [Fact]
+    public async Task FailedRequiredWallet_WithWaivedWallet_StillNeedsAdminException()
+    {
+        using var fixture = new BankingTestContext();
+        var second = fixture.AddWallet("Waived bank", WalletTypeEnum.Bank, 200_000m);
+        fixture.BindBankAccount(second);
+        Waive(fixture, second);
+        fixture.AddApprovedOpening(additionalWallets: [second]);
+        var closing = fixture.AddSubmittedClosing();
+        await fixture.UploadStatementAsync(fixture.Account, Clock(), Csv(fixture, change: 50m));
+        var supervisor = AddReviewer(fixture, UserRole.Supervisor);
+        var service = Service(fixture);
+        var report = (await service.ReconcileAsync(fixture.Admin.Id, closing.Id)).Report!;
+        Assert.False(report.Succeeded);
+        Assert.Single(report.Wallets, w => !w.Succeeded);
+        await Assert.ThrowsAsync<BankingRuleException>(() => service.ApproveAsync(supervisor.Id, closing.Id, false));
+        Assert.True((await service.ApproveAsync(fixture.Admin.Id, closing.Id, true, "Investigated bank difference.", true)).Approval!.IsException);
+    }
+
+    [Fact]
+    public async Task TogglingAfterRun_DoesNotChangeSavedReport_OrBlockApproval()
+    {
+        using var fixture = new BankingTestContext();
+        var second = fixture.AddWallet("Waived bank", WalletTypeEnum.Bank, 200_000m);
+        fixture.BindBankAccount(second);
+        Waive(fixture, second);
+        fixture.AddApprovedOpening(additionalWallets: [second]);
+        var closing = fixture.AddSubmittedClosing();
+        await fixture.UploadStatementAsync(fixture.Account, Clock(), Csv(fixture));
+        var supervisor = AddReviewer(fixture, UserRole.Supervisor);
+        var service = Service(fixture);
+        await service.ReconcileAsync(fixture.Admin.Id, closing.Id);
+
+        Waive(fixture, second, required: true);
+
+        var review = await service.GetAsync(fixture.Admin.Id, closing.Id);
+        Assert.Single(review.Report!.Wallets, w => w.StatementWaived);
+        Assert.Equal(CashCountStatus.Approved, (await service.ApproveAsync(supervisor.Id, closing.Id, false)).Status);
+    }
+
     private static ApplicationUser AddReviewer(BankingScenario fixture, UserRole role)
     {
         var user = new ApplicationUser
