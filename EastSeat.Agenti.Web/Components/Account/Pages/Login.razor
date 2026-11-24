@@ -15,16 +15,16 @@
 
 <PageTitle>Log in</PageTitle>
 
-<div class="login-page">
-    <MudContainer MaxWidth="MaxWidth.Small" Class="d-flex align-center justify-center" Style="min-height: 100vh;">
-        <MudCard Elevation="8" Class="pa-8 rounded-lg" Style="width: 100%; max-width: 450px;">
+<div class="auth-page">
+    <MudContainer MaxWidth="MaxWidth.Small" Class="auth-container">
+        <MudCard Elevation="2" Class="auth-card">
             <MudCardHeader Class="pb-0">
                 <CardHeaderContent>
                     <MudStack AlignItems="AlignItems.Center" Class="mb-4">
                         <MudIcon Icon="@Icons.Material.Filled.Lock" Size="Size.Large" Color="Color.Primary"
                             Class="mb-2" />
-                        <MudText Typo="Typo.h4" Color="Color.Primary">Welcome Back</MudText>
-                        <MudText Typo="Typo.body2" Color="Color.Secondary">Sign in to your account</MudText>
+                        <MudText Typo="Typo.h4" HtmlTag="h1" Color="Color.Primary">Welcome Back</MudText>
+                        <MudText Typo="Typo.body2">Sign in to your account</MudText>
                     </MudStack>
                 </CardHeaderContent>
             </MudCardHeader>
@@ -49,7 +49,7 @@
                         autocomplete="current-password" name="Input.Password" Adornment="Adornment.Start"
                         AdornmentIcon="@Icons.Material.Filled.Lock" AdornmentColor="Color.Primary" FullWidth="true" />
 
-                    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-4">
+                    <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-4">
                         <MudCheckBox @bind-Value="Input.RememberMe" Label="Remember me" Color="Color.Primary"
                             Dense="true" name="Input.RememberMe" />
                         <MudLink Href="Account/ForgotPassword" Color="Color.Primary" Typo="Typo.body2">Forgot password?
@@ -57,7 +57,7 @@
                     </MudStack>
 
                     <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
-                        FullWidth="true" Size="Size.Large" Class="mb-4 rounded-pill auth-button"
+                        FullWidth="true" Size="Size.Large" Class="mb-4"
                         Disabled="@_isLoggingIn">
                         @if (_isLoggingIn)
                         {
@@ -72,10 +72,6 @@
                         }
                     </MudButton>
                 </EditForm>
-
-                <MudDivider Class="my-4">
-                    <MudText Typo="Typo.body2" Color="Color.Secondary">OR</MudText>
-                </MudDivider>
 
                 <ExternalLoginPicker />
 
@@ -93,24 +89,6 @@
         </MudCard>
     </MudContainer>
 </div>
-
-<style>
-    .login-page {
-        background: #ffffff;
-        min-height: 100vh;
-    }
-
-    .auth-button {
-        transition: all 0.3s ease;
-    }
-
-    .auth-button:hover {
-        background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%) !important;
-        box-shadow: 0 4px 15px rgba(25, 118, 210, 0.4);
-        transform: translateY(-2px);
-        color: #ffffff !important;
-    }
-</style>
 
 @code {
     private string? errorMessage;

@@ -1,0 +1,19 @@
+<div class="agent-form-error" tabindex="-1" @ref="_element">
+    <MudAlert Severity="Severity.Error" Class="mb-4">
+        @Message
+        @ChildContent
+    </MudAlert>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Message { get; set; } = string.Empty;
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    private ElementReference _element;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Dialog content renders separately from the page that opens it.
+        if (firstRender)
+            await _element.FocusAsync();
+    }
+}

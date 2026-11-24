@@ -1,45 +1,69 @@
 ﻿@page "/"
 @using EastSeat.Agenti.Web.Features.Dashboard
+@using EastSeat.Agenti.Shared.Services
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize]
 @inject IDashboardService DashboardService
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject PersistentComponentState ApplicationState
+@inject ILogger<Home> Logger
+@inject IBusinessClock BusinessClock
+@implements IDisposable
 @rendermode InteractiveServer
 
 <PageTitle>Dashboard - Agenti</PageTitle>
 
-<MudContainer MaxWidth="MaxWidth.Large" Class="dashboard-page mt-4">
+<MudContainer MaxWidth="MaxWidth.Large" Class="dashboard-page mt-4" aria-busy="@(_loading ? "true" : "false")">
     <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="dashboard-heading">
         <div>
             <MudText Typo="Typo.overline" Class="dashboard-eyebrow">OVERVIEW</MudText>
-            <MudText Typo="Typo.h4" Class="dashboard-title">Dashboard</MudText>
-            <MudText Typo="Typo.body2" Color="Color.Default">Your branch operations at a glance.</MudText>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="dashboard-title">Dashboard</MudText>
+            <MudText Typo="Typo.body2">Current wallet allocations and session overview.</MudText>
+            <MudText Typo="Typo.caption">Business date (Uganda): @BusinessClock.Today.ToString("yyyy-MM-dd")</MudText>
         </div>
         <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Refresh"
-            OnClick="@LoadDashboard" Disabled="@_loading">
-            @(_loading ? "Loading..." : "Refresh")
+            OnClick="@LoadDashboard" Disabled="@(_loading || !RendererInfo.IsInteractive)">
+            @(_loading ? "Refreshing..." : "Refresh")
         </MudButton>
     </MudStack>
 
-    @if (_loading)
+    <MudPaper Outlined="true" Class="pa-4 mb-4">
+        <MudText Typo="Typo.h6" HtmlTag="h2">Today's work</MudText>
+        <MudText Typo="Typo.body2" Class="mb-3">Open a task to review its current status and prerequisites.</MudText>
+        <MudStack Row="true" Wrap="Wrap.Wrap">
+            <AuthorizeView Roles="Agent">
+                <MudButton Href="/cashcount" Variant="Variant.Filled" Color="Color.Primary">Open cash count</MudButton>
+                <MudButton Href="/customer-transactions" Variant="Variant.Outlined">Customer register</MudButton>
+            </AuthorizeView>
+            <AuthorizeView Policy="CashCountApprove">
+                <MudButton Href="/cashcount-approvals" Variant="Variant.Filled" Color="Color.Primary">Review approvals</MudButton>
+                <MudButton Href="/cashsessions" Variant="Variant.Outlined">Cash sessions</MudButton>
+            </AuthorizeView>
+            <AuthorizeView Policy="BankReconciliation">
+                <MudButton Href="/bank-statements" Variant="Variant.Outlined">Daily bank statements</MudButton>
+            </AuthorizeView>
+        </MudStack>
+    </MudPaper>
+
+    @if (_errorMessage is not null)
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-4" role="alert">
+            @_errorMessage
+        </MudAlert>
+    }
+
+    @if (_loading && _dashboard is null)
     {
         <MudGrid>
             <MudItem xs="12" Class="d-flex justify-center">
-                <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+                <div class="dashboard-loading" role="status">
+                    <MudProgressCircular Indeterminate="true" Color="Color.Primary" aria-label="Loading dashboard" />
+                    <MudText Typo="Typo.body2">Loading branch balances...</MudText>
+                </div>
             </MudItem>
         </MudGrid>
     }
-    else if (_errorMessage is not null)
-    {
-        <MudGrid>
-            <MudItem xs="12">
-                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mt-4">
-                    <MudText Typo="Typo.body1">@_errorMessage</MudText>
-                </MudAlert>
-            </MudItem>
-        </MudGrid>
-    }
-    else if (_dashboard is null || !_dashboard.HasWallets)
+    else if (_dashboard is not null && !_dashboard.HasWallets)
     {
         <MudGrid>
             <MudItem xs="12">
@@ -48,14 +72,23 @@
                         <strong>No wallets configured for this agent.</strong>
                     </MudText>
                     <MudText Typo="Typo.body2" Class="mt-2">
-                        Wallet configuration will be available in a future update.
+                        Ask an administrator to configure the agent's wallets before recording a cash count.
                     </MudText>
+                    <AuthorizeView Roles="Admin,Supervisor">
+                        <MudButton Href="/agents" Variant="Variant.Text" Color="Color.Primary" Class="mt-2">
+                            Manage agent wallets
+                        </MudButton>
+                    </AuthorizeView>
                 </MudAlert>
             </MudItem>
         </MudGrid>
     }
-    else
+    else if (_dashboard is not null)
     {
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" aria-label="Refreshing dashboard" />
+        }
         @if (_dashboard.SessionStatus.UsesBankReconciliation)
         {
             <MudAlert Severity="Severity.Info" Class="mb-4">
@@ -68,24 +101,24 @@
             <MudItem xs="12">
                 <MudCard Class="session-status-card dashboard-surface">
                     <MudCardContent>
-                        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                        <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
                             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                                 <MudAvatar Color="Color.Primary" Variant="Variant.Filled" Class="dashboard-icon">
                                     <MudIcon Icon="@Icons.Material.Filled.EventAvailable" />
                                 </MudAvatar>
                                 <div>
                                     <MudText Typo="Typo.overline" Class="dashboard-eyebrow">TODAY</MudText>
-                                    <MudText Typo="Typo.h6">Session status</MudText>
+                                    <MudText Typo="Typo.h6" HtmlTag="h2">Session status</MudText>
                                 </div>
                             </MudStack>
                             <MudChip T="string" Color="@GetSessionStatusColor()" Variant="Variant.Filled" Class="session-chip">
                                 @_dashboard.SessionStatus.StatusDisplay
                             </MudChip>
                         </MudStack>
-                        @if (_dashboard.SessionStatus.HasActiveSession)
+                        @if (_dashboard.SessionStatus.HasActiveSession && _dashboard.SessionStatus.OpenedAt is { } openedAt)
                         {
                             <MudText Typo="Typo.body2" Class="mt-2">
-                                Started: @_dashboard.SessionStatus.OpenedAt?.ToLocalTime().ToString("MMM d, yyyy 'at' h:mm tt")
+                                Started (Uganda): @BusinessTimeText.Format(openedAt)
                             </MudText>
                         }
                         else
@@ -101,17 +134,17 @@
             </MudItem>
         </MudGrid>
 
-        <MudGrid Class="dashboard-metrics">
-            <MudItem xs="12" sm="4">
+        <MudGrid Class="dashboard-metrics" Spacing="3">
+            <MudItem xs="12" sm="6" lg="4">
                 <MudCard Class="dashboard-surface metric-card">
                     <MudCardContent>
                         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
                             <MudAvatar Color="Color.Primary" Variant="Variant.Filled" Class="dashboard-icon">
                                 <MudIcon Icon="@Icons.Material.Filled.AccountBalance" />
                             </MudAvatar>
-                            <div>
-                                <MudText Typo="Typo.body2" Color="Color.Secondary">Vault balance</MudText>
-                                <MudText Typo="Typo.h5" Color="Color.Primary" Class="metric-value">
+                            <div class="metric-copy">
+                                <MudText Typo="Typo.body2">Vault balance</MudText>
+                                <MudText Typo="Typo.h5" HtmlTag="p" Class="metric-value">
                                     @_dashboard.Currency @_dashboard.VaultBalance.ToString("N0")
                                 </MudText>
                             </div>
@@ -119,16 +152,16 @@
                     </MudCardContent>
                 </MudCard>
             </MudItem>
-            <MudItem xs="12" sm="4">
+            <MudItem xs="12" sm="6" lg="4">
                 <MudCard Class="dashboard-surface metric-card">
                     <MudCardContent>
                         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
                             <MudAvatar Color="Color.Secondary" Variant="Variant.Filled" Class="dashboard-icon">
                                 <MudIcon Icon="@Icons.Material.Filled.AccountBalanceWallet" />
                             </MudAvatar>
-                            <div>
-                                <MudText Typo="Typo.body2" Color="Color.Secondary">Agent wallet balance</MudText>
-                                <MudText Typo="Typo.h5" Color="Color.Primary" Class="metric-value">
+                            <div class="metric-copy">
+                                <MudText Typo="Typo.body2">Agent wallet balance</MudText>
+                                <MudText Typo="Typo.h5" HtmlTag="p" Class="metric-value">
                                     @_dashboard.Currency @_dashboard.TotalAgentBalance.ToString("N0")
                                 </MudText>
                             </div>
@@ -136,26 +169,27 @@
                     </MudCardContent>
                 </MudCard>
             </MudItem>
-            <MudItem xs="12" sm="4">
-                <MudCard Class="dashboard-surface metric-card difference-card" Style="@GetDifferenceCardStyle()">
+            <MudItem xs="12" sm="6" lg="4">
+                <MudCard Class="@($"dashboard-surface metric-card difference-card {GetDifferenceClass()}")">
                     <MudCardContent>
                         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
                             <MudAvatar Color="Color.Info" Variant="Variant.Filled" Class="dashboard-icon">
                                 <MudIcon Icon="@Icons.Material.Filled.SwapVert" />
                             </MudAvatar>
-                            <div>
-                                <MudText Typo="Typo.body2" Style="@GetDifferenceTextStyle()">Vault / agent difference</MudText>
-                                <MudText Typo="Typo.h5" Style="@GetDifferenceTextStyle()" Class="metric-value">
+                            <div class="metric-copy">
+                                <MudText Typo="Typo.body2">Vault / agent difference</MudText>
+                                <MudText Typo="Typo.h5" HtmlTag="p" Class="metric-value">
                                     @_dashboard.Currency @_dashboard.VaultAgentDifference.ToString("N0")
                                 </MudText>
                             </div>
                         </MudStack>
+                        <MudText Typo="Typo.caption" Class="difference-caption">Vault balance minus agent wallet balances.</MudText>
                     </MudCardContent>
                 </MudCard>
             </MudItem>
         </MudGrid>
 
-        <MudGrid Class="dashboard-wallets">
+        <MudGrid Class="dashboard-wallets" Spacing="3">
             <MudItem xs="12">
                 <MudCard Class="dashboard-surface">
                     <MudCardContent>
@@ -164,12 +198,16 @@
                                 <MudIcon Icon="@Icons.Material.Filled.People" />
                             </MudAvatar>
                             <div>
-                                <MudText Typo="Typo.h6">Agent wallet balances</MudText>
-                                <MudText Typo="Typo.body2" Color="Color.Secondary">Current balances across your branch.</MudText>
+                                <MudText Typo="Typo.h6" HtmlTag="h2">Agent wallet balances</MudText>
+                                <MudText Typo="Typo.body2">Current balances across @_dashboard.AgentSummaries.Count agents.</MudText>
                             </div>
                         </MudStack>
-                        <MudTable Items="@_dashboard.AgentSummaries" Hover="true" Dense="true" Striped="true"
-                            Breakpoint="Breakpoint.Sm">
+                        <MudTextField T="string" @bind-Value="_search" @bind-Value:after="ResetAgentPage" Label="Search agents" Placeholder="Name or code"
+                            Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" DebounceInterval="250"
+                            Clearable="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                            Class="dashboard-search mb-3" />
+                        <MudTable Items="@_dashboard.AgentSummaries" Filter="FilterAgent" RowsPerPage="10" @bind-CurrentPage="_agentPage"
+                            Hover="true" Dense="true" Striped="true" Elevation="0" Breakpoint="Breakpoint.Sm">
                             <HeaderContent>
                                 <MudTh>Agent Name</MudTh>
                                 <MudTh Style="text-align: right">Total Balance</MudTh>
@@ -180,12 +218,20 @@
                                     @context.Currency @context.TotalBalance.ToString("N0")
                                 </MudTd>
                             </RowTemplate>
+                            <NoRecordsContent>
+                                <MudText Typo="Typo.body2" Class="pa-4">
+                                    @(string.IsNullOrWhiteSpace(_search) ? "No agents to display." : "No agents match your search. Clear the search to see all agents.")
+                                </MudText>
+                            </NoRecordsContent>
                             <FooterContent>
                                 <MudTd><strong>Total (All Agents)</strong></MudTd>
                                 <MudTd Style="text-align: right">
                                     <strong>@_dashboard.Currency @_dashboard.TotalAgentBalance.ToString("N0")</strong>
                                 </MudTd>
                             </FooterContent>
+                            <PagerContent>
+                                <MudTablePager PageSizeOptions="@PageSizes" />
+                            </PagerContent>
                         </MudTable>
                     </MudCardContent>
                 </MudCard>
@@ -196,36 +242,67 @@
 
 @code {
     private DashboardViewModel? _dashboard;
-    private bool _loading = true;
+    private bool _loading;
     private string? _errorMessage;
+    private string? _search;
+    private int _agentPage;
+    private PersistingComponentStateSubscription _persistingSubscription;
+    private static readonly int[] PageSizes = [10, 25, 50];
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadDashboard();
+        if (ApplicationState.TryTakeFromJson<DashboardViewModel>("dashboard", out var restored) && restored is not null)
+            _dashboard = restored;
+        else
+            await LoadDashboard();
+
+        _persistingSubscription = ApplicationState.RegisterOnPersisting(PersistDashboard, InteractiveServer);
+    }
+
+    private Task PersistDashboard()
+    {
+        if (_dashboard is not null && _errorMessage is null)
+            ApplicationState.PersistAsJson("dashboard", _dashboard);
+        return Task.CompletedTask;
     }
 
     private async Task LoadDashboard()
     {
+        if (_loading)
+            return;
+
         _loading = true;
         _errorMessage = null;
-        StateHasChanged();
 
         try
         {
             var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-            var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
+            var userId = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                ?? throw new UnauthorizedAccessException("A signed-in user is required.");
             _dashboard = await DashboardService.GetDashboardAsync(userId);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            _errorMessage = "An error occurred while loading the dashboard. Please try refreshing.";
+            Logger.LogError("Dashboard loading failed with {ExceptionType}.", exception.GetType().Name);
+            _errorMessage = _dashboard is null
+                ? "The dashboard could not be loaded. Select Refresh to try again."
+                : "The dashboard could not be refreshed. Previously loaded balances are still shown. Select Refresh to try again.";
         }
         finally
         {
             _loading = false;
-            StateHasChanged();
         }
     }
+
+    private bool FilterAgent(AgentWalletSummaryDto agent)
+    {
+        var search = _search?.Trim();
+        return string.IsNullOrEmpty(search)
+            || agent.AgentName.Contains(search, StringComparison.OrdinalIgnoreCase)
+            || agent.AgentCode.Contains(search, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ResetAgentPage() => _agentPage = 0;
 
     private Color GetSessionStatusColor() => _dashboard?.SessionStatus.Status switch
     {
@@ -238,20 +315,12 @@
         _ => Color.Info
     };
 
-    private string GetDifferenceCardStyle()
+    private string GetDifferenceClass() => _dashboard?.VaultAgentDifference switch
     {
-        if (_dashboard is null) return string.Empty;
-        return _dashboard.VaultAgentDifference switch
-        {
-            < 0 => "background-color: #c43d4d;",
-            > 0 => "background-color: #16835d;",
-            _ => string.Empty
-        };
-    }
+        < 0 => "difference-negative",
+        > 0 => "difference-positive",
+        _ => string.Empty
+    };
 
-    private string GetDifferenceTextStyle()
-    {
-        if (_dashboard is null) return string.Empty;
-        return _dashboard.VaultAgentDifference != 0 ? "color: white;" : string.Empty;
-    }
+    public void Dispose() => _persistingSubscription.Dispose();
 }

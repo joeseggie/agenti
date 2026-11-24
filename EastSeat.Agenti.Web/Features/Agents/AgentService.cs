@@ -38,6 +38,7 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
     public async Task<AgentDetailDto?> GetAgentAsync(long agentId)
     {
         var agent = await dbContext.Agents
+            .AsNoTracking()
             .Include(a => a.User)
             .Include(a => a.Wallets)
                 .ThenInclude(w => w.WalletType)

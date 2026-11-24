@@ -115,6 +115,9 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await LoginAdminAsync(adminPage, app, scenario.Admin.Id, root);
         var reviewUrl = $"{root}/closing-approvals/{saved.CashCountId}";
         await adminPage.GotoAsync(reviewUrl);
+        await Expect(adminPage.GetByRole(AriaRole.Link, new() { Name = $"Upload statement for {scenario.BankWallet.Name}", Exact = true }))
+            .ToHaveAttributeAsync("href", $"/bank-statements?accountId={scenario.Account.Id}&date={scenario.Session.SessionDate:yyyy-MM-dd}");
+        await Expect(adminPage.GetByText("0 of 2 Bank wallets", new() { Exact = false })).ToBeVisibleAsync();
         await Expect(adminPage.GetByRole(AriaRole.Button, new() { Name = "Reconcile closing", Exact = true })).ToBeEnabledAsync();
         await adminPage.GetByRole(AriaRole.Button, new() { Name = "Reconcile closing", Exact = true }).ClickAsync();
         await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("^Reconciliation blocked"))).ToBeVisibleAsync();
@@ -125,6 +128,7 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await UploadCsvAsync(adminPage, root, scenario.Account.Id, day, BankingScenario.StatementCsv(day, 1_000_000m, -50_000m));
         await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("^Statement accepted"))).ToBeVisibleAsync();
         await adminPage.GotoAsync(reviewUrl);
+        await Expect(adminPage.GetByText("1 of 2 Bank wallets", new() { Exact = false })).ToBeVisibleAsync();
         await adminPage.GetByRole(AriaRole.Button, new() { Name = "Reconcile closing", Exact = true }).ClickAsync();
         await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("ABSA: statement.*missing"))).ToBeVisibleAsync();
         var balanceFreeCsv = BankingScenario.StatementCsv(day, 200_000m, includeBalances: false);
@@ -229,6 +233,7 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         await Expect(adminPage.GetByText("Closing status: Approved", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("Reconciliation: Failed"))).ToBeVisibleAsync();
         await adminPage.ReloadAsync();
+        await Expect(adminPage.GetByRole(AriaRole.Button, new() { Name = "Refresh closing", Exact = true })).ToBeEnabledAsync();
         await Expect(adminPage.GetByText(new System.Text.RegularExpressions.Regex("Approved with reconciliation exception"))).ToBeVisibleAsync();
         await adminPage.ScreenshotAsync(new() { Path = Path.Combine(AppContext.BaseDirectory, "TestResults", "closing-exception.png"), FullPage = true });
         await using var verifyFailed = database.CreateContext();
@@ -507,7 +512,9 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         var supervisorPage = await supervisorBrowser.NewPageAsync();
         await supervisorPage.GotoAsync(root + "/cashcount-approvals");
         await Expect(supervisorPage.GetByRole(AriaRole.Heading, new() { Name = "Cash Count Approvals", Exact = true })).ToBeVisibleAsync();
-        await Expect(supervisorPage.GetByText("Closing approvals", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(supervisorPage.GetByRole(AriaRole.Link, new() { Name = "Approvals", Exact = true }))
+            .ToHaveAttributeAsync("href", "cashcount-approvals");
+        await Expect(supervisorPage.Locator(".mud-navmenu a[href='cashcount-approvals']")).ToHaveCountAsync(1);
         await Expect(supervisorPage.GetByText("Bank accounts", new() { Exact = true })).ToHaveCountAsync(0);
 
         await using var administrator = await browser.NewContextAsync();

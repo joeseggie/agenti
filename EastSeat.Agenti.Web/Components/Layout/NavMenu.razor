@@ -1,6 +1,3 @@
-@implements IDisposable
-@inject NavigationManager NavigationManager
-
 <MudNavMenu>
     <AuthorizeView>
         <Authorized>
@@ -15,7 +12,7 @@
                     Customer Transactions
                 </MudNavLink>
                 <MudNavLink Href="pending-transactions" Icon="@Icons.Material.Filled.PendingActions">
-                    Pending Transactions
+                    Legacy pending transactions
                 </MudNavLink>
                 <MudNavLink Href="bank-runs" Icon="@Icons.Material.Filled.AccountBalance">
                     Bank Runs
@@ -82,13 +79,6 @@
                     </MudNavGroup>
                 </Authorized>
             </AuthorizeView>
-            <AuthorizeView Policy="BankReconciliationReview">
-                <Authorized Context="bankReconciliationReviewCtx">
-                    <MudNavLink Href="cashcount-approvals" Icon="@Icons.Material.Filled.AccountBalance">
-                        Closing approvals
-                    </MudNavLink>
-                </Authorized>
-            </AuthorizeView>
             <MudNavLink Href="notifications" Icon="@Icons.Material.Filled.Notifications">
                 Notifications
             </MudNavLink>
@@ -103,24 +93,3 @@
         </NotAuthorized>
     </AuthorizeView>
 </MudNavMenu>
-
-@code {
-    private string? currentUrl;
-
-    protected override void OnInitialized()
-    {
-        currentUrl = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
-        NavigationManager.LocationChanged += OnLocationChanged;
-    }
-
-    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
-    {
-        currentUrl = NavigationManager.ToBaseRelativePath(e.Location);
-        StateHasChanged();
-    }
-
-    public void Dispose()
-    {
-        NavigationManager.LocationChanged -= OnLocationChanged;
-    }
-}

@@ -34,7 +34,9 @@ public static class AppThemes
         PaletteDark = new PaletteDark()
         {
             Primary = "#8ab8f5",
+            PrimaryContrastText = "#111a27",
             Secondary = "#55d6b3",
+            SecondaryContrastText = "#111a27",
             AppbarBackground = "#101b2a",
             AppbarText = "#f5f8fc",
             Background = "#111a27",
@@ -43,9 +45,13 @@ public static class AppThemes
             DrawerText = "#e3ebf5",
             DrawerIcon = "#a9b8cb",
             Success = "#5cd6a3",
+            SuccessContrastText = "#111a27",
             Info = "#70b8ff",
+            InfoContrastText = "#111a27",
             Warning = "#ffc46b",
+            WarningContrastText = "#111a27",
             Error = "#ff8792",
+            ErrorContrastText = "#111a27",
             TextPrimary = "#e8eef7",
             TextSecondary = "#a9b8cb",
             ActionDefault = "#a9b8cb",

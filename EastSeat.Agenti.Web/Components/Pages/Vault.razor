@@ -2,17 +2,27 @@
 @using Microsoft.AspNetCore.Authorization
 @using EastSeat.Agenti.Web.Features.Vaults
 @using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Shared.Services
 @attribute [Authorize(Policy = "VaultView")]
 @rendermode InteractiveServer
 @inject IVaultService VaultService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ISnackbar Snackbar
 @inject NavigationManager NavigationManager
+@inject IDialogService DialogService
+@inject ILogger<Vault> Logger
 
 <PageTitle>Vault - Agenti</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
-    <MudText Typo="Typo.h4" Class="mb-4">Vault Management</MudText>
+    <MudStack Row="true" Wrap="Wrap.Wrap" Justify="Justify.SpaceBetween" Class="mb-4">
+        <MudText Typo="Typo.h4" HtmlTag="h1">Vault Management</MudText>
+        <MudButton OnClick="LoadVaultAsync" Disabled="@(_isLoading || _historyLoading || _actioning)" Variant="Variant.Outlined">Refresh</MudButton>
+    </MudStack>
+    @if (_error != null)
+    {
+        <MudAlert Severity="Severity.Error" Class="my-3">@_error</MudAlert>
+    }
 
     @if (_isLoading)
     {
@@ -30,7 +40,7 @@
                 <MudCard>
                     <MudCardContent>
                         <MudText Typo="Typo.body2" Color="Color.Default">Current Vault Balance</MudText>
-                        <MudText Typo="Typo.h3" Color="Color.Primary">
+                        <MudText Typo="Typo.h3" HtmlTag="p" Color="Color.Primary">
                             UGX @(_vault.CurrentBalance.ToString("N0"))
                         </MudText>
                         <MudText Typo="Typo.caption" Class="mt-2">@_vault.BranchName</MudText>
@@ -61,12 +71,13 @@
                     <MudCard Class="mb-4">
                         <MudCardHeader>
                             <CardHeaderContent>
-                                <MudText Typo="Typo.h6">Pending Approvals (@_pendingTransactions.Count)</MudText>
+                                <MudText Typo="Typo.h6" HtmlTag="h2">Pending Approvals (@_pendingTransactions.Count)</MudText>
                             </CardHeaderContent>
                         </MudCardHeader>
                         <MudCardContent>
-                            <MudTable Items="@_pendingTransactions" Hover="true" Striped="true"
-                                Breakpoint="Breakpoint.Md">
+                            <MudText Typo="Typo.body2" Class="mb-3">Review the creator, amount, notes and expiry before deciding. History filters do not hide pending requests.</MudText>
+                            <MudTable Items="@_pendingTransactions" Hover="true" Striped="true" RowsPerPage="10"
+                                Breakpoint="Breakpoint.Sm" data-testid="vault-pending">
                                 <HeaderContent>
                                     <MudTh>Created By</MudTh>
                                     <MudTh>Type</MudTh>
@@ -116,16 +127,18 @@
                                     </MudTd>
                                     <MudTd DataLabel="Actions">
                                         <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Success"
-                                            OnClick="@(() => ApproveTransaction(trx.Id))"
-                                            Disabled="@(trx.ExpiresAt.HasValue && trx.ExpiresAt.Value <= DateTimeOffset.UtcNow)">
+                                            OnClick="@(() => DecideTransactionAsync(trx, true))"
+                                            Disabled="@(_actioning || _decisionUncertain || _historyLoading || (trx.ExpiresAt.HasValue && trx.ExpiresAt.Value <= DateTimeOffset.UtcNow))">
                                             Approve
                                         </MudButton>
                                         <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
-                                            OnClick="@(() => RejectTransaction(trx.Id))">
+                                            Disabled="@(_actioning || _decisionUncertain || _historyLoading)"
+                                            OnClick="@(() => DecideTransactionAsync(trx, false))">
                                             Reject
                                         </MudButton>
                                     </MudTd>
                                 </RowTemplate>
+                                <PagerContent><MudTablePager PageSizeOptions="@PageSizes" /></PagerContent>
                             </MudTable>
                         </MudCardContent>
                     </MudCard>
@@ -137,16 +150,37 @@
         <MudCard>
             <MudCardHeader>
                 <CardHeaderContent>
-                    <MudText Typo="Typo.h6">Transaction History</MudText>
+                    <MudText Typo="Typo.h6" HtmlTag="h2">Transaction History</MudText>
                 </CardHeaderContent>
             </MudCardHeader>
             <MudCardContent>
-                @if (_transactions.Any())
+                <MudText Typo="Typo.body2">All recorded history, including expired requests. Dates are shown in Uganda time.</MudText>
+                <MudGrid Class="mb-3">
+                    <MudItem xs="12" sm="6">
+                        <MudSelect T="VaultTransactionStatus?" Label="Transaction status" @bind-Value="_status" @bind-Value:after="ApplyFiltersAsync" Clearable="true" Disabled="_actioning">
+                            @foreach (var status in Enum.GetValues<VaultTransactionStatus>())
+                            {
+                                <MudSelectItem T="VaultTransactionStatus?" Value="@((VaultTransactionStatus?)status)">@GetStatusLabel(status)</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudSelect T="VaultTransactionType?" Label="Transaction type" @bind-Value="_type" @bind-Value:after="ApplyFiltersAsync" Clearable="true" Disabled="_actioning">
+                            @foreach (var type in Enum.GetValues<VaultTransactionType>())
+                            {
+                                <MudSelectItem T="VaultTransactionType?" Value="@((VaultTransactionType?)type)">@GetTransactionTypeLabel(type)</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                </MudGrid>
+                @if (_historyError != null)
                 {
-                    <MudTable Items="@_transactions" Hover="true" Striped="true"
-                        Breakpoint="Breakpoint.Md">
+                    <MudAlert Severity="Severity.Error" Class="mb-3">@_historyError</MudAlert>
+                }
+                    <MudTable T="VaultTransactionListItemDto" @ref="_history" ServerData="LoadHistoryAsync" RowsPerPage="10"
+                        Hover="true" Striped="true" Dense="true" Breakpoint="Breakpoint.Sm" Loading="_historyLoading" data-testid="vault-history">
                         <HeaderContent>
-                            <MudTh>Date</MudTh>
+                            <MudTh>Date (Uganda)</MudTh>
                             <MudTh>Type</MudTh>
                             <MudTh>Status</MudTh>
                             <MudTh>Amount</MudTh>
@@ -155,7 +189,7 @@
                             <MudTh>Approved By</MudTh>
                         </HeaderContent>
                         <RowTemplate Context="trx">
-                            <MudTd DataLabel="Date">@trx.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+                            <MudTd DataLabel="Date (Uganda)">@BusinessTimeText.Format(trx.CreatedAt)</MudTd>
                             <MudTd DataLabel="Type">
                                 <MudChip T="string" Color="@GetTransactionTypeColor(trx.Type)"
                                     Icon="@GetTransactionTypeIcon(trx.Type)" Size="Size.Small">
@@ -184,12 +218,12 @@
                             <MudTd DataLabel="Created By">@trx.CreatedBy</MudTd>
                             <MudTd DataLabel="Approved By">@(trx.ApprovedBy ?? "-")</MudTd>
                         </RowTemplate>
+                        <NoRecordsContent>
+                            <MudText Class="pa-4">@(_historyError != null ? "History is unavailable. Select Refresh to retry." :
+                                _status.HasValue || _type.HasValue ? "No transactions match these filters. Clear the filters to see all history." : "No vault transactions yet.")</MudText>
+                        </NoRecordsContent>
+                        <PagerContent><MudTablePager PageSizeOptions="@PageSizes" /></PagerContent>
                     </MudTable>
-                }
-                else
-                {
-                    <MudText Color="Color.Default">No transactions found.</MudText>
-                }
             </MudCardContent>
         </MudCard>
     }
@@ -201,13 +235,24 @@
 
 @code {
     private VaultDto? _vault;
-    private List<VaultTransactionListItemDto> _transactions = [];
+    private MudTable<VaultTransactionListItemDto>? _history;
     private List<VaultTransactionListItemDto> _pendingTransactions = [];
     private bool _isLoading = true;
     private long _branchId = 1;
+    private bool _canApprove;
+    private bool _historyLoading;
+    private bool _actioning;
+    private bool _decisionUncertain;
+    private string? _error;
+    private string? _historyError;
+    private VaultTransactionStatus? _status;
+    private VaultTransactionType? _type;
+    private readonly SemaphoreSlim _queryLock = new(1, 1);
+    private static readonly int[] PageSizes = [10, 25, 50];
 
     protected override async Task OnInitializedAsync()
     {
+        if (!RendererInfo.IsInteractive) return;
         try
         {
             var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
@@ -230,6 +275,7 @@
             }
 
             _branchId = branchId;
+            _canApprove = user.IsInRole(UserRole.Admin.ToString());
             await LoadVaultAsync();
         }
         catch (Exception ex)
@@ -243,7 +289,22 @@
 
     private async Task LoadVaultAsync()
     {
+        var user = (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User;
+        if (user?.Identity?.IsAuthenticated != true ||
+            !long.TryParse(user.FindFirst("BranchId")?.Value, out var branchId) || branchId <= 0)
+        {
+            _vault = null;
+            _pendingTransactions = [];
+            _error = "User is not associated with a branch. Please contact an administrator.";
+            _isLoading = false;
+            return;
+        }
+
+        _branchId = branchId;
+        _canApprove = user.IsInRole(UserRole.Admin.ToString());
+        await _queryLock.WaitAsync();
         _isLoading = true;
+        _error = null;
         try
         {
             _vault = await VaultService.GetVaultAsync(_branchId);
@@ -255,22 +316,52 @@
             }
             else
             {
-                _transactions = await VaultService.GetRecentTransactionsAsync(_branchId, take: 100, includeExpired: true);
-                _pendingTransactions = _transactions
-                .Where(t => t.Status == VaultTransactionStatus.Pending)
-                .OrderBy(t => t.ExpiresAt)
-                .ToList();
+                _pendingTransactions = _canApprove ? await VaultService.GetPendingTransactionsAsync(_branchId) : [];
+                _decisionUncertain = false;
             }
         }
         catch (Exception ex)
         {
-            Snackbar.Add($"Error loading vault data: {ex.Message}", Severity.Error);
-            Console.Error.WriteLine($"Vault loading error: {ex}");
-            _vault = null;
+            Logger.LogError("Vault loading failed with {ExceptionType}.", ex.GetType().Name);
+            _error = "Vault information could not be refreshed. Select Refresh to retry; previously loaded information may be out of date.";
         }
         finally
         {
             _isLoading = false;
+            _queryLock.Release();
+        }
+    }
+
+    private async Task ApplyFiltersAsync()
+    {
+        if (_history == null) return;
+        if (_history.CurrentPage == 0) await _history.ReloadServerData();
+        else _history.NavigateTo(0);
+    }
+
+    private async Task<TableData<VaultTransactionListItemDto>> LoadHistoryAsync(TableState state, CancellationToken token)
+    {
+        await _queryLock.WaitAsync(token);
+        _historyLoading = true;
+        _historyError = null;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var result = await VaultService.GetHistoryPageAsync(_branchId, new(state.Page, state.PageSize), _status, _type, token);
+            return new() { Items = result.Items, TotalItems = result.TotalCount };
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch (Exception exception)
+        {
+            Logger.LogError("Vault history failed with {ExceptionType}.", exception.GetType().Name);
+            _historyError = "Vault history could not be loaded. Select Refresh to retry.";
+            return new() { Items = [], TotalItems = 0 };
+        }
+        finally
+        {
+            _historyLoading = false;
+            _queryLock.Release();
+            await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -279,44 +370,44 @@
         NavigationManager.NavigateTo("/vault-adjustment");
     }
 
-    private async Task ApproveTransaction(long transactionId)
+    private async Task DecideTransactionAsync(VaultTransactionListItemDto transaction, bool approve)
     {
-        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        var userId = authState.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-
-        if (string.IsNullOrEmpty(userId)) return;
-
-        var result = await VaultService.ApproveManualAdjustmentAsync(transactionId, userId);
-
-        if (result.Success)
+        if (_actioning || _decisionUncertain || _historyLoading) return;
+        _actioning = true;
+        try
         {
-            Snackbar.Add("Transaction approved successfully.", Severity.Success);
-            await LoadVaultAsync();
+            var verb = approve ? "Approve" : "Reject";
+            if (await DialogService.ShowMessageBox($"{verb} vault request",
+                $"{GetTransactionTypeLabel(transaction.Type)} of UGX {transaction.Amount:N0}, requested by {transaction.CreatedBy}. Notes: {transaction.Notes}",
+                yesText: $"{verb} request", cancelText: "Cancel") != true) return;
+            var auth = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var userId = auth.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                ?? throw new UnauthorizedAccessException();
+            await _queryLock.WaitAsync();
+            VaultOperationResult result;
+            try
+            {
+                result = approve ? await VaultService.ApproveManualAdjustmentAsync(transaction.Id, userId)
+                    : await VaultService.RejectManualAdjustmentAsync(transaction.Id, userId);
+            }
+            finally { _queryLock.Release(); }
+            if (!result.Success)
+                _error = result.ErrorMessage ?? "The request could not be updated.";
+            else
+            {
+                Snackbar.Add(approve ? "Request approved." : "Request rejected.", Severity.Success);
+                await LoadVaultAsync();
+                if (_history is not null)
+                    await _history.ReloadServerData();
+            }
         }
-        else
+        catch (Exception exception)
         {
-            Snackbar.Add(result.ErrorMessage ?? "Failed to approve transaction.", Severity.Error);
+            Logger.LogError("Vault decision failed with {ExceptionType}.", exception.GetType().Name);
+            _decisionUncertain = true;
+            _error = "The decision could not be confirmed. Refresh the vault status before trying again.";
         }
-    }
-
-    private async Task RejectTransaction(long transactionId)
-    {
-        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        var userId = authState.User?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-
-        if (string.IsNullOrEmpty(userId)) return;
-
-        var result = await VaultService.RejectManualAdjustmentAsync(transactionId, userId);
-
-        if (result.Success)
-        {
-            Snackbar.Add("Transaction rejected.", Severity.Info);
-            await LoadVaultAsync();
-        }
-        else
-        {
-            Snackbar.Add(result.ErrorMessage ?? "Failed to reject transaction.", Severity.Error);
-        }
+        finally { _actioning = false; }
     }
 
     private Color GetTransactionTypeColor(VaultTransactionType type) => type switch

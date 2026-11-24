@@ -14,7 +14,7 @@
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
     <MudGrid>
         <MudItem xs="12" sm="8">
-            <MudText Typo="Typo.h4" Class="mb-2">Transaction Flags</MudText>
+            <MudText Typo="Typo.h4" HtmlTag="h1" Class="mb-2">Transaction Flags</MudText>
             <MudText Typo="Typo.body2" Color="Color.Secondary">
                 Review and investigate transactions flagged as erroneous by agents.
             </MudText>
@@ -54,7 +54,7 @@
     else
     {
         <MudTable Items="@_flags" Hover="true" Striped="true" Dense="true" Elevation="2" Class="mt-4"
-                  Breakpoint="Breakpoint.Md">
+                  Breakpoint="Breakpoint.Sm">
             <HeaderContent>
                 <MudTh>Agent</MudTh>
                 <MudTh>Transaction</MudTh>

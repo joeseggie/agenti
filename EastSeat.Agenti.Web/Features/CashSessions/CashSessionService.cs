@@ -1,4 +1,6 @@
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Domain.Entities;
+using EastSeat.Agenti.Shared.Services;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.ApplicationInsights;
 using Microsoft.EntityFrameworkCore;
@@ -29,50 +31,74 @@ public class CashSessionService(
             .ThenByDescending(cs => cs.OpenedAt)
             .ToListAsync();
 
-        return sessions.Select(s =>
+        return sessions.Select(MapSummary).ToList();
+    }
+
+    public async Task<PagedResult<CashSessionListItemDto>> GetCashSessionsPageAsync(PageRequest page,
+        long? branchId = null, CashSessionStatus? status = null, DateOnly? from = null, DateOnly? to = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (from > to)
+            throw new ArgumentException("The start date must be on or before the end date.");
+        if (status.HasValue && !Enum.IsDefined(status.Value))
+            throw new ArgumentOutOfRangeException(nameof(status));
+
+        var query = dbContext.CashSessions.AsNoTracking();
+        if (branchId.HasValue) query = query.Where(s => s.BranchId == branchId);
+        if (status.HasValue) query = query.Where(s => s.Status == status);
+        if (from.HasValue) query = query.Where(s => s.SessionDate >= from);
+        if (to.HasValue) query = query.Where(s => s.SessionDate <= to);
+        var count = await query.CountAsync(cancellationToken);
+        var sessions = await query.OrderByDescending(s => s.SessionDate)
+            .ThenByDescending(s => s.OpenedAt).ThenByDescending(s => s.Id)
+            .Skip(page.Offset).Take(page.PageSize).Include(s => s.CashCounts)
+            .ToListAsync(cancellationToken);
+        return new(sessions.Select(MapSummary).ToList(), count);
+    }
+
+    private static CashSessionListItemDto MapSummary(CashSession s)
+    {
+        var agentIds = s.CashCounts
+            .Where(c => c.IsOpening && c.Status != CashCountStatus.Rejected)
+            .Select(c => c.AgentId)
+            .Distinct()
+            .ToList();
+
+        var approvedClosingAgents = s.CashCounts
+            .Where(c => !c.IsOpening && c.Status == CashCountStatus.Approved)
+            .Select(c => c.AgentId)
+            .Distinct()
+            .ToList();
+
+        var pendingCount = s.CashCounts
+            .Count(c => c.Status == CashCountStatus.PendingApproval);
+
+        var totalOpening = s.CashCounts
+            .Where(c => c.IsOpening && c.Status == CashCountStatus.Approved)
+            .Sum(c => c.TotalAmount);
+
+        var closingCounts = s.CashCounts
+            .Where(c => !c.IsOpening && c.Status == CashCountStatus.Approved)
+            .ToList();
+
+        return new CashSessionListItemDto
         {
-            var agentIds = s.CashCounts
-                .Where(c => c.IsOpening && c.Status != CashCountStatus.Rejected)
-                .Select(c => c.AgentId)
-                .Distinct()
-                .ToList();
-
-            var approvedClosingAgents = s.CashCounts
-                .Where(c => !c.IsOpening && c.Status == CashCountStatus.Approved)
-                .Select(c => c.AgentId)
-                .Distinct()
-                .ToList();
-
-            var pendingCount = s.CashCounts
-                .Count(c => c.Status == CashCountStatus.PendingApproval);
-
-            var totalOpening = s.CashCounts
-                .Where(c => c.IsOpening && c.Status == CashCountStatus.Approved)
-                .Sum(c => c.TotalAmount);
-
-            var closingCounts = s.CashCounts
-                .Where(c => !c.IsOpening && c.Status == CashCountStatus.Approved)
-                .ToList();
-
-            return new CashSessionListItemDto
-            {
-                WorkflowVersion = s.WorkflowVersion,
-                OperationalClosedAt = s.OperationalClosedAt,
-                TotalReportedClosingAmount = s.CashCounts.Any(c => !c.IsOpening && c.SubmittedAt.HasValue)
-                    ? s.CashCounts.Where(c => !c.IsOpening && c.SubmittedAt.HasValue).Sum(c => c.TotalAmount) : null,
-                Id = s.Id,
-                SessionDate = s.SessionDate,
-                Status = s.Status,
-                OpenedAt = s.OpenedAt,
-                ClosedAt = s.ClosedAt,
-                AgentCount = agentIds.Count,
-                ApprovedClosingCount = approvedClosingAgents.Count,
-                TotalOpeningAmount = totalOpening,
-                TotalClosingAmount = closingCounts.Count > 0 ? closingCounts.Sum(c => c.TotalAmount) : null,
-                AllClosingCountsApproved = agentIds.Count > 0 && agentIds.All(id => approvedClosingAgents.Contains(id)),
-                PendingApprovalCount = pendingCount
-            };
-        }).ToList();
+            WorkflowVersion = s.WorkflowVersion,
+            OperationalClosedAt = s.OperationalClosedAt,
+            TotalReportedClosingAmount = s.CashCounts.Any(c => !c.IsOpening && c.SubmittedAt.HasValue)
+                ? s.CashCounts.Where(c => !c.IsOpening && c.SubmittedAt.HasValue).Sum(c => c.TotalAmount) : null,
+            Id = s.Id,
+            SessionDate = s.SessionDate,
+            Status = s.Status,
+            OpenedAt = s.OpenedAt,
+            ClosedAt = s.ClosedAt,
+            AgentCount = agentIds.Count,
+            ApprovedClosingCount = approvedClosingAgents.Count,
+            TotalOpeningAmount = totalOpening,
+            TotalClosingAmount = closingCounts.Count > 0 ? closingCounts.Sum(c => c.TotalAmount) : null,
+            AllClosingCountsApproved = agentIds.Count > 0 && agentIds.All(id => approvedClosingAgents.Contains(id)),
+            PendingApprovalCount = pendingCount
+        };
     }
 
     /// <inheritdoc />

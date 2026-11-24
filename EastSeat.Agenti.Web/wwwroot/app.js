@@ -31,13 +31,14 @@ window.themeHelpers = {
 
     // Listen for system theme changes
     watchSystemThemePreference: function(dotnetHelper) {
-        if (!window.matchMedia) return;
+        if (!window.matchMedia) throw new Error('System theme observation is unavailable.');
 
         const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
         const handler = (e) => {
             const newTheme = e.matches ? 'dark' : 'light';
-            dotnetHelper.invokeMethodAsync('OnSystemThemeChanged', newTheme);
+            dotnetHelper.invokeMethodAsync('OnSystemThemeChanged', newTheme)
+                .catch(() => console.warn('System theme update could not reach the application.'));
         };
 
         // Modern browsers
@@ -47,5 +48,15 @@ window.themeHelpers = {
             // Fallback for older browsers
             mediaQuery.addListener(handler);
         }
+
+        return {
+            dispose: function() {
+                if (mediaQuery.removeEventListener) {
+                    mediaQuery.removeEventListener('change', handler);
+                } else {
+                    mediaQuery.removeListener(handler);
+                }
+            }
+        };
     }
 };
