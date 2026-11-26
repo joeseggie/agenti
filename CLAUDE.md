@@ -305,7 +305,7 @@ Both services inherit from `BackgroundService` and accept an optional `Telemetry
 
 **Closing Count Rules:**
 
-- Closing total should equal opening total (discrepancies trigger approval workflow)
+- Cash and Mobile Money closing amounts are the agent's counts, not movement-derived expectations. Do not include them in closing variance checks. Bank/Custom rules and existing discrepancy review remain in force.
 - On submit: Wallets zeroed → Total returned to vault → Session closed
 
 **Discrepancy Workflow:**

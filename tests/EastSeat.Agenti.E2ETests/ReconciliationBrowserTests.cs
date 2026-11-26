@@ -71,14 +71,16 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         }
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.User));
-        var closing = await GetAsync<CashCountFormModel>(client, "/api/banking/counts/initialize?isOpening=false");
+        var closing = await GetAsync<CashCountFormModel>(client, "/api/banking/counts/initialize?isOpening=false&countContractVersion=2");
+        Assert.Equal(2, closing.ApiContractVersion);
         foreach (var wallet in closing.WalletEntries)
         {
-            wallet.CountedAmount = wallet.ExpectedBalance;
+            wallet.CountedAmount = wallet.WalletId == scenario.CashWallet.Id ? 150_000m
+                : wallet.WalletId == mobile.Id ? 300_000m : wallet.ExpectedBalance;
             wallet.Denominations = null;
             wallet.ObservedAt = app.Clock.Now;
         }
-        var saved = await PostAsync<CashCountFormModel, CashCountSaveResult>(client, "/api/banking/counts", closing);
+        var saved = await PostAsync<CashCountFormModel, CashCountSaveResult>(client, "/api/banking/counts?countContractVersion=2", closing);
         await page.GetByRole(AriaRole.Link, new() { Name = "Cash Count", Exact = true }).ClickAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Continue Closing Draft", Exact = true }).ClickAsync();
         await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Save Draft", Exact = true })).ToBeVisibleAsync();
@@ -89,13 +91,14 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         }
         await page.GetByRole(AriaRole.Button, new() { Name = "Submit for Approval", Exact = true }).ClickAsync();
         await ExpectVisibleAsync(page, page.GetByText("Submitted closing observations are locked.", new() { Exact = false }));
-        var frozen = await GetAsync<CashCountFormModel>(client, $"/api/banking/counts/{saved.CashCountId}");
+        var frozen = await GetAsync<CashCountFormModel>(client, $"/api/banking/counts/{saved.CashCountId}?countContractVersion=2");
         Assert.True(frozen.IsReadOnly);
-        using (var edit = await client.PostAsJsonAsync("/api/banking/counts", frozen))
+        using (var edit = await client.PostAsJsonAsync("/api/banking/counts?countContractVersion=2", frozen))
             Assert.Equal(HttpStatusCode.BadRequest, edit.StatusCode);
 
         app.Clock.Now = BankingScenario.Now.AddDays(1).AddHours(1);
-        var opening = await GetAsync<CashCountFormModel>(client, "/api/banking/counts/initialize?isOpening=true");
+        var opening = await GetAsync<CashCountFormModel>(client, "/api/banking/counts/initialize?isOpening=true&countContractVersion=2");
+        Assert.Equal(2, opening.ApiContractVersion);
         foreach (var wallet in opening.WalletEntries)
         {
             wallet.CountedAmount = wallet.WalletId == scenario.CashWallet.Id ? 150_000m :
@@ -104,8 +107,8 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
             wallet.Denominations = null;
             wallet.ObservedAt = app.Clock.Now;
         }
-        var laterOpening = await PostAsync<CashCountFormModel, CashCountSaveResult>(client, "/api/banking/counts", opening);
-        using (var submitted = await client.PostAsync($"/api/banking/counts/{laterOpening.CashCountId}/submit", null))
+        var laterOpening = await PostAsync<CashCountFormModel, CashCountSaveResult>(client, "/api/banking/counts?countContractVersion=2", opening);
+        using (var submitted = await client.PostAsync($"/api/banking/counts/{laterOpening.CashCountId}/submit?countContractVersion=2", null))
             Assert.Equal(HttpStatusCode.OK, submitted.StatusCode);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.Admin));
         using (var approved = await client.PostAsync($"/api/banking/counts/{laterOpening.CashCountId}/approve", null))
@@ -194,15 +197,15 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         Assert.Contains(notices, n => n.RecipientUserId == scenario.Admin.Id);
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.User));
-        var nextClosing = await GetAsync<CashCountFormModel>(client, "/api/banking/counts/initialize?isOpening=false");
+        var nextClosing = await GetAsync<CashCountFormModel>(client, "/api/banking/counts/initialize?isOpening=false&countContractVersion=2");
         foreach (var wallet in nextClosing.WalletEntries)
         {
-            wallet.CountedAmount = wallet.ExpectedBalance;
+            wallet.CountedAmount = closing.WalletEntries.Single(w => w.WalletId == wallet.WalletId).CountedAmount;
             wallet.Denominations = null;
             wallet.ObservedAt = app.Clock.Now;
         }
-        var nextSaved = await PostAsync<CashCountFormModel, CashCountSaveResult>(client, "/api/banking/counts", nextClosing);
-        using (var submitted = await client.PostAsync($"/api/banking/counts/{nextSaved.CashCountId}/submit", null))
+        var nextSaved = await PostAsync<CashCountFormModel, CashCountSaveResult>(client, "/api/banking/counts?countContractVersion=2", nextClosing);
+        using (var submitted = await client.PostAsync($"/api/banking/counts/{nextSaved.CashCountId}/submit?countContractVersion=2", null))
             Assert.Equal(HttpStatusCode.OK, submitted.StatusCode);
         var nextDay = day.AddDays(1);
         await UploadCsvAsync(adminPage, root, scenario.Account.Id, nextDay, BankingScenario.StatementCsv(nextDay, 950_000m, 10m));

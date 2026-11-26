@@ -1,5 +1,6 @@
 using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.UnitTests.Helpers;
 using EastSeat.Agenti.UnitTests.Helpers.TestDataBuilders;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.CashSessions;
@@ -123,6 +124,69 @@ public class CashSessionServiceTests : IDisposable
 
     #endregion
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SessionDetail_UsesEnteredClosingWithoutInventingCashVariance(bool existingDiscrepancy)
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.WorkflowVersion = SessionWorkflowVersion.Legacy;
+        fixture.AddApprovedOpening(includeBank: false);
+        var closing = fixture.AddSubmittedClosing(new Dictionary<long, decimal> { [fixture.CashWallet.Id] = 70_000m });
+        if (existingDiscrepancy)
+        {
+            fixture.Db.Discrepancies.Add(new Discrepancy
+            {
+                CashSessionId = fixture.Session.Id, CashCountId = closing.Id, Status = DiscrepancyStatus.PendingReview,
+                ExpectedAmount = 95_000m, ActualAmount = 70_000m, Variance = -25_000m, CreatedAt = BankingScenario.Now
+            });
+            await fixture.Db.SaveChangesAsync();
+        }
+        var session = await new CashSessionService(fixture.Db).GetCashSessionDetailAsync(fixture.Session.Id);
+        var agent = Assert.Single(session!.AgentSummaries);
+        Assert.Equal(70_000m, agent.ClosingCount!.TotalAmount);
+        Assert.Equal(existingDiscrepancy ? -25_000m : (decimal?)null, agent.Variance);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SessionDetail_LegacyVarianceIncludesBankRunsAndIgnoresPreviouslyApprovedDiscrepancyAfterRevision(bool revised)
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.WorkflowVersion = SessionWorkflowVersion.Legacy;
+        fixture.AddApprovedOpening();
+        var closing = fixture.AddSubmittedClosing();
+        closing.Details = new List<CashCountDetail>
+        {
+            new() { WalletId = fixture.CashWallet.Id, Amount = 80_000m },
+            new() { WalletId = fixture.BankWallet.Id, Amount = 1_025_000m }
+        };
+        fixture.Db.BankRuns.Add(new BankRun
+        {
+            CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id,
+            FromWalletId = fixture.CashWallet.Id, ToWalletId = fixture.BankWallet.Id,
+            Amount = 20_000m, RecordedByUserId = fixture.User.Id, CreatedAt = BankingScenario.Now
+        });
+        fixture.Db.Discrepancies.Add(new Discrepancy
+        {
+            CashSessionId = fixture.Session.Id, CashCountId = closing.Id, Status = DiscrepancyStatus.Approved,
+            ExpectedAmount = 1_000_000m, ActualAmount = 1_100_000m, Variance = 100_000m,
+            CreatedAt = BankingScenario.Now
+        });
+        if (revised)
+            fixture.Db.CashCountAuditLogs.Add(new CashCountAuditLog
+            {
+                CashCountId = closing.Id, CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id,
+                Action = CashCountAuditAction.Saved, NewStatus = CashCountStatus.Draft,
+                PreviousStatus = CashCountStatus.PendingApproval, PerformedAt = BankingScenario.Now.AddMinutes(1)
+            });
+        await fixture.Db.SaveChangesAsync();
+
+        var session = await new CashSessionService(fixture.Db).GetCashSessionDetailAsync(fixture.Session.Id);
+
+        Assert.Equal(revised ? 5_000m : 100_000m, Assert.Single(session!.AgentSummaries).Variance);
+    }
     #region CloseSessionAsync Tests
 
     [Fact]

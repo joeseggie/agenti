@@ -13,7 +13,7 @@ public interface ICashCountService
     /// <summary>
     /// Initializes a cash count form for opening or closing count.
     /// </summary>
-    Task<CashCountFormModel> InitializeCashCountFormAsync(string userId, bool isOpening);
+    Task<CashCountFormModel> InitializeCashCountFormAsync(string userId, bool isOpening, bool forWalletAdjustment = false);
 
     /// <summary>
     /// Saves a cash count (creates session if needed for opening count).

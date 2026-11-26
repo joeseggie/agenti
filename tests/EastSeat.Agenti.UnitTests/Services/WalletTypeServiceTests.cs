@@ -319,6 +319,104 @@ public class WalletTypeServiceTests : IDisposable
 
     #region UpdateAsync Tests
 
+    [Theory]
+    [InlineData(CashCountStatus.PendingApproval, false, WalletTypeEnum.Bank, WalletTypeEnum.MobileMoney)]
+    [InlineData(CashCountStatus.Approved, false, WalletTypeEnum.Cash, WalletTypeEnum.Bank)]
+    [InlineData(CashCountStatus.Draft, true, WalletTypeEnum.MobileMoney, WalletTypeEnum.Bank)]
+    [InlineData(CashCountStatus.Rejected, true, WalletTypeEnum.Bank, WalletTypeEnum.Cash)]
+    public async Task UpdateAsync_WithCountHistory_RejectsCategoryChangeWithoutChangingOtherFields(
+        CashCountStatus status, bool isOpening, WalletTypeEnum originalCategory, WalletTypeEnum newCategory)
+    {
+        var (walletType, wallet) = await CreateCountedWalletTypeFixtureAsync(originalCategory, status, isOpening);
+
+        var result = await _walletTypeService.UpdateAsync(new WalletTypeFormModel
+        {
+            Id = walletType.Id, Name = "Changed", Description = "Changed",
+            Type = newCategory, IsActive = false, SupportsDenominations = true
+        });
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("cash count history");
+        var storedType = await _dbContext.WalletTypes.AsNoTracking().SingleAsync(wt => wt.Id == walletType.Id);
+        storedType.Type.Should().Be(originalCategory);
+        storedType.Name.Should().Be("Original");
+        storedType.Description.Should().Be("Original description");
+        storedType.IsActive.Should().BeTrue();
+        storedType.SupportsDenominations.Should().BeFalse();
+        var detail = await _dbContext.CashCountDetails.AsNoTracking().SingleAsync();
+        detail.WalletId.Should().Be(wallet.Id);
+        detail.Amount.Should().Be(123m);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WithCountHistory_AllowsMetadataChangesWhenCategoryIsUnchanged()
+    {
+        var (walletType, _) = await CreateCountedWalletTypeFixtureAsync(
+            WalletTypeEnum.Bank, CashCountStatus.PendingApproval, false);
+
+        var result = await _walletTypeService.UpdateAsync(new WalletTypeFormModel
+        {
+            Id = walletType.Id, Name = "Changed", Description = "Changed",
+            Type = WalletTypeEnum.Bank, IsActive = false, SupportsDenominations = true
+        });
+
+        result.Success.Should().BeTrue();
+        var storedType = await _dbContext.WalletTypes.AsNoTracking().SingleAsync(wt => wt.Id == walletType.Id);
+        storedType.Type.Should().Be(WalletTypeEnum.Bank);
+        storedType.Name.Should().Be("Changed");
+        storedType.Description.Should().Be("Changed");
+        storedType.IsActive.Should().BeFalse();
+        storedType.SupportsDenominations.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WhenOnlyAnotherTypeHasCountHistory_AllowsCategoryChange()
+    {
+        await CreateCountedWalletTypeFixtureAsync(WalletTypeEnum.Bank, CashCountStatus.Approved, false);
+        var uncountedType = WalletTypeBuilder.Default().WithId(2).WithName("Other")
+            .WithType(WalletTypeEnum.MobileMoney).Build();
+        var uncountedWallet = WalletBuilder.Default().WithId(2).WithWalletTypeId(2).Build();
+        _dbContext.WalletTypes.Add(uncountedType);
+        _dbContext.Wallets.Add(uncountedWallet);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _walletTypeService.UpdateAsync(new WalletTypeFormModel
+        {
+            Id = uncountedType.Id, Name = "Other", Type = WalletTypeEnum.Bank
+        });
+
+        result.Success.Should().BeTrue();
+        (await _dbContext.WalletTypes.AsNoTracking().SingleAsync(wt => wt.Id == uncountedType.Id))
+            .Type.Should().Be(WalletTypeEnum.Bank);
+    }
+
+    private async Task<(WalletType WalletType, Wallet Wallet)> CreateCountedWalletTypeFixtureAsync(
+        WalletTypeEnum category, CashCountStatus status, bool isOpening)
+    {
+        var branch = new Branch { Id = 1, Name = "Branch", CreatedAt = DateTimeOffset.UtcNow };
+        var user = UserBuilder.Default().Build();
+        var agent = AgentBuilder.Default().WithUserId(user.Id).WithBranchId(branch.Id).Build();
+        var walletType = WalletTypeBuilder.Default().WithName("Original")
+            .WithDescription("Original description").WithType(category).Build();
+        var wallet = WalletBuilder.Default().WithAgentId(agent.Id).WithWalletTypeId(walletType.Id).Build();
+        _dbContext.Branches.Add(branch);
+        _dbContext.Users.Add(user);
+        _dbContext.Agents.Add(agent);
+        _dbContext.WalletTypes.Add(walletType);
+        _dbContext.Wallets.Add(wallet);
+        _dbContext.CashCounts.Add(new CashCount
+        {
+            AgentId = agent.Id,
+            CashSession = new CashSession { BranchId = branch.Id, SessionDate = new DateOnly(2026, 1, 1) },
+            CountDate = new DateOnly(2026, 1, 1),
+            IsOpening = isOpening,
+            Status = status,
+            Details = [new CashCountDetail { WalletId = wallet.Id, Amount = 123m }]
+        });
+        await _dbContext.SaveChangesAsync();
+        return (walletType, wallet);
+    }
+
     [Fact]
     public async Task UpdateAsync_WithValidData_UpdatesWalletType()
     {

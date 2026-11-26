@@ -14,11 +14,12 @@ namespace EastSeat.Agenti.E2ETests;
 public sealed class CashCountBrowserTests(DatabaseFixture database) : IClassFixture<DatabaseFixture>
 {
     [Fact]
-    public async Task Closing_OffsettingWalletVariances_CanEnterExplanationAndSubmit()
+    public async Task Closing_EnteredCashAndMobileNeedNoExplanationAlongsideBank()
     {
         await using var db = database.CreateContext();
         using var scenario = new BankingScenario(db);
-        scenario.AddApprovedOpening(withSettlement: true);
+        var mobile = scenario.AddWallet("Mobile", WalletTypeEnum.MobileMoney, 300_000m);
+        scenario.AddApprovedOpening(withSettlement: true, additionalWallets: [mobile]);
         scenario.Account.WorkflowEnabled = true;
         (await db.AppConfigs.SingleAsync(c => c.Key == "SetupComplete")).Value = "true";
         await db.SaveChangesAsync();
@@ -30,7 +31,8 @@ public sealed class CashCountBrowserTests(DatabaseFixture database) : IClassFixt
         var closing = await counts.InitializeCashCountFormAsync(scenario.User.Id, false);
         foreach (var wallet in closing.WalletEntries)
         {
-            wallet.CountedAmount = wallet.ExpectedBalance + (wallet.WalletId == scenario.CashWallet.Id ? 50_000m : -50_000m);
+            wallet.CountedAmount = wallet.WalletId == scenario.CashWallet.Id ? 70_000m
+                : wallet.WalletId == mobile.Id ? 301_000m : wallet.ExpectedBalance;
             wallet.Denominations = null;
             wallet.ObservedAt = app.Clock.Now;
         }
@@ -55,17 +57,21 @@ public sealed class CashCountBrowserTests(DatabaseFixture database) : IClassFixt
         await page.GetByRole(AriaRole.Link, new() { Name = "Cash Count", Exact = true }).ClickAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Continue Closing Draft", Exact = true }).ClickAsync();
         await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Save Draft", Exact = true })).ToBeVisibleAsync();
-        var explanation = page.GetByLabel("Explanation for wallet differences");
-        await Expect(explanation).ToBeVisibleAsync();
-        const string reason = "An unrecorded customer deposit explains the offsetting wallet differences.";
-        await explanation.FillAsync(reason);
+        await Expect(page.GetByLabel("Explanation for", new() { Exact = false })).ToHaveCountAsync(0);
+        foreach (var name in new[] { scenario.CashWallet.Name, mobile.Name })
+        {
+            var row = page.GetByRole(AriaRole.Row).Filter(new() { Has = page.GetByText(name, new() { Exact = true }) });
+            await Expect(row).ToBeVisibleAsync();
+            await Expect(row.Locator("[data-label='Expected']")).ToHaveCountAsync(0);
+        }
         await page.GetByRole(AriaRole.Button, new() { Name = "Submit for Approval", Exact = true }).ClickAsync();
         await Expect(page.GetByText("Submitted closing observations are locked.", new() { Exact = false })).ToBeVisibleAsync();
 
         await using var verify = database.CreateContext();
         var submitted = await verify.CashCounts.FindAsync(saved.CashCountId);
         Assert.Equal(CashCountStatus.PendingApproval, submitted!.Status);
-        Assert.Equal(reason, submitted.Explanation);
+        Assert.Null(submitted.Explanation);
+        Assert.False(await verify.Discrepancies.AnyAsync(d => d.CashCountId == submitted.Id));
         Assert.Single(await verify.SessionFloatSettlements.Where(s => s.Stage == FloatSettlementStage.Closing).ToListAsync());
     }
 }

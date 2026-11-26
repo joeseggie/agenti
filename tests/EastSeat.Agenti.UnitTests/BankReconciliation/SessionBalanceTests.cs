@@ -9,6 +9,44 @@ namespace EastSeat.Agenti.UnitTests.BankReconciliation;
 public class SessionBalanceTests
 {
     [Fact]
+    public async Task ComparedPositions_IncludeEachBankRunLegAtItsWalletCutoff()
+    {
+        using var fixture = new BankingTestContext();
+        AddOpening(fixture);
+        fixture.Db.BankRuns.Add(new BankRun
+        {
+            CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id, FromWalletId = fixture.CashWallet.Id,
+            ToWalletId = fixture.BankWallet.Id, Amount = 20_000m, RecordedByUserId = fixture.User.Id,
+            OccurredAt = BankingTestContext.Now.AddMinutes(10), CreatedAt = BankingTestContext.Now.AddMinutes(10)
+        });
+        var closing = new CashCount
+        {
+            CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id, CountDate = fixture.Session.SessionDate,
+            CreatedAt = BankingTestContext.Now
+        };
+        fixture.Db.CashCounts.Add(closing);
+        await fixture.Db.SaveChangesAsync();
+        var snapshot = new CashCountSnapshot
+        {
+            CashCountId = closing.Id, CapturedAt = BankingTestContext.Now.AddMinutes(30),
+            CapturedByUserId = fixture.User.Id,
+            WalletsJson = CountSnapshotCodec.Serialize(
+            [
+                new(fixture.CashWallet.Id, "Cash", WalletTypeEnum.Cash, "UGX", 80_000m, BankingTestContext.Now.AddMinutes(5), null),
+                new(fixture.BankWallet.Id, "Bank", WalletTypeEnum.Bank, "UGX", 1_020_000m, BankingTestContext.Now.AddMinutes(20), fixture.Account.Id)
+            ])
+        };
+        fixture.Db.CashCountSnapshots.Add(snapshot);
+        await fixture.Db.SaveChangesAsync();
+
+        var positions = await CreateService(fixture).GetPositionsAtSnapshotAsync(snapshot.Id,
+            comparisonWalletIds: new HashSet<long> { fixture.BankWallet.Id });
+
+        Assert.Equal(100_000m, positions.Single(p => p.WalletId == fixture.CashWallet.Id).ExpectedBalance);
+        Assert.Equal(1_020_000m, positions.Single(p => p.WalletId == fixture.BankWallet.Id).ExpectedBalance);
+    }
+
+    [Fact]
     public async Task Projection_UsesOpeningAndMovementsInsteadOfRefreshedWalletCache()
     {
         using var fixture = new BankingTestContext();

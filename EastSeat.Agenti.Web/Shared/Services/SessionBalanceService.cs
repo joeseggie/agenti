@@ -1,4 +1,5 @@
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -6,12 +7,18 @@ namespace EastSeat.Agenti.Shared.Services;
 
 public sealed class SessionBalanceService(ApplicationDbContext db, IBusinessClock clock) : ISessionBalanceService
 {
+    internal static decimal BankRunNetEffect(IEnumerable<BankRun> runs, IReadOnlySet<long> walletIds) =>
+        runs.Sum(r => (walletIds.Contains(r.ToWalletId) ? r.Amount : 0m) -
+                      (walletIds.Contains(r.FromWalletId) ? r.Amount : 0m));
+
     public Task<List<SessionWalletPosition>> GetPositionsAsync(
-        long sessionId, long agentId, bool includePendingAdjustments = false, CancellationToken cancellationToken = default) =>
-        CalculateAsync(sessionId, agentId, null, null, includePendingAdjustments, cancellationToken);
+        long sessionId, long agentId, bool includePendingAdjustments = false, CancellationToken cancellationToken = default,
+        IReadOnlySet<long>? comparisonWalletIds = null) =>
+        CalculateAsync(sessionId, agentId, null, null, includePendingAdjustments, cancellationToken, comparisonWalletIds);
 
     public async Task<List<SessionWalletPosition>> GetPositionsAtSnapshotAsync(
-        long snapshotId, bool includePendingAdjustments = false, CancellationToken cancellationToken = default)
+        long snapshotId, bool includePendingAdjustments = false, CancellationToken cancellationToken = default,
+        IReadOnlySet<long>? comparisonWalletIds = null)
     {
         var snapshot = await db.CashCountSnapshots.AsNoTracking()
             .Include(s => s.CashCount)
@@ -20,12 +27,13 @@ public sealed class SessionBalanceService(ApplicationDbContext db, IBusinessCloc
         var cutoffs = CountSnapshotCodec.Deserialize(snapshot.WalletsJson)
             .ToDictionary(w => w.WalletId, w => w.ObservedAt);
         return await CalculateAsync(snapshot.CashCount!.CashSessionId, snapshot.CashCount.AgentId,
-            cutoffs, snapshot.CapturedAt, includePendingAdjustments, cancellationToken);
+            cutoffs, snapshot.CapturedAt, includePendingAdjustments, cancellationToken, comparisonWalletIds);
     }
 
     private async Task<List<SessionWalletPosition>> CalculateAsync(
         long sessionId, long agentId, IReadOnlyDictionary<long, DateTimeOffset>? cutoffs,
-        DateTimeOffset? caseCutoff, bool includePendingAdjustments, CancellationToken cancellationToken)
+        DateTimeOffset? caseCutoff, bool includePendingAdjustments, CancellationToken cancellationToken,
+        IReadOnlySet<long>? comparisonWalletIds)
     {
         var opening = await db.CashCountSnapshots.AsNoTracking()
             .Where(s => s.CashCount!.CashSessionId == sessionId && s.CashCount.AgentId == agentId &&
@@ -44,6 +52,8 @@ public sealed class SessionBalanceService(ApplicationDbContext db, IBusinessCloc
         {
             throw new InvalidOperationException("The closing snapshot has missing wallets or a cutoff before opening.");
         }
+        if (comparisonWalletIds is { Count: 0 })
+            return positions.Values.OrderBy(p => p.WalletName).ToList();
 
         bool Includes(long walletId, DateTimeOffset instant, bool bankOrigin = false)
         {
@@ -55,7 +65,8 @@ public sealed class SessionBalanceService(ApplicationDbContext db, IBusinessCloc
                 ? cutoff
                 : throw new InvalidOperationException("A closing snapshot is missing an opening wallet.");
             // Agent entries have explicit session attribution; bank-origin reversals follow their posting interval.
-            return (!bankOrigin || instant > start) && instant <= end;
+            return (comparisonWalletIds == null || comparisonWalletIds.Contains(walletId)) &&
+                   (!bankOrigin || instant > start) && instant <= end;
         }
 
         var movements = await db.CustomerMovements.AsNoTracking()
@@ -104,6 +115,10 @@ public sealed class SessionBalanceService(ApplicationDbContext db, IBusinessCloc
             if (Includes(adjustment.WalletId, adjustment.OccurredAt))
                 positions[adjustment.WalletId].Adjustments += adjustment.Amount;
         }
+
+        // Reservations limit trading, not closing counts.
+        if (comparisonWalletIds != null)
+            return positions.Values.OrderBy(p => p.WalletName).ToList();
 
         var end = caseCutoff ?? now;
         var effectiveMovements = db.CustomerMovements.AsNoTracking()

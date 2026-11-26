@@ -887,6 +887,131 @@ public class AgentServiceTests : IDisposable
 
     #region UpdateWalletAsync Tests
 
+    [Theory]
+    [InlineData(CashCountStatus.PendingApproval, false)]
+    [InlineData(CashCountStatus.Approved, false)]
+    [InlineData(CashCountStatus.Draft, true)]
+    [InlineData(CashCountStatus.Rejected, true)]
+    public async Task UpdateWalletAsync_WithCountHistory_RejectsTypeChangeWithoutChangingOtherFields(
+        CashCountStatus status, bool isOpening)
+    {
+        var (agent, wallet, otherType) = await CreateWalletTypeChangeFixtureAsync();
+        var count = new CashCount
+        {
+            AgentId = agent.Id,
+            CashSession = new CashSession { BranchId = _testBranch.Id, SessionDate = new DateOnly(2026, 1, 1) },
+            CountDate = new DateOnly(2026, 1, 1),
+            IsOpening = isOpening,
+            Status = status,
+            Details = [new CashCountDetail { WalletId = wallet.Id, Amount = 123m }]
+        };
+        _dbContext.CashCounts.Add(count);
+        await _dbContext.SaveChangesAsync();
+
+        var originalTypeId = wallet.WalletTypeId;
+        var originalCurrency = wallet.Currency;
+        var result = await _sut.UpdateWalletAsync(new WalletFormModel
+        {
+            Id = wallet.Id, AgentId = agent.Id, WalletTypeId = otherType.Id,
+            Name = "Changed", Currency = "USD", IsActive = false
+        });
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("cash count history");
+        var storedWallet = await _dbContext.Wallets.AsNoTracking().SingleAsync(w => w.Id == wallet.Id);
+        storedWallet.WalletTypeId.Should().Be(originalTypeId);
+        storedWallet.Name.Should().Be("Original");
+        storedWallet.Currency.Should().Be(originalCurrency);
+        storedWallet.IsActive.Should().BeTrue();
+        var detail = await _dbContext.CashCountDetails.AsNoTracking().SingleAsync();
+        detail.WalletId.Should().Be(wallet.Id);
+        detail.Amount.Should().Be(123m);
+    }
+
+    [Fact]
+    public async Task UpdateWalletAsync_WithCountHistory_AllowsOtherChangesWhenTypeIsUnchanged()
+    {
+        var (agent, wallet, _) = await CreateWalletTypeChangeFixtureAsync();
+        _dbContext.CashCounts.Add(new CashCount
+        {
+            AgentId = agent.Id,
+            CashSession = new CashSession { BranchId = _testBranch.Id, SessionDate = new DateOnly(2026, 1, 1) },
+            CountDate = new DateOnly(2026, 1, 1),
+            Status = CashCountStatus.PendingApproval,
+            Details = [new CashCountDetail { WalletId = wallet.Id, Amount = 123m }]
+        });
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _sut.UpdateWalletAsync(new WalletFormModel
+        {
+            Id = wallet.Id, AgentId = agent.Id, WalletTypeId = wallet.WalletTypeId,
+            Name = "Changed", Currency = "USD", IsActive = false
+        });
+
+        result.Success.Should().BeTrue();
+        var storedWallet = await _dbContext.Wallets.AsNoTracking().SingleAsync(w => w.Id == wallet.Id);
+        storedWallet.Name.Should().Be("Changed");
+        storedWallet.Currency.Should().Be("USD");
+        storedWallet.IsActive.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UpdateWalletAsync_WithoutOwnCountHistory_AllowsTypeChange(bool anotherWalletHasCount)
+    {
+        var (agent, wallet, otherType) = await CreateWalletTypeChangeFixtureAsync();
+        if (anotherWalletHasCount)
+        {
+            var otherUser = UserBuilder.Default().WithEmail("other@test.com").Build();
+            var otherAgent = AgentBuilder.Default().WithId(2).WithCode("OTHR").WithUserId(otherUser.Id)
+                .WithBranchId(_testBranch.Id).Build();
+            var otherWallet = WalletBuilder.Default().WithId(2).WithAgentId(otherAgent.Id)
+                .WithWalletTypeId(wallet.WalletTypeId).Build();
+            _dbContext.Users.Add(otherUser);
+            _dbContext.Agents.Add(otherAgent);
+            _dbContext.Wallets.Add(otherWallet);
+            _dbContext.CashCounts.Add(new CashCount
+            {
+                AgentId = otherAgent.Id,
+                CashSession = new CashSession { BranchId = _testBranch.Id, SessionDate = new DateOnly(2026, 1, 1) },
+                CountDate = new DateOnly(2026, 1, 1),
+                Status = CashCountStatus.PendingApproval,
+                Details = [new CashCountDetail { WalletId = otherWallet.Id, Amount = 123m }]
+            });
+            await _dbContext.SaveChangesAsync();
+        }
+
+        var result = await _sut.UpdateWalletAsync(new WalletFormModel
+        {
+            Id = wallet.Id, AgentId = agent.Id, WalletTypeId = otherType.Id,
+            Name = "Changed", Currency = "USD", IsActive = true
+        });
+
+        result.Success.Should().BeTrue();
+        var storedWallet = await _dbContext.Wallets.AsNoTracking().SingleAsync(w => w.Id == wallet.Id);
+        storedWallet.WalletTypeId.Should().Be(otherType.Id);
+        storedWallet.Name.Should().Be("Changed");
+    }
+
+    private async Task<(Agent Agent, Wallet Wallet, WalletType OtherType)> CreateWalletTypeChangeFixtureAsync()
+    {
+        var user = UserBuilder.Default().Build();
+        var agent = AgentBuilder.Default().WithUserId(user.Id).WithBranchId(_testBranch.Id).Build();
+        var originalType = WalletTypeBuilder.Default().WithId(1).WithName("Bank A")
+            .WithType(WalletTypeEnum.Bank).Build();
+        var otherType = WalletTypeBuilder.Default().WithId(2).WithName("Bank B")
+            .WithType(WalletTypeEnum.Bank).Build();
+        var wallet = WalletBuilder.Default().WithAgentId(agent.Id).WithWalletTypeId(originalType.Id)
+            .WithName("Original").Build();
+        _dbContext.Users.Add(user);
+        _dbContext.Agents.Add(agent);
+        _dbContext.WalletTypes.AddRange(originalType, otherType);
+        _dbContext.Wallets.Add(wallet);
+        await _dbContext.SaveChangesAsync();
+        return (agent, wallet, otherType);
+    }
+
     [Fact]
     public async Task UpdateWalletAsync_WithValidData_UpdatesWallet()
     {

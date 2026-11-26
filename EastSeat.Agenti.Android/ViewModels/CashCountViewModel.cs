@@ -63,6 +63,7 @@ public class CashCountViewModel : BaseViewModel
     public async Task InitializeFormAsync(bool isOpening)
     {
         IsOpening = isOpening;
+        Form = null;
         IsBusy = true;
         ErrorMessage = string.Empty;
         try
@@ -105,6 +106,8 @@ public class CashCountViewModel : BaseViewModel
                 return false;
             }
 
+            Form.CashCountId = cashCountId;
+            Form.CashSessionId = saveResult.Data?.CashSessionId;
             var submitResult = await _apiService.SubmitCashCountAsync(cashCountId.Value);
             if (submitResult?.Success != true)
             {

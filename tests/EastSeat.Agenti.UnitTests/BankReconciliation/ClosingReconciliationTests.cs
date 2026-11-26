@@ -471,18 +471,37 @@ public class ClosingReconciliationTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Approval_CannotOverrideNonBankDifferences(bool exception)
+    public async Task PendingClosing_CashAndMobileCountsDoNotBlockOrdinaryOrExceptionApproval(bool exception)
     {
         using var fixture = new BankingTestContext();
-        fixture.AddApprovedOpening();
-        var closing = fixture.AddSubmittedClosing(new Dictionary<long, decimal> { [fixture.CashWallet.Id] = 100_001m });
+        var mobile = fixture.AddWallet("Mobile", WalletTypeEnum.MobileMoney, 50_000m);
+        fixture.AddApprovedOpening(additionalWallets: [mobile]);
+        var closing = fixture.AddSubmittedClosing(new Dictionary<long, decimal>
+            { [fixture.CashWallet.Id] = 70_000m, [mobile.Id] = 53_000m });
         await fixture.UploadStatementAsync(fixture.Account, Clock(), Csv(fixture, change: exception ? 10m : 0m));
         await Service(fixture).ReconcileAsync(fixture.Admin.Id, closing.Id);
 
-        var error = await Assert.ThrowsAsync<BankingRuleException>(() =>
-            Service(fixture).ApproveAsync(fixture.Admin.Id, closing.Id, exception, "Investigated bank difference.", true));
+        var approved = await Service(fixture).ApproveAsync(fixture.Admin.Id, closing.Id, exception, "Investigated bank difference.", true);
 
-        Assert.Contains("Cash or Mobile Money", error.Message);
+        Assert.Equal(CashCountStatus.Approved, approved.Status);
+        Assert.Equal(exception, approved.Approval!.IsException);
+        Assert.Equal(!exception, approved.Report!.Succeeded);
+        Assert.Empty(await fixture.Db.Discrepancies.ToListAsync());
+    }
+
+    [Fact]
+    public async Task PendingClosing_CustomDifferenceStillRequiresDiscrepancy()
+    {
+        using var fixture = new BankingTestContext();
+        var custom = fixture.AddWallet("Custom", WalletTypeEnum.Custom, 50_000m);
+        fixture.AddApprovedOpening(additionalWallets: [custom]);
+        var closing = fixture.AddSubmittedClosing(new Dictionary<long, decimal> { [custom.Id] = 49_000m });
+        await fixture.UploadStatementAsync(fixture.Account, Clock(), Csv(fixture, change: 10m));
+        await Service(fixture).ReconcileAsync(fixture.Admin.Id, closing.Id);
+        var error = await Assert.ThrowsAsync<BankingRuleException>(() =>
+            Service(fixture).ApproveAsync(fixture.Admin.Id, closing.Id, true, "Investigated bank difference.", true));
+
+        Assert.Contains("Custom wallet", error.Message);
         Assert.Empty(await fixture.Db.ClosingApprovalDecisions.ToListAsync());
         Assert.Equal(CashCountStatus.PendingApproval, (await fixture.Db.CashCounts.FindAsync(closing.Id))!.Status);
     }
@@ -548,9 +567,13 @@ public class ClosingReconciliationTests
         await fixture.Db.SaveChangesAsync();
         var supervisor = AddReviewer(fixture, UserRole.Supervisor);
 
+        var review = await Service(fixture).GetAsync(supervisor.Id, closing.Id);
+        Assert.Equal(-10_000m, review.PendingDiscrepancy!.RecordedVariance);
+        Assert.Equal(closing.Explanation, review.PendingDiscrepancy.Explanation);
         var approved = await Service(fixture).ApproveAsync(supervisor.Id, closing.Id, false);
 
         Assert.Equal(CashCountStatus.Approved, approved.Status);
+        Assert.Null(approved.PendingDiscrepancy);
         var discrepancy = await fixture.Db.Discrepancies.SingleAsync();
         Assert.Equal(DiscrepancyStatus.Approved, discrepancy.Status);
         Assert.Equal(supervisor.Id, discrepancy.ApprovedByUserId);

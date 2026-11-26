@@ -48,8 +48,8 @@ public sealed class BankOperationsPage(
     {
         var countId = opening ? current.OpeningCountId : current.ClosingCountId;
         var serverForm = countId.HasValue
-            ? await Api.GetAsync<CashCountFormModel>($"counts/{countId}")
-            : await Api.GetAsync<CashCountFormModel>($"counts/initialize?isOpening={opening.ToString().ToLowerInvariant()}");
+            ? await GetCountFormAsync($"counts/{countId}")
+            : await GetCountFormAsync($"counts/initialize?isOpening={opening.ToString().ToLowerInvariant()}");
         if (serverForm.IsReadOnly)
         {
             await ViewCountAsync(serverForm.CashCountId!.Value);
@@ -58,17 +58,15 @@ public sealed class BankOperationsPage(
         Reset(opening ? "Opening observation" : "Closing observation");
         // CashSessionId is null before the first opening save, so key by business date and discard drafts for another count.
         var key = $"count-{serverForm.CountDate:yyyyMMdd}-{opening}";
-        var stored = await Drafts.LoadAsync<BankingDraft<CashCountFormModel>>(UserId, key);
-        if (stored != null && (stored.Form.CountDate != serverForm.CountDate ||
-                               (stored.Form.CashCountId.HasValue && stored.Form.CashCountId != serverForm.CashCountId)))
-            Drafts.Remove(UserId, key);
         var draft = await EditAsync(key, () => serverForm);
+        CashCountDraftMerger.Refresh(draft, serverForm);
+        await SaveDraftAsync();
         var form = draft.Form;
-        if (serverForm.CashCountId.HasValue) form.CashCountId = serverForm.CashCountId;
         Text("Enter each actual wallet balance and when it was observed. Manual amounts replace any old denomination breakdown.");
         foreach (var wallet in form.WalletEntries)
         {
-            Text($"{wallet.WalletName} ({wallet.WalletTypeName}) | expected {wallet.ExpectedBalance:N2}");
+            var compared = !wallet.UsesEnteredClosingAmount;
+            Text($"{wallet.WalletName} ({wallet.WalletTypeName})" + (compared ? $" | expected {wallet.ExpectedBalance:N2}" : ""));
             Field(draft, $"amount-{wallet.WalletId}", "Counted amount", Number(wallet.CountedAmount),
                 value => { wallet.CountedAmount = Money(value); wallet.Denominations = null; }, true);
             if (current.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
@@ -88,7 +86,7 @@ public sealed class BankOperationsPage(
         Action("Save draft", async () =>
         {
             await ReadFormAsync();
-            var result = await Api.PostAsync<CashCountFormModel, CashCountSaveResult>("counts", form);
+            var result = await Api.PostAsync<CashCountFormModel, CashCountSaveResult>("counts?countContractVersion=2", form);
             form.CashCountId = result.CashCountId;
             form.CashSessionId = result.CashSessionId;
             await SaveDraftAsync();
@@ -102,7 +100,7 @@ public sealed class BankOperationsPage(
             await ReadFormAsync();
             if (form.CashCountId.HasValue)
             {
-                var saved = await Api.GetAsync<CashCountFormModel>($"counts/{form.CashCountId}");
+                var saved = await GetCountFormAsync($"counts/{form.CashCountId}");
                 if (saved.IsReadOnly)
                 {
                     Drafts.Remove(UserId, key);
@@ -110,10 +108,10 @@ public sealed class BankOperationsPage(
                     return;
                 }
             }
-            var result = await Api.PostAsync<CashCountFormModel, CashCountSaveResult>("counts", form);
+            var result = await Api.PostAsync<CashCountFormModel, CashCountSaveResult>("counts?countContractVersion=2", form);
             form.CashCountId = result.CashCountId ?? throw new BankingRuleException("The saved count identity was not returned.");
             await SaveDraftAsync();
-            await Api.PostAsync<CashCountSaveResult>($"counts/{form.CashCountId}/submit");
+            await Api.PostAsync<CashCountSaveResult>($"counts/{form.CashCountId}/submit?countContractVersion=2");
             Drafts.Remove(UserId, key);
             await LoadAsync();
         });
@@ -122,13 +120,22 @@ public sealed class BankOperationsPage(
 
     private async Task ViewCountAsync(long id)
     {
-        var form = await Api.GetAsync<CashCountFormModel>($"counts/{id}");
+        var form = await GetCountFormAsync($"counts/{id}");
         Reset($"{(form.IsOpening ? "Opening" : "Closing")} count {id}");
         Text(form.IsReadOnly ? "Submitted observations are read-only." : "This count is still editable through its session.");
         foreach (var wallet in form.WalletEntries)
             Text($"{wallet.WalletName}: {wallet.CountedAmount:N2} | observed {(wallet.ObservedAt.HasValue ? Time(wallet.ObservedAt.Value) : "not recorded (legacy)")}");
         Text(form.Explanation ?? string.Empty);
         Action("Back", LoadAsync);
+    }
+
+    private async Task<CashCountFormModel> GetCountFormAsync(string path)
+    {
+        var separator = path.Contains('?') ? "&" : "?";
+        var form = await Api.GetAsync<CashCountFormModel>($"{path}{separator}countContractVersion=2");
+        if (form.ApiContractVersion != 2)
+            throw new BankingRuleException("The server must be updated before using cash counts.");
+        return form;
     }
 
     private async Task BankRunAsync(CurrentSessionDto current)
@@ -212,7 +219,7 @@ public sealed class BankOperationsPage(
 
     private async Task AdjustmentAsync(CurrentSessionDto current)
     {
-        var options = await Api.GetAsync<CashCountFormModel>("counts/initialize?isOpening=false");
+        var options = await GetCountFormAsync("counts/initialize?isOpening=false&forWalletAdjustment=true");
         Reset("Record wallet adjustment");
         var key = $"wallet-adjustment-{current.SessionId}";
         var draft = await EditAsync(key, () => new WalletAdjustmentFormModel { CommandId = Guid.NewGuid() });

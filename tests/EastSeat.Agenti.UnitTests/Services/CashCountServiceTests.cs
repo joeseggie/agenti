@@ -558,91 +558,56 @@ public class CashCountServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task SubmitCashCountAsync_ClosingMatchingOpening_AutoApproves()
+    public async Task SubmitCashCountAsync_CustomOnlyClosingMatchingOpening_AutoApproves()
     {
-        // Rule 12: Auto-approve matching closing counts for today
-        var session = CashSessionBuilder.Default()
-            .WithBranchId(_testBranch.Id)
-            .AsOpen()
-            .Build();
-        _dbContext.CashSessions.Add(session);
-        await _dbContext.SaveChangesAsync();
-
-        var openingCount = CashCountBuilder.Default()
-            .WithCashSessionId(session.Id)
-            .WithAgentId(_testAgent.Id)
-            .AsOpening()
-            .AsApproved()
-            .WithTotalAmount(1000m)
-            .Build();
-        _dbContext.CashCounts.Add(openingCount);
-        await _dbContext.SaveChangesAsync();
-
-        var closingCount = CashCountBuilder.Default()
-            .WithId(2)
-            .WithCashSessionId(session.Id)
-            .WithAgentId(_testAgent.Id)
-            .AsClosing()
-            .WithStatus(CashCountStatus.Draft)
-            .WithTotalAmount(1000m) // Matches opening
-            .Build();
-        _dbContext.CashCounts.Add(closingCount);
-
-        var detail = CashCountDetailBuilder.Default()
-            .WithCashCountId(closingCount.Id)
-            .WithWalletId(_testWallet.Id)
-            .WithAmount(1000m)
-            .Build();
-        _dbContext.CashCountDetails.Add(detail);
-        await _dbContext.SaveChangesAsync();
-
+        var custom = AddWallet(WalletTypeEnum.Custom);
+        await SeedOpenSessionWithApprovedOpeningAsync(custom);
+        var closingId = await SaveClosingAsync(null, (custom, 1000m));
         _vaultServiceMock
             .Setup(x => x.DepositForSessionAsync(
                 It.IsAny<long>(), It.IsAny<long>(), It.IsAny<decimal>(),
                 It.IsAny<string>(), false, default))
             .ReturnsAsync(VaultOperationResult.Ok(1));
 
-        var result = await _sut.SubmitCashCountAsync(_testUser.Id, closingCount.Id);
+        var result = await _sut.SubmitCashCountAsync(_testUser.Id, closingId);
 
         result.Success.Should().BeTrue();
 
-        var updated = await _dbContext.CashCounts.FindAsync(closingCount.Id);
+        var updated = await _dbContext.CashCounts.FindAsync(closingId);
         updated!.Status.Should().Be(CashCountStatus.Approved);
     }
 
-    [Fact]
-    public async Task SubmitCashCountAsync_ClosingWithDiscrepancy_RequiresExplanation()
+    [Theory]
+    [InlineData(WalletTypeEnum.Cash, 650)]
+    [InlineData(WalletTypeEnum.MobileMoney, 1000)]
+    public async Task SubmitCashCountAsync_EnteredClosingAmountWaitsForApproval(WalletTypeEnum type, decimal amount)
     {
-        // Rule 10, 16: Discrepancy requires explanation
-        var session = CashSessionBuilder.Default()
-            .WithBranchId(_testBranch.Id)
-            .AsOpen()
-            .Build();
-        _dbContext.CashSessions.Add(session);
-        await _dbContext.SaveChangesAsync();
+        var wallet = type == WalletTypeEnum.Cash ? _testWallet : AddWallet(type);
+        await SeedOpenSessionWithApprovedOpeningAsync(wallet);
+        var closingId = await SaveClosingAsync(null, (wallet, amount));
 
-        var openingCount = CashCountBuilder.Default()
-            .WithCashSessionId(session.Id)
-            .WithAgentId(_testAgent.Id)
-            .AsOpening()
-            .AsApproved()
-            .WithTotalAmount(1000m)
-            .Build();
-        _dbContext.CashCounts.Add(openingCount);
-        await _dbContext.SaveChangesAsync();
+        var result = await _sut.SubmitCashCountAsync(_testUser.Id, closingId);
 
-        var closingCount = CashCountBuilder.Default()
-            .WithId(2)
-            .WithCashSessionId(session.Id)
-            .WithAgentId(_testAgent.Id)
-            .AsClosing()
-            .WithStatus(CashCountStatus.Draft)
-            .WithTotalAmount(800m) // Discrepancy!
-            .Build();
-        _dbContext.CashCounts.Add(closingCount);
-        await _dbContext.SaveChangesAsync();
+        result.Success.Should().BeTrue();
+        var pending = (await _sut.GetPendingApprovalsAsync(_testBranch.Id)).Single();
+        pending.TotalAmount.Should().Be(amount);
+        pending.Variance.Should().BeNull();
+        pending.OpeningTotal.Should().BeNull();
+        pending.HasDiscrepancy.Should().BeFalse();
+        (await _dbContext.Discrepancies.AnyAsync()).Should().BeFalse();
+        _vaultServiceMock.VerifyNoOtherCalls();
+    }
 
-        var result = await _sut.SubmitCashCountAsync(_testUser.Id, closingCount.Id);
+    [Theory]
+    [InlineData(800)]
+    [InlineData(1200)]
+    public async Task SubmitCashCountAsync_EnteredAmountCannotOffsetCustomVariance(decimal customAmount)
+    {
+        var custom = AddWallet(WalletTypeEnum.Custom);
+        await SeedOpenSessionWithApprovedOpeningAsync(_testWallet, custom);
+        var closingId = await SaveClosingAsync(null, (custom, customAmount), (_testWallet, 2000m - customAmount));
+
+        var result = await _sut.SubmitCashCountAsync(_testUser.Id, closingId);
 
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Contain("explanation");
@@ -676,6 +641,113 @@ public class CashCountServiceTests : IDisposable
     #endregion
 
     #region ApproveCashCountAsync Tests
+
+    [Fact]
+    public async Task ZeroClosing_AllowsNextOpeningAndReversalWithoutVaultTransfers()
+    {
+        var admin = UserBuilder.Default().WithEmail("admin@test.com").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(admin);
+        var (session, opening) = await SeedPreviousClosingAndTodayOpeningAsync(0m, 0m, null);
+
+        (await _sut.SubmitCashCountAsync(_testUser.Id, opening.Id)).Success.Should().BeTrue();
+        (await _sut.ApproveCashCountAsync(admin.Id, opening.Id)).Success.Should().BeTrue();
+        opening.Status.Should().Be(CashCountStatus.Approved);
+        _testWallet.Balance.Should().Be(0m);
+        (await _sut.UnapproveCashCountAsync(admin.Id, opening.Id, "Correcting opening count")).Success.Should().BeTrue();
+        opening.Status.Should().Be(CashCountStatus.PendingApproval);
+        _vaultServiceMock.Verify(x => x.WithdrawForSessionAsync(session.Id, _testBranch.Id, 0m, admin.Id, false, default), Times.Never);
+        _vaultServiceMock.Verify(x => x.DepositForSessionAsync(session.Id, _testBranch.Id, 0m, admin.Id, false, default), Times.Never);
+    }
+
+    [Fact]
+    public async Task PreviousSession_OriginalAgentCanSubmitClosingBeforeNextOpening()
+    {
+        var admin = UserBuilder.Default().WithEmail("admin@test.com").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(admin);
+        var session = await SeedOpenSessionWithApprovedOpeningAsync(_testWallet);
+        session.SessionDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1);
+        var opening = await _dbContext.CashCounts.SingleAsync(c => c.IsOpening);
+        opening.CountDate = session.SessionDate;
+        await _dbContext.SaveChangesAsync();
+
+        var current = await _sut.GetCurrentSessionAsync(_testUser.Id);
+        current.CanPerformClosingCount.Should().BeTrue();
+        current.CanPerformOpeningCount.Should().BeFalse();
+        var form = await _sut.InitializeCashCountFormAsync(_testUser.Id, false);
+        form.CountDate.Should().Be(session.SessionDate);
+        form.WalletEntries.Single().CountedAmount = 700m;
+        var save = await _sut.SaveCashCountAsync(_testUser.Id, form);
+        save.Success.Should().BeTrue(save.ErrorMessage);
+        (await _sut.SubmitCashCountAsync(_testUser.Id, save.CashCountId!.Value)).Success.Should().BeTrue();
+        _vaultServiceMock.Setup(s => s.DepositForSessionAsync(session.Id, _testBranch.Id, 700m,
+            admin.Id, false, default)).ReturnsAsync(VaultOperationResult.Ok(1));
+        (await _sut.ApproveCashCountAsync(admin.Id, save.CashCountId.Value)).Success.Should().BeTrue();
+        session.Status.Should().Be(CashSessionStatus.Closed);
+        (await _sut.GetCurrentSessionAsync(_testUser.Id)).CanPerformOpeningCount.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ApproveClosing_AdjustmentChangedComparedVariance_RequiresResubmission()
+    {
+        var admin = UserBuilder.Default().WithEmail("admin@test.com").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(admin);
+        var custom = AddWallet(WalletTypeEnum.Custom);
+        var session = await SeedOpenSessionWithApprovedOpeningAsync(_testWallet, custom);
+        var closingId = await SaveClosingAsync(null, (_testWallet, 500m), (custom, 1000m));
+        (await _sut.SubmitCashCountAsync(_testUser.Id, closingId)).Success.Should().BeTrue();
+        _walletAdjustmentServiceMock.Setup(s => s.GetWalletAdjustmentTotalsAsync(session.Id, _testAgent.Id))
+            .ReturnsAsync(new Dictionary<long, decimal> { [custom.Id] = 100m });
+
+        var result = await _sut.ApproveCashCountAsync(admin.Id, closingId);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("resubmit");
+        (await _dbContext.CashCounts.FindAsync(closingId))!.Status.Should().Be(CashCountStatus.PendingApproval);
+        _vaultServiceMock.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Closing_CustomBankRunIsIncludedInSubmissionAndApproval()
+    {
+        var admin = UserBuilder.Default().WithEmail("admin@test.com").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(admin);
+        var custom = AddWallet(WalletTypeEnum.Custom);
+        var session = await SeedOpenSessionWithApprovedOpeningAsync(_testWallet, custom);
+        _dbContext.BankRuns.Add(new BankRun
+        {
+            CashSessionId = session.Id, AgentId = _testAgent.Id,
+            FromWalletId = _testWallet.Id, ToWalletId = custom.Id, Amount = 300m
+        });
+        await _dbContext.SaveChangesAsync();
+        var closingId = await SaveClosingAsync(null, (_testWallet, 500m), (custom, 1300m));
+
+        (await _sut.SubmitCashCountAsync(_testUser.Id, closingId)).Success.Should().BeTrue();
+        var pending = (await _sut.GetPendingApprovalsAsync(_testBranch.Id)).Single();
+        pending.Variance.Should().Be(0m);
+        _vaultServiceMock.Setup(s => s.DepositForSessionAsync(session.Id, _testBranch.Id, 1800m,
+            admin.Id, false, default)).ReturnsAsync(VaultOperationResult.Ok(1));
+        (await _sut.ApproveCashCountAsync(admin.Id, closingId)).Success.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ApproveClosing_ChangedDetailsWithSameTotal_RequiresRefresh()
+    {
+        var admin = UserBuilder.Default().WithEmail("admin@test.com").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(admin);
+        var mobile = AddWallet(WalletTypeEnum.MobileMoney);
+        await SeedOpenSessionWithApprovedOpeningAsync(_testWallet, mobile);
+        var closingId = await SaveClosingAsync(null, (_testWallet, 500m), (mobile, 600m));
+        (await _sut.SubmitCashCountAsync(_testUser.Id, closingId)).Success.Should().BeTrue();
+        var details = await _dbContext.CashCountDetails.Where(d => d.CashCountId == closingId).ToListAsync();
+        details.Single(d => d.WalletId == _testWallet.Id).Amount = 400m;
+        details.Single(d => d.WalletId == mobile.Id).Amount = 700m;
+
+        var result = await _sut.ApproveCashCountAsync(admin.Id, closingId);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("changed");
+        _vaultServiceMock.VerifyNoOtherCalls();
+    }
 
     [Fact]
     public async Task ApproveCashCountAsync_OpeningCount_WithdrawsFromVault()
@@ -832,12 +904,39 @@ public class CashCountServiceTests : IDisposable
         result[0].TotalAmount.Should().Be(500m);
     }
 
+    [Fact]
+    public async Task SaveCashCountAsync_CannotDiscardAnExistingWholeCountDiscrepancy()
+    {
+        var session = await SeedOpenSessionWithApprovedOpeningAsync(_testWallet);
+        var closingId = await SaveClosingAsync("Previously reported shortage.", (_testWallet, 800m));
+        var closing = (await _dbContext.CashCounts.FindAsync(closingId))!;
+        closing.Status = CashCountStatus.PendingApproval;
+        _dbContext.Discrepancies.Add(new Discrepancy
+        {
+            CashSessionId = session.Id, CashCountId = closingId, Status = DiscrepancyStatus.PendingReview,
+            ExpectedAmount = 1000m, ActualAmount = 800m, Variance = -200m, Explanation = closing.Explanation
+        });
+        await _dbContext.SaveChangesAsync();
+
+        var form = (await _sut.GetCashCountFormAsync(_testUser.Id, closingId))!;
+        form.IsReadOnly.Should().BeTrue();
+        form.WalletEntries.Single().CountedAmount = 900m;
+        var save = await _sut.SaveCashCountAsync(_testUser.Id, form);
+
+        save.Success.Should().BeFalse();
+        var historical = (await _sut.GetPendingApprovalsAsync(_testBranch.Id)).Single();
+        historical.TotalAmount.Should().Be(800m);
+        historical.HasDiscrepancy.Should().BeTrue();
+        historical.Variance.Should().Be(-200m);
+        historical.Explanation.Should().Be("Previously reported shortage.");
+    }
+
     #endregion
 
     #region AdminCloseAgentSessionAsync Tests
 
     [Fact]
-    public async Task AdminCloseAgentSessionAsync_CreatesClosingCountAndApproves()
+    public async Task AdminCloseAgentSessionAsync_CreatesCustomOnlyClosingCountAndApproves()
     {
         var adminUser = UserBuilder.Default()
             .WithEmail("admin@test.com")
@@ -863,7 +962,7 @@ public class CashCountServiceTests : IDisposable
 
         var detail = CashCountDetailBuilder.Default()
             .WithCashCountId(openingCount.Id)
-            .WithWalletId(_testWallet.Id)
+            .WithWalletId(AddWallet(WalletTypeEnum.Custom).Id)
             .WithAmount(1000m)
             .Build();
         _dbContext.CashCountDetails.Add(detail);
@@ -885,6 +984,46 @@ public class CashCountServiceTests : IDisposable
         closingCounts.Should().ContainSingle();
         closingCounts[0].Status.Should().Be(CashCountStatus.Approved);
         closingCounts[0].TotalAmount.Should().Be(1000m);
+    }
+
+    [Theory]
+    [InlineData(735)]
+    [InlineData(0)]
+    public async Task AdminCloseAgentSessionAsync_EnteredClosingSettlesSubmittedAmountOnlyAfterReview(decimal amount)
+    {
+        _testUser.Role = UserRole.Admin;
+        var reviewer = UserBuilder.Default().WithEmail("reviewer@test.com").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(reviewer);
+        var session = await SeedOpenSessionWithApprovedOpeningAsync(_testWallet);
+        var beforeCount = await _sut.AdminCloseAgentSessionAsync(reviewer.Id, session.Id, _testAgent.Id);
+        beforeCount.Success.Should().BeFalse();
+        (await _dbContext.CashCounts.AnyAsync(c => !c.IsOpening)).Should().BeFalse();
+
+        var closingId = await SaveClosingAsync(null, (_testWallet, amount));
+        (await _sut.SubmitCashCountAsync(_testUser.Id, closingId)).Success.Should().BeTrue();
+        var own = await _sut.ApproveCashCountAsync(_testUser.Id, closingId);
+        own.ErrorMessage.Should().Contain("own closing");
+        var adjustment = new WalletAdjustment
+        {
+            CashSessionId = session.Id, AgentId = _testAgent.Id, WalletId = _testWallet.Id,
+            Amount = 100m, Status = WalletAdjustmentStatus.Pending
+        };
+        _dbContext.WalletAdjustments.Add(adjustment);
+        await _dbContext.SaveChangesAsync();
+        var blocked = await _sut.AdminCloseAgentSessionAsync(reviewer.Id, session.Id, _testAgent.Id);
+        blocked.ErrorMessage.Should().Contain("pending wallet adjustments");
+        _vaultServiceMock.VerifyNoOtherCalls();
+
+        adjustment.Status = WalletAdjustmentStatus.Approved;
+        await _dbContext.SaveChangesAsync();
+        _vaultServiceMock.Setup(s => s.DepositForSessionAsync(session.Id, _testBranch.Id, amount,
+            reviewer.Id, false, default)).ReturnsAsync(VaultOperationResult.Ok(1));
+
+        (await _sut.AdminCloseAgentSessionAsync(reviewer.Id, session.Id, _testAgent.Id)).Success.Should().BeTrue();
+        (await _sut.ApproveCashCountAsync(reviewer.Id, closingId)).Success.Should().BeFalse();
+        _vaultServiceMock.Verify(s => s.DepositForSessionAsync(session.Id, _testBranch.Id, amount,
+            reviewer.Id, false, default), amount == 0m ? Times.Never() : Times.Once());
+        (await _dbContext.CashCounts.FindAsync(closingId))!.TotalAmount.Should().Be(amount);
     }
 
     [Fact]
@@ -1105,6 +1244,36 @@ public class CashCountServiceTests : IDisposable
     }
 
     [Theory]
+    [InlineData(WalletTypeEnum.Cash)]
+    [InlineData(WalletTypeEnum.MobileMoney)]
+    public async Task ClosingFormsUseEnteredAmountsButAdjustmentFormsKeepTradingBalances(WalletTypeEnum type)
+    {
+        var wallet = type == WalletTypeEnum.Cash ? _testWallet : AddWallet(type);
+        wallet.Balance = 1000m;
+        var session = await SeedOpenSessionWithApprovedOpeningAsync(wallet);
+        _walletAdjustmentServiceMock.Setup(s => s.GetWalletAdjustmentTotalsAsync(session.Id, _testAgent.Id))
+            .ReturnsAsync(new Dictionary<long, decimal> { [wallet.Id] = 50m });
+
+        var closing = await _sut.InitializeCashCountFormAsync(_testUser.Id, isOpening: false);
+        var entry = closing.WalletEntries.Single(w => w.WalletId == wallet.Id);
+        entry.UsesEnteredClosingAmount.Should().BeTrue();
+        entry.ExpectedBalance.Should().Be(0m);
+        entry.CountedAmount.Should().Be(0m);
+        var closingId = await SaveClosingAsync(null, (wallet, 1375m));
+        var saved = (await _sut.GetCashCountFormAsync(_testUser.Id, closingId))!.WalletEntries.Single();
+        saved.UsesEnteredClosingAmount.Should().BeTrue();
+        saved.ExpectedBalance.Should().Be(1375m);
+        saved.CountedAmount.Should().Be(1375m);
+
+        var adjustments = await _sut.InitializeCashCountFormAsync(_testUser.Id, isOpening: false, forWalletAdjustment: true);
+        var trading = adjustments.WalletEntries.Single(w => w.WalletId == wallet.Id);
+        trading.UsesEnteredClosingAmount.Should().BeFalse();
+        trading.ExpectedBalance.Should().Be(950m);
+        var opening = await _sut.InitializeCashCountFormAsync(_testUser.Id, isOpening: true);
+        opening.WalletEntries.Single(w => w.WalletId == wallet.Id).ExpectedBalance.Should().Be(1000m);
+    }
+
+    [Theory]
     [InlineData(SessionWorkflowVersion.Legacy, 800, true)]
     [InlineData(SessionWorkflowVersion.Legacy, 1000, true)]
     [InlineData(SessionWorkflowVersion.BankReconciliation, 800, false)]
@@ -1244,6 +1413,28 @@ public class CashCountServiceTests : IDisposable
         return session;
     }
 
+    private Wallet AddWallet(WalletTypeEnum type)
+    {
+        var walletType = new WalletType { Id = (long)type, Name = type.ToString(), Type = type };
+        var wallet = WalletBuilder.Default().WithId((long)type).WithWalletType(walletType)
+            .WithName(type.ToString()).WithAgentId(_testAgent.Id).Build();
+        _dbContext.Wallets.Add(wallet);
+        return wallet;
+    }
+
+    private async Task<long> SaveClosingAsync(string? explanation, params (Wallet Wallet, decimal Amount)[] entries)
+    {
+        var result = await _sut.SaveCashCountAsync(_testUser.Id, new CashCountFormModel
+        {
+            IsOpening = false,
+            Explanation = explanation,
+            WalletEntries = entries.Select(e => new WalletCountEntryDto
+                { WalletId = e.Wallet.Id, CountedAmount = e.Amount }).ToList()
+        });
+        result.Success.Should().BeTrue(result.ErrorMessage);
+        return result.CashCountId!.Value;
+    }
+
     /// <summary>
     /// Seeds an approved closing count for the previous day plus a draft opening count for today.
     /// </summary>
@@ -1311,85 +1502,51 @@ public class CashCountServiceTests : IDisposable
     #region Surplus Scenarios
 
     [Fact]
-    public async Task SubmitCashCountAsync_ClosingWithSurplus_CreatesDiscrepancyWithPositiveVariance()
+    public async Task SubmitCashCountAsync_ExplainedCustomSurplusIncludesOnlyComparedWallets()
     {
-        var session = CashSessionBuilder.Default()
-            .WithBranchId(_testBranch.Id)
-            .AsOpen()
-            .Build();
-        _dbContext.CashSessions.Add(session);
-        await _dbContext.SaveChangesAsync();
+        var custom = AddWallet(WalletTypeEnum.Custom);
+        var session = await SeedOpenSessionWithApprovedOpeningAsync(_testWallet, custom);
+        var closingId = await SaveClosingAsync("Custom wallet surplus.", (_testWallet, 500m), (custom, 1150m));
+        _walletAdjustmentServiceMock.Setup(s => s.GetWalletAdjustmentTotalsAsync(session.Id, _testAgent.Id))
+            .ReturnsAsync(new Dictionary<long, decimal> { [_testWallet.Id] = 200m, [custom.Id] = 50m });
 
-        var openingCount = CashCountBuilder.Default()
-            .WithCashSessionId(session.Id)
-            .WithAgentId(_testAgent.Id)
-            .AsOpening()
-            .AsApproved()
-            .WithTotalAmount(1000m)
-            .Build();
-        _dbContext.CashCounts.Add(openingCount);
-        await _dbContext.SaveChangesAsync();
-
-        var closingCount = CashCountBuilder.Default()
-            .WithId(2)
-            .WithCashSessionId(session.Id)
-            .WithAgentId(_testAgent.Id)
-            .AsClosing()
-            .WithStatus(CashCountStatus.Draft)
-            .WithTotalAmount(1200m) // Surplus: 200 more than opening
-            .WithExplanation("Customer returned excess change")
-            .Build();
-        _dbContext.CashCounts.Add(closingCount);
-        await _dbContext.SaveChangesAsync();
-
-        var result = await _sut.SubmitCashCountAsync(_testUser.Id, closingCount.Id);
+        var result = await _sut.SubmitCashCountAsync(_testUser.Id, closingId);
 
         result.Success.Should().BeTrue();
 
         var discrepancy = await _dbContext.Discrepancies
-            .FirstOrDefaultAsync(d => d.CashCountId == closingCount.Id);
+            .FirstOrDefaultAsync(d => d.CashCountId == closingId);
         discrepancy.Should().NotBeNull();
         discrepancy!.Variance.Should().Be(200m);
-        discrepancy.ExpectedAmount.Should().Be(1000m);
-        discrepancy.ActualAmount.Should().Be(1200m);
+        discrepancy.ExpectedAmount.Should().Be(950m);
+        discrepancy.ActualAmount.Should().Be(1150m);
         discrepancy.Status.Should().Be(DiscrepancyStatus.PendingReview);
     }
 
     [Fact]
-    public async Task SubmitCashCountAsync_ClosingWithSurplus_RequiresExplanation()
+    public async Task GetPendingApprovalsAsync_MixedClosingWithMatchingCustomAmountHasNoVariance()
     {
-        var session = CashSessionBuilder.Default()
-            .WithBranchId(_testBranch.Id)
-            .AsOpen()
-            .Build();
-        _dbContext.CashSessions.Add(session);
+        var custom = AddWallet(WalletTypeEnum.Custom);
+        var session = await SeedOpenSessionWithApprovedOpeningAsync(_testWallet, custom);
+        _dbContext.WalletAdjustments.AddRange(
+            new WalletAdjustment { CashSessionId = session.Id, AgentId = _testAgent.Id, WalletId = custom.Id,
+                Amount = 50m, Status = WalletAdjustmentStatus.Approved },
+            new WalletAdjustment { CashSessionId = session.Id, AgentId = _testAgent.Id, WalletId = _testWallet.Id,
+                Amount = 200m, Status = WalletAdjustmentStatus.Approved });
         await _dbContext.SaveChangesAsync();
+        _walletAdjustmentServiceMock.Setup(s => s.GetWalletAdjustmentTotalsAsync(session.Id, _testAgent.Id))
+            .ReturnsAsync(new Dictionary<long, decimal> { [_testWallet.Id] = 200m, [custom.Id] = 50m });
+        var closingId = await SaveClosingAsync(null, (_testWallet, 500m), (custom, 950m));
 
-        var openingCount = CashCountBuilder.Default()
-            .WithCashSessionId(session.Id)
-            .WithAgentId(_testAgent.Id)
-            .AsOpening()
-            .AsApproved()
-            .WithTotalAmount(1000m)
-            .Build();
-        _dbContext.CashCounts.Add(openingCount);
-        await _dbContext.SaveChangesAsync();
+        var result = await _sut.SubmitCashCountAsync(_testUser.Id, closingId);
 
-        var closingCount = CashCountBuilder.Default()
-            .WithId(2)
-            .WithCashSessionId(session.Id)
-            .WithAgentId(_testAgent.Id)
-            .AsClosing()
-            .WithStatus(CashCountStatus.Draft)
-            .WithTotalAmount(1200m) // Surplus without explanation
-            .Build();
-        _dbContext.CashCounts.Add(closingCount);
-        await _dbContext.SaveChangesAsync();
-
-        var result = await _sut.SubmitCashCountAsync(_testUser.Id, closingCount.Id);
-
-        result.Success.Should().BeFalse();
-        result.ErrorMessage.Should().Contain("explanation");
+        result.Success.Should().BeTrue();
+        var pending = (await _sut.GetPendingApprovalsAsync(_testBranch.Id)).Single();
+        pending.TotalAmount.Should().Be(1450m);
+        pending.OpeningTotal.Should().Be(950m);
+        pending.Variance.Should().Be(0m);
+        pending.HasDiscrepancy.Should().BeFalse();
+        (await _dbContext.Discrepancies.AnyAsync()).Should().BeFalse();
     }
 
     [Fact]

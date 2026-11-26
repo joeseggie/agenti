@@ -61,6 +61,13 @@
                 </MudTd>
             </RowTemplate>
         </MudTable>
+        @if (_review.PendingDiscrepancy is { } discrepancy)
+        {
+            <MudAlert Severity="Severity.Warning" Class="my-3">
+                Review the previously recorded discrepancy with this closing:
+                UGX @discrepancy.RecordedVariance.ToString("N2"). @discrepancy.Explanation
+            </MudAlert>
+        }
         @if (!_review.Wallets.Any(w => w.Type == WalletTypeEnum.Bank))
         {
             <MudAlert Severity="Severity.Info">Bank reconciliation not required.</MudAlert>

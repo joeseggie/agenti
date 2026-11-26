@@ -310,6 +310,9 @@ public class CurrentSessionInfo
 
 public class CashCountForm
 {
+    [JsonPropertyName("apiContractVersion")]
+    public int? ApiContractVersion { get; set; }
+
     [JsonPropertyName("cashCountId")]
     public long? CashCountId { get; set; }
 
@@ -342,6 +345,11 @@ public class WalletCountEntry
 
     [JsonPropertyName("expectedBalance")]
     public decimal ExpectedBalance { get; set; }
+
+    [JsonPropertyName("usesEnteredClosingAmount")]
+    public bool UsesEnteredClosingAmount { get; set; }
+    [JsonIgnore]
+    public bool ShowExpectedBalance => !UsesEnteredClosingAmount;
 
     [JsonPropertyName("countedAmount")]
     public decimal CountedAmount { get; set; }

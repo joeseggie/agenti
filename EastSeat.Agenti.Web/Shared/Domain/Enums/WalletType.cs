@@ -10,3 +10,9 @@ public enum WalletTypeEnum
     Bank = 3,
     Custom = 4
 }
+
+public static class WalletTypeClosingRules
+{
+    public static bool UsesEnteredClosingAmount(this WalletTypeEnum type) =>
+        type is WalletTypeEnum.Cash or WalletTypeEnum.MobileMoney;
+}

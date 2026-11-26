@@ -40,8 +40,13 @@ accounting movements, not bank-statement entries.
 | Follow up cases | Record bank progress and customer settlement separately, with linked movement, amount, actual time, explanation and evidence. A bank return is not a customer refund. |
 | Record a bank run | After the physical cash-to-bank operation, record destination, amount, actual receipt time, reference, slip and notes. Requires approved opening, active trading and sufficient transferable cash; held customer cash is not freely available. |
 | Review adjustments | Submit supported wallet adjustments for independent review. Pending adjustments can appear in the provisional tally but block final approval. No self-review or fictitious adjustments to force agreement. |
-| Close | Enter all closing wallet observations and explain any differences from recorded movements. Submit the closing for approval. Trading ends, allocations are returned once and wallet caches are zeroed. External bank accounts are not emptied. |
+| Close | Enter all closing wallet observations. Cash and Mobile Money use the entered amount; no movement comparison or variance explanation applies to them. Bank and Custom wallet checks still apply. Submit for independent approval. Trading ends, allocations are returned once and wallet caches are zeroed. External bank accounts are not emptied. |
 | Await approval | Active branch Admins and Supervisors receive a persistent notification linking to the closing. The agent sees ordinary count/approval status, not reconciliation controls. |
+
+For an unfinished legacy session from a previous day, the agent must enter and
+submit the actual closing amounts for that session before independent approval
+and settlement. Update older Android clients before using cash counts; older
+clients cannot safely display the revised closing form.
 
 Customer entries affect the expected position but do not themselves directly
 overwrite stored wallet balances. Every capture command has a client-generated
@@ -66,7 +71,7 @@ bank follow-ups require evidence. The default evidence limit is 5 MB.
    minus debits against submitted closing and the statement's opening/ending
    anchors. Equal and opposite bank differences do not cancel.
 5. After overall Success, Admin/Supervisor separately selects **Approve closing**.
-   Independent-approval, non-bank, discrepancy, adjustment and vault checks remain.
+   Independent approval, existing discrepancy review, Custom wallet, adjustment and vault checks remain.
 6. After Failed, only Admin may select **Approve with reconciliation exception**,
    explicitly acknowledge failures and provide a 10-2,000 character reason.
    Approval is recorded separately; the immutable report remains Failed.

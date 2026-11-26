@@ -55,9 +55,7 @@ public class AgentSessionSummaryDto
     public CashCountSummaryDto? OpeningCount { get; set; }
     public CashCountSummaryDto? ClosingCount { get; set; }
     public decimal TotalAdjustments { get; set; }
-    public decimal? Variance => WorkflowVersion == SessionWorkflowVersion.Legacy && ClosingCount != null && OpeningCount != null
-        ? ClosingCount.TotalAmount - (OpeningCount.TotalAmount - TotalAdjustments)
-        : null;
+    public decimal? Variance { get; set; }
     public bool HasDiscrepancy => Variance.HasValue && Variance.Value != 0;
 }
 

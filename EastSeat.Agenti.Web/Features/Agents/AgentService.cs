@@ -371,6 +371,12 @@ public class AgentService(ApplicationDbContext dbContext) : IAgentService
                 return SaveResult.Error("Wallet not found.");
             }
 
+            if (wallet.WalletTypeId != model.WalletTypeId &&
+                await dbContext.CashCountDetails.AnyAsync(d => d.WalletId == wallet.Id))
+            {
+                return SaveResult.Error("Cannot change the wallet type of a wallet with cash count history.");
+            }
+
             var walletType = await dbContext.WalletTypes.AsNoTracking()
                 .SingleOrDefaultAsync(wt => wt.Id == model.WalletTypeId);
             if (walletType == null)
