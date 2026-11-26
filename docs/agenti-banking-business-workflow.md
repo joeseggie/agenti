@@ -43,6 +43,11 @@ accounting movements, not bank-statement entries.
 | Close | Enter all closing wallet observations. Cash and Mobile Money use the entered amount; no movement comparison or variance explanation applies to them. Bank and Custom wallet checks still apply. Submit for independent approval. Trading ends, allocations are returned once and wallet caches are zeroed. External bank accounts are not emptied. |
 | Await approval | Active branch Admins and Supervisors receive a persistent notification linking to the closing. The agent sees ordinary count/approval status, not reconciliation controls. |
 
+For an unfinished legacy session from a previous day, the agent must enter and
+submit the actual closing amounts for that session before independent approval
+and settlement. Update older Android clients before using cash counts; older
+clients cannot safely display the revised closing form.
+
 Customer entries affect the expected position but do not themselves directly
 overwrite stored wallet balances. Every capture command has a client-generated
 retry identity; unchanged retries retrieve the same result.

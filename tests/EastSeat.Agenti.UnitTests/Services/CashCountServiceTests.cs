@@ -643,6 +643,113 @@ public class CashCountServiceTests : IDisposable
     #region ApproveCashCountAsync Tests
 
     [Fact]
+    public async Task ZeroClosing_AllowsNextOpeningAndReversalWithoutVaultTransfers()
+    {
+        var admin = UserBuilder.Default().WithEmail("admin@test.com").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(admin);
+        var (session, opening) = await SeedPreviousClosingAndTodayOpeningAsync(0m, 0m, null);
+
+        (await _sut.SubmitCashCountAsync(_testUser.Id, opening.Id)).Success.Should().BeTrue();
+        (await _sut.ApproveCashCountAsync(admin.Id, opening.Id)).Success.Should().BeTrue();
+        opening.Status.Should().Be(CashCountStatus.Approved);
+        _testWallet.Balance.Should().Be(0m);
+        (await _sut.UnapproveCashCountAsync(admin.Id, opening.Id, "Correcting opening count")).Success.Should().BeTrue();
+        opening.Status.Should().Be(CashCountStatus.PendingApproval);
+        _vaultServiceMock.Verify(x => x.WithdrawForSessionAsync(session.Id, _testBranch.Id, 0m, admin.Id, false, default), Times.Never);
+        _vaultServiceMock.Verify(x => x.DepositForSessionAsync(session.Id, _testBranch.Id, 0m, admin.Id, false, default), Times.Never);
+    }
+
+    [Fact]
+    public async Task PreviousSession_OriginalAgentCanSubmitClosingBeforeNextOpening()
+    {
+        var admin = UserBuilder.Default().WithEmail("admin@test.com").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(admin);
+        var session = await SeedOpenSessionWithApprovedOpeningAsync(_testWallet);
+        session.SessionDate = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1);
+        var opening = await _dbContext.CashCounts.SingleAsync(c => c.IsOpening);
+        opening.CountDate = session.SessionDate;
+        await _dbContext.SaveChangesAsync();
+
+        var current = await _sut.GetCurrentSessionAsync(_testUser.Id);
+        current.CanPerformClosingCount.Should().BeTrue();
+        current.CanPerformOpeningCount.Should().BeFalse();
+        var form = await _sut.InitializeCashCountFormAsync(_testUser.Id, false);
+        form.CountDate.Should().Be(session.SessionDate);
+        form.WalletEntries.Single().CountedAmount = 700m;
+        var save = await _sut.SaveCashCountAsync(_testUser.Id, form);
+        save.Success.Should().BeTrue(save.ErrorMessage);
+        (await _sut.SubmitCashCountAsync(_testUser.Id, save.CashCountId!.Value)).Success.Should().BeTrue();
+        _vaultServiceMock.Setup(s => s.DepositForSessionAsync(session.Id, _testBranch.Id, 700m,
+            admin.Id, false, default)).ReturnsAsync(VaultOperationResult.Ok(1));
+        (await _sut.ApproveCashCountAsync(admin.Id, save.CashCountId.Value)).Success.Should().BeTrue();
+        session.Status.Should().Be(CashSessionStatus.Closed);
+        (await _sut.GetCurrentSessionAsync(_testUser.Id)).CanPerformOpeningCount.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ApproveClosing_AdjustmentChangedComparedVariance_RequiresResubmission()
+    {
+        var admin = UserBuilder.Default().WithEmail("admin@test.com").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(admin);
+        var custom = AddWallet(WalletTypeEnum.Custom);
+        var session = await SeedOpenSessionWithApprovedOpeningAsync(_testWallet, custom);
+        var closingId = await SaveClosingAsync(null, (_testWallet, 500m), (custom, 1000m));
+        (await _sut.SubmitCashCountAsync(_testUser.Id, closingId)).Success.Should().BeTrue();
+        _walletAdjustmentServiceMock.Setup(s => s.GetWalletAdjustmentTotalsAsync(session.Id, _testAgent.Id))
+            .ReturnsAsync(new Dictionary<long, decimal> { [custom.Id] = 100m });
+
+        var result = await _sut.ApproveCashCountAsync(admin.Id, closingId);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("resubmit");
+        (await _dbContext.CashCounts.FindAsync(closingId))!.Status.Should().Be(CashCountStatus.PendingApproval);
+        _vaultServiceMock.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Closing_CustomBankRunIsIncludedInSubmissionAndApproval()
+    {
+        var admin = UserBuilder.Default().WithEmail("admin@test.com").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(admin);
+        var custom = AddWallet(WalletTypeEnum.Custom);
+        var session = await SeedOpenSessionWithApprovedOpeningAsync(_testWallet, custom);
+        _dbContext.BankRuns.Add(new BankRun
+        {
+            CashSessionId = session.Id, AgentId = _testAgent.Id,
+            FromWalletId = _testWallet.Id, ToWalletId = custom.Id, Amount = 300m
+        });
+        await _dbContext.SaveChangesAsync();
+        var closingId = await SaveClosingAsync(null, (_testWallet, 500m), (custom, 1300m));
+
+        (await _sut.SubmitCashCountAsync(_testUser.Id, closingId)).Success.Should().BeTrue();
+        var pending = (await _sut.GetPendingApprovalsAsync(_testBranch.Id)).Single();
+        pending.Variance.Should().Be(0m);
+        _vaultServiceMock.Setup(s => s.DepositForSessionAsync(session.Id, _testBranch.Id, 1800m,
+            admin.Id, false, default)).ReturnsAsync(VaultOperationResult.Ok(1));
+        (await _sut.ApproveCashCountAsync(admin.Id, closingId)).Success.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ApproveClosing_ChangedDetailsWithSameTotal_RequiresRefresh()
+    {
+        var admin = UserBuilder.Default().WithEmail("admin@test.com").WithRole(UserRole.Admin).Build();
+        _dbContext.Users.Add(admin);
+        var mobile = AddWallet(WalletTypeEnum.MobileMoney);
+        await SeedOpenSessionWithApprovedOpeningAsync(_testWallet, mobile);
+        var closingId = await SaveClosingAsync(null, (_testWallet, 500m), (mobile, 600m));
+        (await _sut.SubmitCashCountAsync(_testUser.Id, closingId)).Success.Should().BeTrue();
+        var details = await _dbContext.CashCountDetails.Where(d => d.CashCountId == closingId).ToListAsync();
+        details.Single(d => d.WalletId == _testWallet.Id).Amount = 400m;
+        details.Single(d => d.WalletId == mobile.Id).Amount = 700m;
+
+        var result = await _sut.ApproveCashCountAsync(admin.Id, closingId);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("changed");
+        _vaultServiceMock.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task ApproveCashCountAsync_OpeningCount_WithdrawsFromVault()
     {
         // Rule 20: Admin approval triggers vault withdrawal

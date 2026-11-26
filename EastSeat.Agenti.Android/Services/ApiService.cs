@@ -80,19 +80,22 @@ public class ApiService : IApiService
 
     public async Task<ApiResponse<CashCountForm>?> InitializeCashCountAsync(bool isOpening)
     {
-        var response = await _httpClient.GetAsync($"api/cash-counts/initialize?isOpening={isOpening}");
-        return await ReadResponseAsync<CashCountForm>(response);
+        var response = await _httpClient.GetAsync($"api/cash-counts/initialize?isOpening={isOpening}&countContractVersion=2");
+        var result = await ReadResponseAsync<CashCountForm>(response);
+        if (result?.Success == true && result.Data?.ApiContractVersion != 2)
+            return new ApiResponse<CashCountForm> { Success = false, Error = "The server must be updated before using cash counts." };
+        return result;
     }
 
     public async Task<ApiResponse<CashCountResult>?> SaveCashCountAsync(CashCountForm form)
     {
-        var response = await _httpClient.PostAsJsonAsync("api/cash-counts", form, JsonOptions);
+        var response = await _httpClient.PostAsJsonAsync("api/cash-counts?countContractVersion=2", form, JsonOptions);
         return await ReadResponseAsync<CashCountResult>(response);
     }
 
     public async Task<ApiResponse<CashCountResult>?> SubmitCashCountAsync(long cashCountId)
     {
-        var response = await _httpClient.PostAsync($"api/cash-counts/{cashCountId}/submit",
+        var response = await _httpClient.PostAsync($"api/cash-counts/{cashCountId}/submit?countContractVersion=2",
             new StringContent(string.Empty, Encoding.UTF8, "application/json"));
         return await ReadResponseAsync<CashCountResult>(response);
     }

@@ -7,12 +7,48 @@ using EastSeat.Agenti.UnitTests.Helpers;
 using EastSeat.Agenti.Web.Data;
 using EastSeat.Agenti.Web.Features.Api;
 using EastSeat.Agenti.Web.Features.CustomerTransactions;
+using EastSeat.Agenti.Web.Features.CashCounts;
 using Microsoft.EntityFrameworkCore;
 
 namespace EastSeat.Agenti.IntegrationTests;
 
 public sealed class ReconciliationApiTests(DatabaseFixture fixture) : IntegrationTestBase(fixture)
 {
+    [Theory]
+    [InlineData("/api/banking/counts")]
+    [InlineData("/api/cash-counts")]
+    public async Task CashCountContract_BlocksOldClientsAndAdvertisesUpdatedForm(string route)
+    {
+        using var scenario = Seed();
+        scenario.AddApprovedOpening();
+        await using var app = new BankingApplicationFactory(Fixture.ConnectionString);
+        using var client = app.CreateClient(new() { AllowAutoRedirect = false });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", app.Token(scenario.User));
+
+        using var oldForm = await client.GetAsync($"{route}/initialize?isOpening=false");
+        using var formResponse = await client.GetAsync($"{route}/initialize?isOpening=false&countContractVersion=2");
+        Assert.Equal(HttpStatusCode.UpgradeRequired, oldForm.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, formResponse.StatusCode);
+        var form = (await formResponse.Content.ReadFromJsonAsync<ApiResponse<CashCountFormModel>>())!.Data!;
+        Assert.Equal(2, form.ApiContractVersion);
+        Assert.Contains(form.WalletEntries, w => w.WalletId == scenario.CashWallet.Id && w.UsesEnteredClosingAmount);
+        using var oldSave = await client.PostAsJsonAsync(route, form);
+        Assert.Equal(HttpStatusCode.UpgradeRequired, oldSave.StatusCode);
+        using var oldSubmit = await client.PostAsync($"{route}/123/submit", null);
+        Assert.Equal(HttpStatusCode.UpgradeRequired, oldSubmit.StatusCode);
+
+        var closing = scenario.AddSubmittedClosing();
+        DbContext.CashCountDetails.Add(new EastSeat.Agenti.Shared.Domain.Entities.CashCountDetail
+        {
+            CashCountId = closing.Id, WalletId = scenario.CashWallet.Id, Amount = 100_000m
+        });
+        await DbContext.SaveChangesAsync();
+        using var oldRead = await client.GetAsync($"{route}/{closing.Id}");
+        using var newRead = await client.GetAsync($"{route}/{closing.Id}?countContractVersion=2");
+        Assert.Equal(HttpStatusCode.UpgradeRequired, oldRead.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, newRead.StatusCode);
+    }
+
     [Fact]
     public async Task JwtOnlyApi_DoesNotCombineCookieAdminWithBearerAgent()
     {

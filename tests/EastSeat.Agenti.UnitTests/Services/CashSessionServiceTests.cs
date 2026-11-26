@@ -148,6 +148,45 @@ public class CashSessionServiceTests : IDisposable
         Assert.Equal(existingDiscrepancy ? -25_000m : (decimal?)null, agent.Variance);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SessionDetail_LegacyVarianceIncludesBankRunsAndIgnoresPreviouslyApprovedDiscrepancyAfterRevision(bool revised)
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.WorkflowVersion = SessionWorkflowVersion.Legacy;
+        fixture.AddApprovedOpening();
+        var closing = fixture.AddSubmittedClosing();
+        closing.Details = new List<CashCountDetail>
+        {
+            new() { WalletId = fixture.CashWallet.Id, Amount = 80_000m },
+            new() { WalletId = fixture.BankWallet.Id, Amount = 1_025_000m }
+        };
+        fixture.Db.BankRuns.Add(new BankRun
+        {
+            CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id,
+            FromWalletId = fixture.CashWallet.Id, ToWalletId = fixture.BankWallet.Id,
+            Amount = 20_000m, RecordedByUserId = fixture.User.Id, CreatedAt = BankingScenario.Now
+        });
+        fixture.Db.Discrepancies.Add(new Discrepancy
+        {
+            CashSessionId = fixture.Session.Id, CashCountId = closing.Id, Status = DiscrepancyStatus.Approved,
+            ExpectedAmount = 1_000_000m, ActualAmount = 1_100_000m, Variance = 100_000m,
+            CreatedAt = BankingScenario.Now
+        });
+        if (revised)
+            fixture.Db.CashCountAuditLogs.Add(new CashCountAuditLog
+            {
+                CashCountId = closing.Id, CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id,
+                Action = CashCountAuditAction.Saved, NewStatus = CashCountStatus.Draft,
+                PreviousStatus = CashCountStatus.PendingApproval, PerformedAt = BankingScenario.Now.AddMinutes(1)
+            });
+        await fixture.Db.SaveChangesAsync();
+
+        var session = await new CashSessionService(fixture.Db).GetCashSessionDetailAsync(fixture.Session.Id);
+
+        Assert.Equal(revised ? 5_000m : 100_000m, Assert.Single(session!.AgentSummaries).Variance);
+    }
     #region CloseSessionAsync Tests
 
     [Fact]

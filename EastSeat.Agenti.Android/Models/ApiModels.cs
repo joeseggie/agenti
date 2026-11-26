@@ -310,6 +310,9 @@ public class CurrentSessionInfo
 
 public class CashCountForm
 {
+    [JsonPropertyName("apiContractVersion")]
+    public int? ApiContractVersion { get; set; }
+
     [JsonPropertyName("cashCountId")]
     public long? CashCountId { get; set; }
 

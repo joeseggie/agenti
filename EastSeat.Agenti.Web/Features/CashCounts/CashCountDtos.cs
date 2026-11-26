@@ -23,6 +23,7 @@ public class WalletCountEntryDto
 /// </summary>
 public class CashCountFormModel
 {
+    public int? ApiContractVersion { get; set; }
     public long? CashCountId { get; set; }
     public long? CashSessionId { get; set; }
     public bool IsOpening { get; set; }

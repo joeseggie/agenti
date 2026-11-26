@@ -19,16 +19,18 @@ public static class BankingEndpoints
             Ok(new BankingCapabilitiesDto(1, options.Value.MaxFileBytes, "Africa/Kampala")));
         group.MapGet("/current", async (ClaimsPrincipal principal, ICashCountService service) =>
             Ok(await service.GetCurrentSessionAsync(UserId(principal))));
-        group.MapGet("/counts/initialize", async (bool isOpening, bool? forWalletAdjustment, ClaimsPrincipal principal, ICashCountService service) =>
-            Ok(await service.InitializeCashCountFormAsync(UserId(principal), isOpening, forWalletAdjustment == true)));
-        group.MapGet("/counts/{id:long}", async (long id, ClaimsPrincipal principal, ICashCountService service) =>
+        group.MapGet("/counts/initialize", async (bool isOpening, bool? forWalletAdjustment, int? countContractVersion, ClaimsPrincipal principal, ICashCountService service) =>
+            CashCountApiContract.Form(await service.InitializeCashCountFormAsync(UserId(principal), isOpening, forWalletAdjustment == true), countContractVersion));
+        group.MapGet("/counts/{id:long}", async (long id, int? countContractVersion, ClaimsPrincipal principal, ICashCountService service) =>
         {
             var form = await service.GetCashCountFormAsync(UserId(principal), id);
-            return form == null ? Results.NotFound(ApiResponse<CashCountFormModel>.Fail("Cash count not found.")) : Ok(form);
+            return form == null ? Results.NotFound(ApiResponse<CashCountFormModel>.Fail("Cash count not found.")) : CashCountApiContract.Form(form, countContractVersion);
         });
-        group.MapPost("/counts", async (CashCountFormModel form, ClaimsPrincipal principal, ICashCountService service) =>
+        group.MapPost("/counts", async (CashCountFormModel form, int? countContractVersion, ClaimsPrincipal principal, ICashCountService service) =>
+            !CashCountApiContract.Supports(countContractVersion) ? CashCountApiContract.UpgradeRequired() :
             CountResult(await service.SaveCashCountAsync(UserId(principal), form)));
-        group.MapPost("/counts/{id:long}/submit", async (long id, ClaimsPrincipal principal, ICashCountService service) =>
+        group.MapPost("/counts/{id:long}/submit", async (long id, int? countContractVersion, ClaimsPrincipal principal, ICashCountService service) =>
+            !CashCountApiContract.Supports(countContractVersion) ? CashCountApiContract.UpgradeRequired() :
             CountResult(await service.SubmitCashCountAsync(UserId(principal), id)));
         group.MapGet("/counts/pending", async (ClaimsPrincipal principal, IBankingAccessService access, ICashCountService service, CancellationToken token) =>
         {

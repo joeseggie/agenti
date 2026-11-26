@@ -136,7 +136,12 @@ public sealed class SessionSettlementService(
                 var adjustments = await db.WalletAdjustments.Where(a => comparedIds.Contains(a.WalletId) && a.CashSessionId == session.Id &&
                         a.AgentId == count.AgentId && a.Status == WalletAdjustmentStatus.Approved)
                     .Select(a => a.Amount).ToListAsync(cancellationToken);
-                var expected = opening.Details.Where(d => comparedIds.Contains(d.WalletId)).Sum(d => d.Amount) - adjustments.Sum();
+                var bankRuns = await db.BankRuns.AsNoTracking()
+                    .Where(r => r.CashSessionId == session.Id && r.AgentId == count.AgentId)
+                    .Select(r => new BankRun { FromWalletId = r.FromWalletId, ToWalletId = r.ToWalletId, Amount = r.Amount })
+                    .ToListAsync(cancellationToken);
+                var expected = opening.Details.Where(d => comparedIds.Contains(d.WalletId)).Sum(d => d.Amount) -
+                    adjustments.Sum() + SessionBalanceService.BankRunNetEffect(bankRuns, comparedIds.ToHashSet());
                 var actual = compared.Sum(w => w.Amount);
                 if (expected != actual)
                 {

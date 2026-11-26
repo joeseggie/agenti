@@ -27,6 +27,7 @@ public static class CashCountEndpoints
 
         group.MapGet("/initialize", async (
             bool isOpening,
+            int? countContractVersion,
             ClaimsPrincipal principal,
             ICashCountService cashCountService) =>
         {
@@ -35,7 +36,7 @@ public static class CashCountEndpoints
                 return Results.Unauthorized();
 
             var form = await cashCountService.InitializeCashCountFormAsync(userId, isOpening);
-            return Results.Ok(ApiResponse<CashCountFormModel>.Ok(form));
+            return CashCountApiContract.Form(form, countContractVersion);
         })
         .RequireAuthorization()
         .WithName("InitializeCashCount")
@@ -43,12 +44,16 @@ public static class CashCountEndpoints
 
         group.MapPost("/", async (
             CashCountFormModel form,
+            int? countContractVersion,
             ClaimsPrincipal principal,
             ICashCountService cashCountService) =>
         {
             var userId = GetUserId(principal);
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();
+
+            if (!CashCountApiContract.Supports(countContractVersion))
+                return CashCountApiContract.UpgradeRequired();
 
             var result = await cashCountService.SaveCashCountAsync(userId, form);
             return result.Success
@@ -61,12 +66,16 @@ public static class CashCountEndpoints
 
         group.MapPost("/{cashCountId:long}/submit", async (
             long cashCountId,
+            int? countContractVersion,
             ClaimsPrincipal principal,
             ICashCountService cashCountService) =>
         {
             var userId = GetUserId(principal);
             if (string.IsNullOrEmpty(userId))
                 return Results.Unauthorized();
+
+            if (!CashCountApiContract.Supports(countContractVersion))
+                return CashCountApiContract.UpgradeRequired();
 
             var result = await cashCountService.SubmitCashCountAsync(userId, cashCountId);
             return result.Success
@@ -79,6 +88,7 @@ public static class CashCountEndpoints
 
         group.MapGet("/{cashCountId:long}", async (
             long cashCountId,
+            int? countContractVersion,
             ClaimsPrincipal principal,
             ICashCountService cashCountService) =>
         {
@@ -89,7 +99,7 @@ public static class CashCountEndpoints
             var form = await cashCountService.GetCashCountFormAsync(userId, cashCountId);
             return form is null
                 ? Results.NotFound(ApiResponse<CashCountFormModel>.Fail("Cash count not found."))
-                : Results.Ok(ApiResponse<CashCountFormModel>.Ok(form));
+                : CashCountApiContract.Form(form, countContractVersion);
         })
         .RequireAuthorization()
         .WithName("GetCashCount")

@@ -54,6 +54,9 @@ public partial class CashCountPage : ContentPage
 
     private async Task InitializeFormAsync(bool isOpening)
     {
+        CountTitleLabel.IsVisible = WalletEntriesView.IsVisible = SubmitButton.IsVisible = false;
+        WalletEntriesView.ItemsSource = null;
+        ErrorLabel.IsVisible = false;
         SetLoading(true);
         await _viewModel.InitializeFormAsync(isOpening);
         SetLoading(false);

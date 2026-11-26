@@ -1,4 +1,5 @@
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Shared.Domain.Entities;
 using EastSeat.Agenti.Web.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -6,6 +7,10 @@ namespace EastSeat.Agenti.Shared.Services;
 
 public sealed class SessionBalanceService(ApplicationDbContext db, IBusinessClock clock) : ISessionBalanceService
 {
+    internal static decimal BankRunNetEffect(IEnumerable<BankRun> runs, IReadOnlySet<long> walletIds) =>
+        runs.Sum(r => (walletIds.Contains(r.ToWalletId) ? r.Amount : 0m) -
+                      (walletIds.Contains(r.FromWalletId) ? r.Amount : 0m));
+
     public Task<List<SessionWalletPosition>> GetPositionsAsync(
         long sessionId, long agentId, bool includePendingAdjustments = false, CancellationToken cancellationToken = default,
         IReadOnlySet<long>? comparisonWalletIds = null) =>

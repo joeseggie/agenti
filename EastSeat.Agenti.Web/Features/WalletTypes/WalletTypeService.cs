@@ -116,6 +116,12 @@ public class WalletTypeService(ApplicationDbContext dbContext) : IWalletTypeServ
                 return WalletTypeSaveResult.Error($"Wallet type '{model.Name}' already exists.");
             }
 
+            if (walletType.Type != model.Type &&
+                await dbContext.CashCountDetails.AnyAsync(d => d.Wallet!.WalletTypeId == walletType.Id))
+            {
+                return WalletTypeSaveResult.Error("Cannot change the category of a wallet type with cash count history.");
+            }
+
             if (model.Type == WalletTypeEnum.Cash &&
                 await dbContext.Wallets.AnyAsync(w => w.WalletTypeId == walletType.Id &&
                     dbContext.Wallets.Any(other => other.AgentId == w.AgentId &&

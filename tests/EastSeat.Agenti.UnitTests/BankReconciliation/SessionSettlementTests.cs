@@ -12,6 +12,85 @@ namespace EastSeat.Agenti.UnitTests.BankReconciliation;
 
 public class SessionSettlementTests
 {
+    [Theory]
+    [InlineData(true, 1_020_000)]
+    [InlineData(false, 980_000)]
+    public async Task LegacyClosing_AccountsForBankRunIntoOrOutOfComparedWallet(bool intoBank, decimal closingBank)
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.WorkflowVersion = SessionWorkflowVersion.Legacy;
+        fixture.AddApprovedOpening();
+        var (service, _) = CreateService(fixture);
+        fixture.Db.BankRuns.Add(new BankRun
+        {
+            CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id,
+            FromWalletId = intoBank ? fixture.CashWallet.Id : fixture.BankWallet.Id,
+            ToWalletId = intoBank ? fixture.BankWallet.Id : fixture.CashWallet.Id,
+            Amount = 20_000m, RecordedByUserId = fixture.User.Id, CreatedAt = BankingTestContext.Now
+        });
+        var closing = AddCount(fixture, false, 100_000m, closingBank);
+
+        await service.SubmitClosingAsync(fixture.User.Id, closing.Id);
+
+        Assert.Empty(await fixture.Db.Discrepancies.ToListAsync());
+        Assert.Equal(CashCountStatus.PendingApproval, closing.Status);
+    }
+
+    [Fact]
+    public async Task LegacyClosing_BankRunDoesNotMaskRealComparedWalletVariance()
+    {
+        using var fixture = new BankingTestContext();
+        fixture.Session.WorkflowVersion = SessionWorkflowVersion.Legacy;
+        fixture.AddApprovedOpening();
+        var (service, _) = CreateService(fixture);
+        fixture.Db.BankRuns.Add(new BankRun
+        {
+            CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id,
+            FromWalletId = fixture.CashWallet.Id, ToWalletId = fixture.BankWallet.Id,
+            Amount = 20_000m, RecordedByUserId = fixture.User.Id, CreatedAt = BankingTestContext.Now
+        });
+        var closing = AddCount(fixture, false, 80_000m, 1_025_000m);
+        closing.Explanation = "Bank balance needs review.";
+        await fixture.Db.SaveChangesAsync();
+
+        await service.SubmitClosingAsync(fixture.User.Id, closing.Id);
+
+        var discrepancy = await fixture.Db.Discrepancies.SingleAsync();
+        Assert.Equal(1_020_000m, discrepancy.ExpectedAmount);
+        Assert.Equal(5_000m, discrepancy.Variance);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BankingClosing_BankRunIsIncludedWhenValidatingBankBalance(bool mismatch)
+    {
+        using var fixture = new BankingTestContext();
+        var (service, _) = CreateService(fixture);
+        var opening = AddCount(fixture, true, 100_000m, 1_000_000m);
+        (await fixture.Db.Vaults.SingleAsync()).CurrentBalance = opening.TotalAmount;
+        await fixture.Db.SaveChangesAsync();
+        await service.ApproveOpeningAsync(fixture.Admin.Id, opening.Id);
+        fixture.Db.BankRuns.Add(new BankRun
+        {
+            CashSessionId = fixture.Session.Id, AgentId = fixture.Agent.Id,
+            FromWalletId = fixture.CashWallet.Id, ToWalletId = fixture.BankWallet.Id,
+            Amount = 20_000m, RecordedByUserId = fixture.User.Id, CreatedAt = BankingTestContext.Now
+        });
+        var closing = AddCount(fixture, false, 80_000m, mismatch ? 1_025_000m : 1_020_000m);
+
+        if (mismatch)
+        {
+            await Assert.ThrowsAsync<BankingRuleException>(() => service.SubmitClosingAsync(fixture.User.Id, closing.Id));
+            Assert.False(await fixture.Db.SessionFloatSettlements.AnyAsync(s => s.Stage == FloatSettlementStage.Closing));
+        }
+        else
+        {
+            await service.SubmitClosingAsync(fixture.User.Id, closing.Id);
+            Assert.Empty(await fixture.Db.Discrepancies.ToListAsync());
+        }
+    }
+
     [Fact]
     public async Task MultipleBankAndMobileWallets_OpenAndCloseWithOneSettlementAndSeparateBindings()
     {
