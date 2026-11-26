@@ -36,12 +36,22 @@ public class SessionSettlementTests
         var savedOpening = await workflow.SaveAsync(fixture.User.Id, opening);
         await workflow.SubmitAsync(fixture.User.Id, savedOpening.CashCountId!.Value);
         await workflow.ApproveOpeningAsync(fixture.Admin.Id, savedOpening.CashCountId.Value);
+        fixture.Db.BankRuns.Add(new BankRun
+        {
+            AgentId = fixture.Agent.Id, CashSessionId = fixture.Session.Id, FromWalletId = fixture.CashWallet.Id,
+            ToWalletId = mobile.Id, Amount = 20_000m, RecordedByUserId = fixture.User.Id,
+            OccurredAt = clock.UtcNow, CreatedAt = clock.UtcNow
+        });
+        await fixture.Db.SaveChangesAsync();
+        var trading = await workflow.InitializeFormAsync(fixture.User.Id, false, forWalletAdjustment: true);
+        Assert.Equal(initial[mobile.Id] + 20_000m, trading.WalletEntries.Single(w => w.WalletId == mobile.Id).ExpectedBalance);
         var closing = await workflow.InitializeFormAsync(fixture.User.Id, false);
         Assert.Equal(4, closing.WalletEntries.Count);
         foreach (var wallet in closing.WalletEntries)
         {
-            Assert.Equal(initial[wallet.WalletId], wallet.ExpectedBalance);
-            wallet.CountedAmount = wallet.ExpectedBalance;
+            wallet.CountedAmount = initial[wallet.WalletId] + (wallet.WalletId == mobile.Id ? 10_000m : 0m);
+            Assert.Equal(wallet.WalletId == mobile.Id || wallet.WalletId == fixture.CashWallet.Id, wallet.UsesEnteredClosingAmount);
+            Assert.Equal(wallet.CountedAmount, wallet.ExpectedBalance);
             wallet.ObservedAt = clock.UtcNow;
             wallet.Denominations = null;
         }
@@ -56,9 +66,10 @@ public class SessionSettlementTests
         Assert.Equal(secondAccount.Id, wallets.Single(w => w.WalletId == secondBank.Id).BankAccountId);
         Assert.Null(wallets.Single(w => w.WalletId == mobile.Id).BankAccountId);
         Assert.All(await fixture.Db.Wallets.ToListAsync(), w => Assert.Equal(0m, w.Balance));
-        Assert.Equal(initial.Values.Sum(), (await fixture.Db.Vaults.SingleAsync()).CurrentBalance);
+        Assert.Empty(await fixture.Db.Discrepancies.ToListAsync());
+        Assert.Equal(initial.Values.Sum() + 10_000m, (await fixture.Db.Vaults.SingleAsync()).CurrentBalance);
         vault.Verify(v => v.DepositForSessionAsync(fixture.Session.Id, fixture.Account.BranchId,
-            initial.Values.Sum(), fixture.User.Id, false, It.IsAny<CancellationToken>()), Times.Once);
+            initial.Values.Sum() + 10_000m, fixture.User.Id, false, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -130,7 +141,7 @@ public class SessionSettlementTests
     }
 
     [Fact]
-    public async Task Closing_ExplainedCashVarianceCreatesDiscrepancyForReview()
+    public async Task Closing_EnteredCashSettlesOnceWithoutExplanationOrDiscrepancy()
     {
         using var fixture = new BankingTestContext();
         var (service, _) = CreateService(fixture);
@@ -139,18 +150,14 @@ public class SessionSettlementTests
         await fixture.Db.SaveChangesAsync();
         await service.ApproveOpeningAsync(fixture.Admin.Id, opening.Id);
         var closing = AddCount(fixture, false, 90_000m, 1_000_000m);
-        closing.Explanation = "Counted ten thousand short after the final deposit.";
-        await fixture.Db.SaveChangesAsync();
 
         await service.SubmitClosingAsync(fixture.User.Id, closing.Id);
         await service.SubmitClosingAsync(fixture.User.Id, closing.Id);
 
-        var discrepancy = await fixture.Db.Discrepancies.SingleAsync();
-        Assert.Equal(DiscrepancyStatus.PendingReview, discrepancy.Status);
-        Assert.Equal(100_000m, discrepancy.ExpectedAmount);
-        Assert.Equal(90_000m, discrepancy.ActualAmount);
-        Assert.Equal(-10_000m, discrepancy.Variance);
-        Assert.Equal(closing.Explanation, discrepancy.Explanation);
+        Assert.Empty(await fixture.Db.Discrepancies.ToListAsync());
+        var settlement = await fixture.Db.SessionFloatSettlements.SingleAsync(s => s.Stage == FloatSettlementStage.Closing);
+        Assert.Equal(1_090_000m, settlement.VaultAmount);
+        Assert.Equal(CashCountStatus.PendingApproval, closing.Status);
     }
 
     [Fact]

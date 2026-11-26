@@ -92,7 +92,7 @@
                                        FontSize="13"
                                        TextColor="{AppThemeBinding Light=#757575, Dark=#BDBDBD}" />
                                 <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                                    <VerticalStackLayout Grid.Column="0">
+                                    <VerticalStackLayout Grid.Column="0" IsVisible="{Binding ShowExpectedBalance}">
                                         <Label Text="Expected"
                                                FontSize="12"
                                                TextColor="{AppThemeBinding Light=#9E9E9E, Dark=#757575}" />

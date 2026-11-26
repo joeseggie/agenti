@@ -19,8 +19,8 @@ public static class BankingEndpoints
             Ok(new BankingCapabilitiesDto(1, options.Value.MaxFileBytes, "Africa/Kampala")));
         group.MapGet("/current", async (ClaimsPrincipal principal, ICashCountService service) =>
             Ok(await service.GetCurrentSessionAsync(UserId(principal))));
-        group.MapGet("/counts/initialize", async (bool isOpening, ClaimsPrincipal principal, ICashCountService service) =>
-            Ok(await service.InitializeCashCountFormAsync(UserId(principal), isOpening)));
+        group.MapGet("/counts/initialize", async (bool isOpening, bool? forWalletAdjustment, ClaimsPrincipal principal, ICashCountService service) =>
+            Ok(await service.InitializeCashCountFormAsync(UserId(principal), isOpening, forWalletAdjustment == true)));
         group.MapGet("/counts/{id:long}", async (long id, ClaimsPrincipal principal, ICashCountService service) =>
         {
             var form = await service.GetCashCountFormAsync(UserId(principal), id);

@@ -98,17 +98,17 @@ public sealed class SessionSettlementService(
 
             if (!isOpening && !legacyClosing)
             {
+                var compared = walletSnapshots.Where(w => !w.WalletType.UsesEnteredClosingAmount()).ToList();
                 var positions = await balances.GetPositionsAtSnapshotAsync(snapshot.Id,
-                    includePendingAdjustments: true, cancellationToken);
+                    includePendingAdjustments: true, cancellationToken, compared.Select(w => w.WalletId).ToHashSet());
                 if (!positions.Select(p => p.WalletId).Order().SequenceEqual(walletSnapshots.Select(w => w.WalletId).Order()))
                     throw new BankingRuleException("Closing must contain the same wallets as opening.");
                 if (walletSnapshots.Any(w => positions.Single(p => p.WalletId == w.WalletId).Currency != w.Currency))
                     throw new BankingRuleException("Wallet currencies cannot change between opening and closing.");
-                var hasVariance = walletSnapshots.Any(w => positions.Single(p => p.WalletId == w.WalletId).ExpectedBalance != w.Amount);
+                var hasVariance = compared.Any(w => positions.Single(p => p.WalletId == w.WalletId).ExpectedBalance != w.Amount);
                 if (hasVariance && string.IsNullOrWhiteSpace(count.Explanation))
                     throw new BankingRuleException("Closing wallet balances differ from recorded movements. Provide an explanation for admin review.");
-                // A Cash/Mobile variance has no bank statement to resolve it, so it is reviewed as a discrepancy at approval.
-                var nonBank = walletSnapshots.Where(w => w.WalletType != WalletTypeEnum.Bank).ToList();
+                var nonBank = compared.Where(w => w.WalletType != WalletTypeEnum.Bank).ToList();
                 var expectedNonBank = nonBank.Sum(w => positions.Single(p => p.WalletId == w.WalletId).ExpectedBalance);
                 if (nonBank.Any(w => positions.Single(p => p.WalletId == w.WalletId).ExpectedBalance != w.Amount) &&
                     !await db.Discrepancies.AnyAsync(d => d.CashCountId == count.Id &&
@@ -131,11 +131,14 @@ public sealed class SessionSettlementService(
                 if (!opening.Details.Select(d => d.WalletId).Order()
                     .SequenceEqual(walletSnapshots.Select(w => w.WalletId).Order()))
                     throw new BankingRuleException("Closing must contain the same wallets as opening.");
-                var adjustments = await db.WalletAdjustments.Where(a => a.CashSessionId == session.Id &&
+                var compared = walletSnapshots.Where(w => !w.WalletType.UsesEnteredClosingAmount()).ToList();
+                var comparedIds = compared.Select(w => w.WalletId).ToArray();
+                var adjustments = await db.WalletAdjustments.Where(a => comparedIds.Contains(a.WalletId) && a.CashSessionId == session.Id &&
                         a.AgentId == count.AgentId && a.Status == WalletAdjustmentStatus.Approved)
                     .Select(a => a.Amount).ToListAsync(cancellationToken);
-                var expected = opening.TotalAmount - adjustments.Sum();
-                if (expected != count.TotalAmount)
+                var expected = opening.Details.Where(d => comparedIds.Contains(d.WalletId)).Sum(d => d.Amount) - adjustments.Sum();
+                var actual = compared.Sum(w => w.Amount);
+                if (expected != actual)
                 {
                     if (string.IsNullOrWhiteSpace(count.Explanation))
                         throw new BankingRuleException("Closing differs from the expected amount. Provide an explanation for approval.");
@@ -144,7 +147,7 @@ public sealed class SessionSettlementService(
                         db.Discrepancies.Add(new Discrepancy
                         {
                             CashSessionId = session.Id, CashCountId = count.Id, Status = DiscrepancyStatus.PendingReview,
-                            ExpectedAmount = expected, ActualAmount = count.TotalAmount, Variance = count.TotalAmount - expected,
+                            ExpectedAmount = expected, ActualAmount = actual, Variance = actual - expected,
                             Explanation = count.Explanation, ExplainedByUserId = count.AgentId,
                             ExplainedAt = now, CreatedAt = now
                         });

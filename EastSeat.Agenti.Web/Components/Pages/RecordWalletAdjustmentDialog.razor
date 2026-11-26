@@ -106,8 +106,7 @@
         _occurredAt = BusinessTimeText.Format(BusinessClock.UtcNow);
         try
         {
-            // Load agent's wallets with current balances for the closing count form
-            var countForm = await CashCountService.InitializeCashCountFormAsync(UserId, false);
+            var countForm = await CashCountService.InitializeCashCountFormAsync(UserId, false, forWalletAdjustment: true);
             _wallets = countForm.WalletEntries;
         }
         finally

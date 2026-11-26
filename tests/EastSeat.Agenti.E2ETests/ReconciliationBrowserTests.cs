@@ -74,7 +74,8 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         var closing = await GetAsync<CashCountFormModel>(client, "/api/banking/counts/initialize?isOpening=false");
         foreach (var wallet in closing.WalletEntries)
         {
-            wallet.CountedAmount = wallet.ExpectedBalance;
+            wallet.CountedAmount = wallet.WalletId == scenario.CashWallet.Id ? 150_000m
+                : wallet.WalletId == mobile.Id ? 300_000m : wallet.ExpectedBalance;
             wallet.Denominations = null;
             wallet.ObservedAt = app.Clock.Now;
         }
@@ -197,7 +198,7 @@ public sealed class ReconciliationBrowserTests(DatabaseFixture database) : IClas
         var nextClosing = await GetAsync<CashCountFormModel>(client, "/api/banking/counts/initialize?isOpening=false");
         foreach (var wallet in nextClosing.WalletEntries)
         {
-            wallet.CountedAmount = wallet.ExpectedBalance;
+            wallet.CountedAmount = closing.WalletEntries.Single(w => w.WalletId == wallet.WalletId).CountedAmount;
             wallet.Denominations = null;
             wallet.ObservedAt = app.Clock.Now;
         }

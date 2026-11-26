@@ -25,6 +25,10 @@ public sealed class ClosingReconciliationService(
             .SingleOrDefaultAsync(r => r.ClosingCountId == count.Id, cancellationToken);
         var approval = await db.ClosingApprovalDecisions.AsNoTracking()
             .SingleOrDefaultAsync(a => a.ClosingCountId == count.Id, cancellationToken);
+        var pendingDiscrepancy = await db.Discrepancies.AsNoTracking()
+            .Where(d => d.CashCountId == count.Id && d.Status == DiscrepancyStatus.PendingReview)
+            .Select(d => new ClosingDiscrepancyDto(d.Variance, d.Explanation ?? count.Explanation))
+            .SingleOrDefaultAsync(cancellationToken);
         return new ClosingReviewDto(count.Id, count.CashSessionId, count.Agent!.User!.FullName,
             count.CountDate, count.Status, wallets.Select(w =>
             {
@@ -48,7 +52,7 @@ public sealed class ClosingReconciliationService(
                 }).ToList()),
             approval == null ? null : new ClosingApprovalDto(
                 approval.IsException, approval.Reason, approval.ApprovedByUserId, approval.ApprovedAt),
-            count.CashSession!.WorkflowVersion);
+            count.CashSession!.WorkflowVersion, pendingDiscrepancy);
     }
 
     public async Task<ClosingReviewDto> ReconcileAsync(
@@ -250,11 +254,11 @@ public sealed class ClosingReconciliationService(
                 .SingleOrDefaultAsync(s => s.CashCountId == count.Id, cancellationToken);
             if (count.CashSession!.WorkflowVersion == SessionWorkflowVersion.BankReconciliation && snapshot != null)
             {
-                var positions = await balances.GetPositionsAtSnapshotAsync(snapshot.Id, cancellationToken: cancellationToken);
-                // A bank statement cannot explain a Cash/Mobile variance; only the agent's reviewed discrepancy can.
-                if (discrepancy == null && wallets.Where(w => w.Type != WalletTypeEnum.Bank)
-                    .Any(w => positions.Single(p => p.WalletId == w.Id).ExpectedBalance != w.Amount))
-                    throw new BankingRuleException("Cash or Mobile Money differs from recorded movements and has no explained discrepancy to review. A bank reconciliation exception cannot override this safeguard.");
+                var compared = wallets.Where(w => w.Type != WalletTypeEnum.Bank && !w.Type.UsesEnteredClosingAmount()).ToList();
+                var positions = await balances.GetPositionsAtSnapshotAsync(snapshot.Id, cancellationToken: cancellationToken,
+                    comparisonWalletIds: compared.Select(w => w.Id).ToHashSet());
+                if (discrepancy == null && compared.Any(w => positions.Single(p => p.WalletId == w.Id).ExpectedBalance != w.Amount))
+                    throw new BankingRuleException("A Custom wallet differs from recorded movements and has no explained discrepancy to review.");
             }
             if (!await db.SessionFloatSettlements.AnyAsync(s => s.CashCountId == count.Id &&
                     s.Stage == FloatSettlementStage.Closing, cancellationToken))

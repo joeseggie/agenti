@@ -244,7 +244,7 @@ public sealed class ReconciliationPostgresTests(DatabaseFixture fixture) : Integ
         var form = await workflow.InitializeFormAsync(scenario.User.Id, false);
         foreach (var entry in form.WalletEntries)
         {
-            entry.CountedAmount = entry.ExpectedBalance;
+            entry.CountedAmount = entry.WalletId == scenario.CashWallet.Id ? 100_000m : entry.ExpectedBalance;
             entry.Denominations = null;
             entry.ObservedAt = clock.UtcNow;
         }

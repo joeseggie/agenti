@@ -122,9 +122,10 @@
 
         @foreach (var item in _pending.Where(p => !string.IsNullOrEmpty(p.Explanation)))
         {
-            var isSurplus = item.Variance.HasValue && item.Variance.Value > 0;
-            <MudAlert Severity="@(isSurplus ? Severity.Info : Severity.Warning)" Variant="Variant.Text" Class="mt-2" Dense="true">
-                <strong>@item.AgentName (@(item.IsOpening ? "Opening" : "Closing") — @(isSurplus ? "Surplus" : "Shortage") @(item.Variance.HasValue ? $"UGX {Math.Abs(item.Variance.Value):N0}" : "")):</strong> @item.Explanation
+            var varianceLabel = item.Variance is > 0 ? $"Surplus UGX {item.Variance:N0}"
+                : item.Variance is < 0 ? $"Shortage UGX {Math.Abs(item.Variance.Value):N0}" : null;
+            <MudAlert Severity="@(item.Variance is < 0 ? Severity.Warning : Severity.Info)" Variant="Variant.Text" Class="mt-2" Dense="true">
+                <strong>@item.AgentName (@(item.IsOpening ? "Opening" : "Closing")@(varianceLabel == null ? "" : $" — {varianceLabel}")):</strong> @item.Explanation
             </MudAlert>
         }
     }

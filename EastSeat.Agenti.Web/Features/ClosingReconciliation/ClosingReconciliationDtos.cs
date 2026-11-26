@@ -19,10 +19,13 @@ public sealed record ClosingReportDto(
 
 public sealed record ClosingApprovalDto(bool IsException, string? Reason, string ApprovedByUserId, DateTimeOffset ApprovedAt);
 
+public sealed record ClosingDiscrepancyDto(decimal RecordedVariance, string? Explanation);
+
 public sealed record ClosingReviewDto(
     long ClosingCountId, long CashSessionId, string AgentName, DateOnly BusinessDate,
     CashCountStatus Status, List<ClosingWalletDto> Wallets, ClosingReportDto? Report, ClosingApprovalDto? Approval,
-    SessionWorkflowVersion WorkflowVersion = SessionWorkflowVersion.BankReconciliation);
+    SessionWorkflowVersion WorkflowVersion = SessionWorkflowVersion.BankReconciliation,
+    ClosingDiscrepancyDto? PendingDiscrepancy = null);
 
 public interface IClosingReconciliationService
 {

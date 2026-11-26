@@ -68,7 +68,8 @@ public sealed class BankOperationsPage(
         Text("Enter each actual wallet balance and when it was observed. Manual amounts replace any old denomination breakdown.");
         foreach (var wallet in form.WalletEntries)
         {
-            Text($"{wallet.WalletName} ({wallet.WalletTypeName}) | expected {wallet.ExpectedBalance:N2}");
+            var compared = !serverForm.WalletEntries.Single(w => w.WalletId == wallet.WalletId).UsesEnteredClosingAmount;
+            Text($"{wallet.WalletName} ({wallet.WalletTypeName})" + (compared ? $" | expected {wallet.ExpectedBalance:N2}" : ""));
             Field(draft, $"amount-{wallet.WalletId}", "Counted amount", Number(wallet.CountedAmount),
                 value => { wallet.CountedAmount = Money(value); wallet.Denominations = null; }, true);
             if (current.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
@@ -212,7 +213,7 @@ public sealed class BankOperationsPage(
 
     private async Task AdjustmentAsync(CurrentSessionDto current)
     {
-        var options = await Api.GetAsync<CashCountFormModel>("counts/initialize?isOpening=false");
+        var options = await Api.GetAsync<CashCountFormModel>("counts/initialize?isOpening=false&forWalletAdjustment=true");
         Reset("Record wallet adjustment");
         var key = $"wallet-adjustment-{current.SessionId}";
         var draft = await EditAsync(key, () => new WalletAdjustmentFormModel { CommandId = Guid.NewGuid() });

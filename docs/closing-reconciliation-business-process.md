@@ -88,13 +88,16 @@ retain the existing closing-approval process:
 
 ### Variances, settlement and session closure
 
-- Closing a modern session with a Cash/Mobile Money count that differs from the
-  recorded movements requires the agent's explanation at submission. Submission
-  then raises one pending-review discrepancy (expected, actual and variance for
-  the non-bank wallets) which the reviewer approves together with the closing.
-  A bank reconciliation exception cannot override a Cash/Mobile variance that has
-  no explained discrepancy. A Bank-only variance is handled by the reconciliation
-  report, not by a discrepancy.
+- In both closing workflows, the agent's entered Cash and Mobile Money amounts
+  are the closing balances. Do not derive an expected closing from the opening,
+  customer movements, bank runs or adjustments for these wallets. Their amounts
+  count toward settlement, but do not trigger a variance, an explanation, or
+  automatic approval. The rule also applies to closings already awaiting review:
+  approve through the normal workflow without resubmission or a second settlement.
+  Previously recorded discrepancies remain on file and are still reviewed.
+- Bank and Custom wallet comparisons, pending-adjustment review, and opening,
+  observation-time and vault controls are unchanged. Trading can still use
+  recorded movements to limit transfers; that is not a closing comparison.
 - A submitted closing whose float has been settled is treated as submitted for
   the next-day opening comparison, the opening bridge and session completion.
   The session closes (and is operationally locked) only when every agent with an

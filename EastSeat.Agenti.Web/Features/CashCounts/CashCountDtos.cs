@@ -11,7 +11,8 @@ public class WalletCountEntryDto
     public string WalletName { get; set; } = string.Empty;
     public string WalletTypeName { get; set; } = string.Empty;
     public bool SupportsDenominations { get; set; }
-    public decimal ExpectedBalance { get; set; }
+    public bool UsesEnteredClosingAmount { get; set; }
+    public decimal ExpectedBalance { get => UsesEnteredClosingAmount ? CountedAmount : field; set; }
     public decimal CountedAmount { get; set; }
     public DateTimeOffset? ObservedAt { get; set; }
     public DenominationBreakdown? Denominations { get; set; }
@@ -43,7 +44,8 @@ public class CashCountFormModel
 
     public decimal TotalAmount => WalletEntries.Sum(w => w.CountedAmount);
     public decimal TotalExpected => WalletEntries.Sum(w => w.ExpectedBalance);
-    public decimal TotalVariance => TotalAmount - TotalExpected;
+    public decimal TotalVariance => WalletEntries.Where(w => !w.UsesEnteredClosingAmount).Sum(w => w.CountedAmount - w.ExpectedBalance);
+    public bool HasComparedClosingWallets => !IsOpening && WalletEntries.Any(w => !w.UsesEnteredClosingAmount);
 
     /// <summary>
     /// Difference between the opening count and the previous day's closing count.

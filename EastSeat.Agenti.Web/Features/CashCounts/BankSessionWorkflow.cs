@@ -112,7 +112,7 @@ public sealed class BankSessionWorkflow(
     }
 
     public async Task<CashCountFormModel> InitializeFormAsync(
-        string userId, bool isOpening, CancellationToken cancellationToken = default)
+        string userId, bool isOpening, CancellationToken cancellationToken = default, bool forWalletAdjustment = false)
     {
         var actor = await access.GetActorAsync(userId, cancellationToken);
         var current = await GetCurrentSessionAsync(userId, cancellationToken);
@@ -120,15 +120,16 @@ public sealed class BankSessionWorkflow(
             throw new BankingRuleException(current.BlockReason ?? "This count cannot be entered in the current session state.");
         var existingId = isOpening ? current.OpeningCountId : current.ClosingCountId;
         if (existingId.HasValue)
-            return await GetFormAsync(userId, existingId.Value, cancellationToken)
+            return await ReadFormAsync(userId, existingId.Value, forWalletAdjustment, cancellationToken)
                 ?? throw new BankingRuleException("Cash count not found.");
         var wallets = await db.Wallets.AsNoTracking().Include(w => w.WalletType)
             .Where(w => w.AgentId == actor.AgentId && w.IsActive)
             .OrderBy(w => w.WalletType!.Type).ThenBy(w => w.Name).ToListAsync(cancellationToken);
-        Dictionary<long, decimal>? expected = null;
+        var comparedIds = wallets.Where(w => !w.WalletType!.Type.UsesEnteredClosingAmount()).Select(w => w.Id).ToHashSet();
+        Dictionary<long, SessionWalletPosition>? positions = null;
         if (!isOpening && current.SessionId.HasValue)
-            expected = (await balances.GetPositionsAsync(current.SessionId.Value, actor.AgentId!.Value,
-                includePendingAdjustments: true, cancellationToken)).ToDictionary(p => p.WalletId, p => p.ExpectedBalance);
+            positions = (await balances.GetPositionsAsync(current.SessionId.Value, actor.AgentId!.Value,
+                includePendingAdjustments: true, cancellationToken, forWalletAdjustment ? null : comparedIds)).ToDictionary(p => p.WalletId);
         return new CashCountFormModel
         {
             CashSessionId = current.SessionId, IsOpening = isOpening,
@@ -137,16 +138,19 @@ public sealed class BankSessionWorkflow(
             {
                 WalletId = w.Id, WalletName = w.Name, WalletTypeName = w.WalletType!.Name,
                 SupportsDenominations = w.WalletType.SupportsDenominations,
-                ExpectedBalance = expected == null ? w.Balance : expected.TryGetValue(w.Id, out var value)
-                    ? value : throw new BankingRuleException("Wallet allocation changed after opening."),
+                UsesEnteredClosingAmount = !isOpening && !forWalletAdjustment && !comparedIds.Contains(w.Id),
+                ExpectedBalance = FormBalance(w.Id, w.Balance, positions, forWalletAdjustment || comparedIds.Contains(w.Id)),
                 ObservedAt = null,
                 Denominations = w.WalletType.SupportsDenominations ? DenominationBreakdown.Empty : null
             }).ToList()
         };
     }
 
-    public async Task<CashCountFormModel?> GetFormAsync(
-        string userId, long cashCountId, CancellationToken cancellationToken = default)
+    public Task<CashCountFormModel?> GetFormAsync(string userId, long cashCountId, CancellationToken cancellationToken = default) =>
+        ReadFormAsync(userId, cashCountId, false, cancellationToken);
+
+    private async Task<CashCountFormModel?> ReadFormAsync(
+        string userId, long cashCountId, bool forWalletAdjustment, CancellationToken cancellationToken)
     {
         var actor = await access.GetActorAsync(userId, cancellationToken);
         var count = await db.CashCounts.AsNoTracking().Include(c => c.CashSession)
@@ -158,12 +162,17 @@ public sealed class BankSessionWorkflow(
         var frozenSnapshot = await db.CashCountSnapshots.AsNoTracking()
             .SingleOrDefaultAsync(s => s.CashCountId == count.Id, cancellationToken);
         var frozen = frozenSnapshot != null;
-        Dictionary<long, decimal>? expected = null;
+        var comparedIds = frozenSnapshot == null
+            ? count.Details.Where(d => !d.Wallet!.WalletType!.Type.UsesEnteredClosingAmount()).Select(d => d.WalletId).ToHashSet()
+            : CountSnapshotCodec.Deserialize(frozenSnapshot.WalletsJson).Where(w => !w.WalletType.UsesEnteredClosingAmount())
+                .Select(w => w.WalletId).ToHashSet();
+        Dictionary<long, SessionWalletPosition>? positions = null;
         if (!count.IsOpening)
-            expected = (frozenSnapshot != null
-                ? await balances.GetPositionsAtSnapshotAsync(frozenSnapshot.Id, includePendingAdjustments: true, cancellationToken)
+            positions = (frozenSnapshot != null
+                ? await balances.GetPositionsAtSnapshotAsync(frozenSnapshot.Id, includePendingAdjustments: true, cancellationToken,
+                    forWalletAdjustment ? null : comparedIds)
                 : await balances.GetPositionsAsync(count.CashSessionId, count.AgentId,
-                    includePendingAdjustments: true, cancellationToken)).ToDictionary(p => p.WalletId, p => p.ExpectedBalance);
+                    includePendingAdjustments: true, cancellationToken, forWalletAdjustment ? null : comparedIds)).ToDictionary(p => p.WalletId);
         return new CashCountFormModel
         {
             CashCountId = count.Id, CashSessionId = count.CashSessionId, IsOpening = count.IsOpening,
@@ -172,12 +181,21 @@ public sealed class BankSessionWorkflow(
             {
                 WalletId = d.WalletId, WalletName = d.Wallet!.Name, WalletTypeName = d.Wallet.WalletType!.Name,
                 SupportsDenominations = d.Wallet.WalletType.SupportsDenominations,
-                ExpectedBalance = expected == null ? d.Wallet.Balance : expected.TryGetValue(d.WalletId, out var value)
-                    ? value : throw new BankingRuleException("Wallet allocation is missing from the opening snapshot."),
+                UsesEnteredClosingAmount = !count.IsOpening && !forWalletAdjustment && !comparedIds.Contains(d.WalletId),
+                ExpectedBalance = FormBalance(d.WalletId, d.Wallet.Balance, positions, forWalletAdjustment || comparedIds.Contains(d.WalletId)),
                 CountedAmount = d.Amount, ObservedAt = d.ObservedAt,
                 Denominations = d.Denominations == null ? null : DenominationBreakdown.FromJson(d.Denominations)
             }).ToList()
         };
+    }
+
+    private static decimal FormBalance(long walletId, decimal openingDefault,
+        IReadOnlyDictionary<long, SessionWalletPosition>? positions, bool compare)
+    {
+        if (positions == null) return openingDefault;
+        if (!positions.TryGetValue(walletId, out var position))
+            throw new BankingRuleException("Wallet allocation is missing from the opening snapshot.");
+        return compare ? position.ExpectedBalance : 0m;
     }
 
     public async Task<CashCountSaveResult> SaveAsync(

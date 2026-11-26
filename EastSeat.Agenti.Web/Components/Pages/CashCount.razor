@@ -279,9 +279,9 @@
                 <HeaderContent>
                     <MudTh>Wallet</MudTh>
                     <MudTh>Type</MudTh>
-                    @if (!_countForm.IsOpening)
+                    @if (_countForm.HasComparedClosingWallets)
                     {
-                        <MudTh Style="text-align: right;">Expected (UGX)</MudTh>
+                        <MudTh Style="text-align: right;">Expected for compared wallets (UGX)</MudTh>
                     }
                     <MudTh Style="text-align: right;">Counted (UGX)</MudTh>
                     @if (_currentSession?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
@@ -295,10 +295,13 @@
                     <MudTd DataLabel="Type">
                         <MudText Typo="Typo.caption">@context.WalletTypeName</MudText>
                     </MudTd>
-                    @if (!_countForm.IsOpening)
+                    @if (_countForm.HasComparedClosingWallets)
                     {
-                        <MudTd DataLabel="Expected" Style="text-align: right;">
-                            @context.ExpectedBalance.ToString("N0")
+                        <MudTd DataLabel="@(context.UsesEnteredClosingAmount ? null : "Expected")" Style="text-align: right;">
+                            @if (!context.UsesEnteredClosingAmount)
+                            {
+                                @context.ExpectedBalance.ToString("N0")
+                            }
                         </MudTd>
                     }
                     <MudTd DataLabel="Counted" Style="text-align: right;">
@@ -404,10 +407,10 @@
                 <FooterContent>
                     <MudTh><strong>Totals</strong></MudTh>
                     <MudTh></MudTh>
-                    @if (!_countForm.IsOpening)
+                    @if (_countForm.HasComparedClosingWallets)
                     {
                         <MudTh Style="text-align: right;">
-                            <strong>@_countForm.TotalExpected.ToString("N0")</strong>
+                            <strong>@_countForm.WalletEntries.Where(w => !w.UsesEnteredClosingAmount).Sum(w => w.ExpectedBalance).ToString("N0")</strong>
                         </MudTh>
                     }
                     <MudTh Style="text-align: right;">
@@ -417,11 +420,11 @@
                 </FooterContent>
             </MudTable>
 
-            @if (!_countForm.IsOpening)
+            @if (_countForm.HasComparedClosingWallets)
             {
                 <MudPaper Class="pa-3 mt-2" Elevation="1">
                     <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
-                        <MudText Typo="Typo.subtitle1">Total Variance</MudText>
+                        <MudText Typo="Typo.subtitle1">Variance for compared wallets</MudText>
                         <MudText Typo="Typo.h6"
                             Color="@(_countForm.TotalVariance == 0 ? Color.Success : (_countForm.TotalVariance > 0 ? Color.Info : Color.Warning))">
                             @(_countForm.TotalVariance > 0 ? "+" : "")@_countForm.TotalVariance.ToString("N0") UGX
@@ -429,7 +432,7 @@
                     </MudStack>
                 </MudPaper>
             }
-            else if (_countForm.PreviousClosingTotal.HasValue)
+            else if (_countForm.IsOpening && _countForm.PreviousClosingTotal.HasValue)
             {
                 <MudPaper Class="pa-3 mt-2" Elevation="1">
                     <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
@@ -449,8 +452,8 @@
             }
 
             <!-- Explanation field for closing counts with discrepancy -->
-            @if (!_countForm.IsOpening && (_currentSession?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation
-                ? _countForm.WalletEntries.Any(w => w.CountedAmount != w.ExpectedBalance)
+            @if (_countForm.HasComparedClosingWallets && (_currentSession?.WorkflowVersion == SessionWorkflowVersion.BankReconciliation
+                ? _countForm.WalletEntries.Any(w => !w.UsesEnteredClosingAmount && w.CountedAmount != w.ExpectedBalance)
                 : _countForm.TotalVariance != 0))
             {
                 <MudTextField @bind-Value="_countForm.Explanation"

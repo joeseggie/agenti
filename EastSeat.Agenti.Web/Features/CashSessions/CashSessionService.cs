@@ -132,8 +132,15 @@ public class CashSessionService(
                 .Where(wa => wa.CashSessionId == sessionId &&
                              agentIds.Contains(wa.AgentId) &&
                              wa.Status == WalletAdjustmentStatus.Approved)
-                .Select(wa => new { wa.AgentId, wa.Amount })
+                .Select(wa => new { wa.AgentId, wa.WalletId, wa.Amount })
                 .ToListAsync();
+
+        var recordedVariances = session.WorkflowVersion != SessionWorkflowVersion.Legacy ? [] :
+            await dbContext.Discrepancies.AsNoTracking()
+                .Where(d => d.CashSessionId == sessionId && !d.CashCount!.IsOpening &&
+                    (d.Status == DiscrepancyStatus.PendingReview || d.Status == DiscrepancyStatus.Approved))
+                .OrderByDescending(d => d.Id)
+                .Select(d => new { d.CashCountId, d.Variance }).ToListAsync();
 
         var adjustmentsByAgent = rawAdjustments
             .GroupBy(a => a.AgentId)
@@ -145,6 +152,21 @@ public class CashSessionService(
             var agent = g.First().Agent;
             var openingCount = g.FirstOrDefault(c => c.IsOpening && c.Status != CashCountStatus.Rejected);
             var closingCount = g.FirstOrDefault(c => !c.IsOpening && c.Status != CashCountStatus.Rejected);
+            decimal? variance = null;
+            if (session.WorkflowVersion == SessionWorkflowVersion.Legacy && closingCount != null && openingCount != null)
+            {
+                variance = recordedVariances.FirstOrDefault(d => d.CashCountId == closingCount.Id)?.Variance;
+                if (!variance.HasValue)
+                {
+                    var compared = closingCount.Details.Where(d => !d.Wallet!.WalletType!.Type.UsesEnteredClosingAmount()).ToList();
+                    if (compared.Count > 0)
+                    {
+                        var ids = compared.Select(d => d.WalletId).ToHashSet();
+                        variance = compared.Sum(d => d.Amount) - openingCount.Details.Where(d => ids.Contains(d.WalletId)).Sum(d => d.Amount)
+                            + rawAdjustments.Where(a => a.AgentId == g.Key && ids.Contains(a.WalletId)).Sum(a => a.Amount);
+                    }
+                }
+            }
 
             return new AgentSessionSummaryDto
             {
@@ -156,6 +178,7 @@ public class CashSessionService(
                 AgentCode = agent?.Code ?? "N/A",
                 OpeningCount = openingCount != null ? MapToCountSummary(openingCount) : null,
                 ClosingCount = closingCount != null ? MapToCountSummary(closingCount) : null,
+                Variance = variance,
                 TotalAdjustments = adjustmentsByAgent.GetValueOrDefault(g.Key, 0)
             };
         }).OrderBy(a => a.AgentName).ToList();

@@ -350,6 +350,10 @@ See [docs/AGENT_DOMAIN.md](docs/AGENT_DOMAIN.md) for comprehensive Agent entity 
 
 ### Discrepancy Workflow
 
+Cash and Mobile Money closings use the agent's entered amounts. Exclude those
+wallets from closing comparisons in both workflows; do not create a discrepancy
+or auto-approve on that basis. Keep reviewing previously recorded discrepancies.
+
 **When Actual ≠ Expected:**
 ```csharp
 if (actualTotal != expectedTotal)
