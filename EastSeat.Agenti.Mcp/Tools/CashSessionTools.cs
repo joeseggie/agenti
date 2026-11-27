@@ -4,6 +4,7 @@ using ModelContextProtocol.Server;
 using EastSeat.Agenti.Mcp.Configuration;
 using EastSeat.Agenti.Mcp.Data;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Mcp.Authentication;
 
 namespace EastSeat.Agenti.Mcp.Tools;
 
@@ -16,13 +17,15 @@ public class CashSessionTools
     public static async Task<string> QueryCashSessions(
         ReadOnlyDbContext db,
         McpServerConfig config,
+        McpCaller caller,
         [Description("Start date (yyyy-MM-dd format, required)")] string dateFrom,
         [Description("End date (yyyy-MM-dd format, defaults to today)")] string? dateTo = null,
         [Description("Filter by agent code (e.g., 'JODO')")] string? agentCode = null,
         [Description("Filter by session status: Open, Closed, Pending, DiscrepancyUnderReview, Completed, Blocked")]
         string? status = null,
-        [Description("Filter by branch ID (admin/supervisor only, ignored for agents)")]
-        long? branchId = null)
+        [Description("Filter by branch ID (supervisors are restricted to their assigned branch)")]
+        long? branchId = null,
+        CancellationToken cancellationToken = default)
     {
         if (!DateOnly.TryParse(dateFrom, out var from))
             return "Error: Invalid dateFrom format. Use yyyy-MM-dd.";
@@ -34,18 +37,13 @@ public class CashSessionTools
         if (from > to)
             return "Error: dateFrom cannot be after dateTo.";
 
-        var query = db.CashSessions
-            .Include(s => s.CashCounts)
-                .ThenInclude(c => c.Agent)
-                    .ThenInclude(a => a!.User)
-            .Include(s => s.Discrepancies)
-            .AsQueryable();
+        var query = db.CashSessions.AsQueryable();
 
         // Date filter
         query = query.Where(s => s.SessionDate >= from && s.SessionDate <= to);
 
         // Branch isolation
-        var effectiveBranchId = config.CanQueryAllBranches ? branchId : config.BranchId;
+        var effectiveBranchId = caller.ResolveBranch(branchId);
         if (effectiveBranchId.HasValue)
             query = query.Where(s => s.BranchId == effectiveBranchId.Value);
 
@@ -61,7 +59,18 @@ public class CashSessionTools
         var sessions = await query
             .OrderByDescending(s => s.SessionDate)
             .Take(config.MaxRows)
-            .ToListAsync();
+            .Select(s => new
+            {
+                s.Id, s.SessionDate, s.Status, s.BranchId, s.WorkflowVersion, s.OpenedAt, s.ClosedAt,
+                Agents = s.CashCounts.Where(c => c.IsOpening && c.Agent != null)
+                    .Select(c => c.Agent!.Code + " (" + (c.Agent.User == null ? "N/A" : (c.Agent.User.FirstName + " " + c.Agent.User.LastName).Trim()) + ")")
+                    .OrderBy(name => name).Take(config.MaxRows).ToList(),
+                OpeningTotal = s.CashCounts.Where(c => c.IsOpening && c.Status == CashCountStatus.Approved).Sum(c => c.TotalAmount),
+                ClosingTotal = s.CashCounts.Where(c => !c.IsOpening && c.Status == CashCountStatus.Approved).Sum(c => c.TotalAmount),
+                Reported = s.CashCounts.Where(c => !c.IsOpening && c.SubmittedAt.HasValue).Sum(c => c.TotalAmount),
+                Pending = s.CashCounts.Count(c => !c.IsOpening && c.Status == CashCountStatus.PendingApproval),
+                DiscrepancyCount = s.Discrepancies.Count
+            }).ToListAsync(cancellationToken);
 
         if (sessions.Count == 0)
             return "No cash sessions found matching the specified filters.";
@@ -74,32 +83,19 @@ public class CashSessionTools
 
         foreach (var s in sessions)
         {
-            var agents = s.CashCounts
-                .Where(c => c.IsOpening && c.Agent != null)
-                .Select(c => $"{c.Agent!.Code} ({c.Agent.User?.FullName ?? "N/A"})")
-                .Distinct()
-                .ToList();
-
-            var openingTotal = s.CashCounts
-                .Where(c => c.IsOpening && c.Status == CashCountStatus.Approved)
-                .Sum(c => c.TotalAmount);
-            var closingTotal = s.CashCounts
-                .Where(c => !c.IsOpening && c.Status == CashCountStatus.Approved)
-                .Sum(c => c.TotalAmount);
-
-            lines.Add($"• Session #{s.Id} | {s.SessionDate:yyyy-MM-dd} | Agents: {string.Join(", ", agents)}");
+            lines.Add($"• Session #{s.Id} | {s.SessionDate:yyyy-MM-dd} | Agents: {string.Join(", ", s.Agents.Distinct())}");
             lines.Add($"  Status: {s.Status} | Branch: {s.BranchId}");
             lines.Add($"  Workflow: {s.WorkflowVersion}; closed status describes operations, not bank reconciliation.");
             if (s.WorkflowVersion == SessionWorkflowVersion.BankReconciliation)
             {
-                var reported = s.CashCounts.Where(c => !c.IsOpening && c.SubmittedAt.HasValue).Sum(c => c.TotalAmount);
-                var pending = s.CashCounts.Count(c => !c.IsOpening && c.Status == CashCountStatus.PendingApproval);
-                lines.Add($"  Reported closing: {reported:N2} | Awaiting financial approval: {pending}");
+                lines.Add($"  Reported closing: {s.Reported:N2} | Awaiting financial approval: {s.Pending}");
             }
-            lines.Add($"  Approved opening: {openingTotal:N2} | Approved closing: {closingTotal:N2}");
+            lines.Add($"  Approved opening: {s.OpeningTotal:N2} | Approved closing: {s.ClosingTotal:N2}");
             lines.Add($"  Opened: {s.OpenedAt:yyyy-MM-dd HH:mm} | Closed: {(s.ClosedAt.HasValue ? s.ClosedAt.Value.ToString("yyyy-MM-dd HH:mm") : "Still open")}");
-            if (s.Discrepancies.Any())
-                lines.Add($"  ⚠️ {s.Discrepancies.Count} discrepancy(ies) flagged");
+            if (s.DiscrepancyCount > 0)
+                lines.Add($"  ⚠️ {s.DiscrepancyCount} discrepancy(ies) flagged");
+            if (s.Agents.Count == config.MaxRows)
+                lines.Add($"  Participating agents limited to {config.MaxRows}.");
             lines.Add("");
         }
 

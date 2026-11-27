@@ -1005,7 +1005,8 @@ The `EastSeat.Agenti.Mcp` project is a read-only MCP server for AI assistant int
 
 **Key Patterns:**
 - Use `ReadOnlyDbContext` (never the main `ApplicationDbContext`)
-- All queries must respect branch isolation via `McpServerConfig.BranchId`
+- HTTP requests authenticate with database-backed MCP tokens; no stdio or process-wide user/branch authority
+- Derive branch isolation from the scoped `McpCaller`: Admin all branches, Supervisor assigned branch only; Agents denied
 - Tools are auto-discovered via assembly scanning — add `[McpServerToolType]` and `[McpServerTool]` attributes
 - Maximum row limits are enforced via `McpServerConfig.MaxRows`
 - Connection uses a PostgreSQL read-only role — do not add write operations
@@ -1014,9 +1015,12 @@ The `EastSeat.Agenti.Mcp` project is a read-only MCP server for AI assistant int
 1. Create `Tools/{Feature}Tools.cs` in `EastSeat.Agenti.Mcp/Tools/`
 2. Mark the class with `[McpServerToolType]`
 3. Add methods with `[McpServerTool]` attribute
-4. Inject `ReadOnlyDbContext` and `McpServerConfig`
-5. Always filter by `BranchId` unless `CanQueryAllBranches` is true
-6. Always apply `.Take(config.MaxRows)` to queries
+4. Inject `ReadOnlyDbContext`, `McpServerConfig`, `McpCaller` and request cancellation
+5. Call `caller.ResolveBranch(branchId)` before querying or aggregating
+6. Apply `.Take(config.MaxRows)` to returned lists, project only necessary fields and propagate cancellation
+
+Token lifecycle writes belong only in the Web application's cookie-authenticated `McpAccess` feature.
+See [docs/MCP_HOSTING.md](docs/MCP_HOSTING.md) for deployment, least-privilege grants and client onboarding.
 
 ---
 

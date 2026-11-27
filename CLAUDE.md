@@ -378,12 +378,13 @@ A .NET MAUI Android app that consumes the REST API at `/api/*`:
 
 **Location:** `EastSeat.Agenti.Mcp/`
 
-A Model Context Protocol (MCP) server that provides read-only access to Agenti data for AI assistants. Runs as a standalone console application using stdio transport.
+A Model Context Protocol (MCP) server providing read-only access through an authenticated, stateless HTTP `/mcp` endpoint. Stdio is no longer supported.
 
 **Architecture:**
 - `ReadOnlyDbContext` - Separate EF Core context with no write capabilities
-- `McpServerConfig` - Configuration for connection string, branch isolation, user role, max rows, timeouts
-- Uses PostgreSQL read-only database role (`agenti_readonly`)
+- `McpServerConfig` - Connection string, maximum rows, SQL timeout and instance-local HTTP limits
+- `McpCaller` - Request-scoped identity, current role and branch from the database
+- Uses a dedicated PostgreSQL read-only login with restricted Identity-column access
 - Auto-discovers tools via assembly scanning
 
 **Tools (6 tool sets):**
@@ -397,9 +398,11 @@ A Model Context Protocol (MCP) server that provides read-only access to Agenti d
 | `TrendTools` | Query trend/analytics data |
 | `VaultTools` | Query vault balances |
 
-**Branch Isolation:** Agents see only their branch data. Admins/Supervisors can query all branches (`CanQueryAllBranches`).
+**Branch Isolation:** Admins may query all branches; Supervisors may query only their assigned branch. Agents cannot use MCP.
 
-**Configuration:** Set `AGENTI__ConnectionString` environment variable or configure in `appsettings.json` under `Agenti` section.
+**Authentication:** Eligible users sign into the Web app and create a per-user token at `/mcp-access`. Tokens default to seven days, expire within 30 days and can be revoked. Send `Authorization: Bearer <token>`; Android JWTs and cookies are not MCP credentials.
+
+**Configuration:** Set `AGENTI__ConnectionString` privately and explicit `AllowedHosts`. Web token instructions optionally use `McpAccess__ServerUrl`. See [docs/MCP_HOSTING.md](docs/MCP_HOSTING.md) for deployment and rollback.
 
 ## Soft-Delete (Users)
 

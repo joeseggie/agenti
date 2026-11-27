@@ -4,6 +4,7 @@ using ModelContextProtocol.Server;
 using EastSeat.Agenti.Mcp.Configuration;
 using EastSeat.Agenti.Mcp.Data;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Mcp.Authentication;
 
 namespace EastSeat.Agenti.Mcp.Tools;
 
@@ -16,12 +17,14 @@ public class DiscrepancyTools
     public static async Task<string> QueryDiscrepancies(
         ReadOnlyDbContext db,
         McpServerConfig config,
+        McpCaller caller,
         [Description("Start date (yyyy-MM-dd format, required)")] string dateFrom,
         [Description("End date (yyyy-MM-dd format, defaults to today)")] string? dateTo = null,
         [Description("Filter by status: PendingReview, Approved, Rejected")] string? status = null,
         [Description("Filter by agent code (e.g., 'JODO')")] string? agentCode = null,
         [Description("Minimum absolute variance amount")] decimal? minVariance = null,
-        [Description("Filter by branch ID (admin/supervisor only)")] long? branchId = null)
+        [Description("Filter by branch ID (supervisors are restricted to their assigned branch)")] long? branchId = null,
+        CancellationToken cancellationToken = default)
     {
         if (!DateOnly.TryParse(dateFrom, out var from))
             return "Error: Invalid dateFrom format. Use yyyy-MM-dd.";
@@ -44,7 +47,7 @@ public class DiscrepancyTools
                                   d.CashSession.SessionDate <= to);
 
         // Branch isolation
-        var effectiveBranchId = config.CanQueryAllBranches ? branchId : config.BranchId;
+        var effectiveBranchId = caller.ResolveBranch(branchId);
         if (effectiveBranchId.HasValue)
             query = query.Where(d => d.CashSession != null && d.CashSession.BranchId == effectiveBranchId.Value);
 
@@ -91,7 +94,7 @@ public class DiscrepancyTools
                 d.ApprovalNotes,
                 CreatedAt = d.CreatedAt.ToString("yyyy-MM-dd HH:mm")
             })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         if (discrepancies.Count == 0)
             return "No discrepancies found matching the specified filters.";

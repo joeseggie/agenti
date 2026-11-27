@@ -5,6 +5,7 @@ using ModelContextProtocol.Server;
 using EastSeat.Agenti.Mcp.Configuration;
 using EastSeat.Agenti.Mcp.Data;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Mcp.Authentication;
 
 namespace EastSeat.Agenti.Mcp.Tools;
 
@@ -23,13 +24,15 @@ public class TrendTools
     public static async Task<string> QueryTrends(
         ReadOnlyDbContext db,
         McpServerConfig config,
+        McpCaller caller,
         [Description("Metric to analyze: daily_totals, agent_performance, wallet_type_volume, discrepancy_rate, vault_flow")]
         string metric,
         [Description("Start date (yyyy-MM-dd format, required)")] string dateFrom,
         [Description("End date (yyyy-MM-dd format, defaults to today)")] string? dateTo = null,
         [Description("Group results by: day, week, month (default: day)")] string groupBy = "day",
         [Description("Filter by agent code (e.g., 'JODO')")] string? agentCode = null,
-        [Description("Filter by branch ID (admin/supervisor only)")] long? branchId = null)
+        [Description("Filter by branch ID (supervisors are restricted to their assigned branch)")] long? branchId = null,
+        CancellationToken cancellationToken = default)
     {
         if (!DateOnly.TryParse(dateFrom, out var from))
             return "Error: Invalid dateFrom format. Use yyyy-MM-dd.";
@@ -45,23 +48,23 @@ public class TrendTools
         if ((to.ToDateTime(TimeOnly.MinValue) - from.ToDateTime(TimeOnly.MinValue)).TotalDays > 366)
             return "Error: Date range cannot exceed 1 year. Please narrow your query.";
 
-        var effectiveBranchId = config.CanQueryAllBranches ? branchId : config.BranchId;
+        var effectiveBranchId = caller.ResolveBranch(branchId);
         var limit = Math.Min(config.MaxRows, MaxTrendRows);
 
         return metric.ToLowerInvariant() switch
         {
-            "daily_totals" => await DailyTotals(db, from, to, groupBy, agentCode, effectiveBranchId, limit),
-            "agent_performance" => await AgentPerformance(db, from, to, agentCode, effectiveBranchId, limit),
-            "wallet_type_volume" => await WalletTypeVolume(db, from, to, agentCode, effectiveBranchId, limit),
-            "discrepancy_rate" => await DiscrepancyRate(db, from, to, groupBy, agentCode, effectiveBranchId, limit),
-            "vault_flow" => await VaultFlow(db, from, to, groupBy, effectiveBranchId, limit),
+            "daily_totals" => await DailyTotals(db, from, to, groupBy, agentCode, effectiveBranchId, limit, cancellationToken),
+            "agent_performance" => await AgentPerformance(db, from, to, agentCode, effectiveBranchId, limit, cancellationToken),
+            "wallet_type_volume" => await WalletTypeVolume(db, from, to, agentCode, effectiveBranchId, limit, cancellationToken),
+            "discrepancy_rate" => await DiscrepancyRate(db, from, to, groupBy, agentCode, effectiveBranchId, limit, cancellationToken),
+            "vault_flow" => await VaultFlow(db, from, to, groupBy, effectiveBranchId, limit, cancellationToken),
             _ => "Error: Invalid metric. Choose from: daily_totals, agent_performance, wallet_type_volume, discrepancy_rate, vault_flow"
         };
     }
 
     private static async Task<string> DailyTotals(
         ReadOnlyDbContext db, DateOnly from, DateOnly to, string groupBy,
-        string? agentCode, long? branchId, int limit)
+        string? agentCode, long? branchId, int limit, CancellationToken cancellationToken)
     {
         var fromOffset = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
         var toOffset = new DateTimeOffset(to.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero);
@@ -91,7 +94,7 @@ public class TrendTools
             })
             .OrderBy(g => g.Date)
             .Take(limit)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         // Re-group by week/month if needed (in-memory, on already-aggregated data)
         var grouped = dailyAggregates
@@ -128,14 +131,9 @@ public class TrendTools
 
     private static async Task<string> AgentPerformance(
         ReadOnlyDbContext db, DateOnly from, DateOnly to,
-        string? agentCode, long? branchId, int limit)
+        string? agentCode, long? branchId, int limit, CancellationToken cancellationToken)
     {
-        var sessionQuery = db.CashSessions
-            .Include(s => s.CashCounts)
-                .ThenInclude(c => c.Agent)
-                    .ThenInclude(a => a!.User)
-            .Include(s => s.Discrepancies)
-            .Where(s => s.SessionDate >= from && s.SessionDate <= to);
+        var sessionQuery = db.CashSessions.Where(s => s.SessionDate >= from && s.SessionDate <= to);
 
         if (branchId.HasValue)
             sessionQuery = sessionQuery.Where(s => s.BranchId == branchId.Value);
@@ -143,17 +141,25 @@ public class TrendTools
         if (!string.IsNullOrWhiteSpace(agentCode))
             sessionQuery = sessionQuery.Where(s => s.CashCounts.Any(c => c.Agent != null && c.Agent.Code == agentCode.ToUpper()));
 
-        var sessions = await sessionQuery.Take(limit).ToListAsync();
+        var sessions = await sessionQuery.OrderBy(s => s.Id).Take(limit)
+            .Select(s => new
+            {
+                s.Id, s.Status, DiscrepancyCount = s.Discrepancies.Count,
+                Agents = s.CashCounts.Where(c => c.IsOpening && c.Agent != null)
+                    .OrderBy(c => c.Id).Take(limit).Select(c => new
+                    {
+                        c.Agent!.Code,
+                        Name = c.Agent.User == null ? "N/A" : (c.Agent.User.FirstName + " " + c.Agent.User.LastName).Trim()
+                    }).ToList()
+            }).ToListAsync(cancellationToken);
 
         // Build agent stats from CashCounts (since sessions are now branch-level)
         var agentCounts = sessions
-            .SelectMany(s => s.CashCounts
-                .Where(c => c.IsOpening && c.Agent != null)
-                .Select(c => new { Session = s, Agent = c.Agent! }))
+            .SelectMany(s => s.Agents.Select(a => new { Session = s, Agent = a }))
             .ToList();
 
         var agentStats = agentCounts
-            .GroupBy(x => new { x.Agent.Code, Name = x.Agent.User?.FullName ?? "N/A" })
+            .GroupBy(x => new { x.Agent.Code, x.Agent.Name })
             .Select(g => new
             {
                 g.Key.Code,
@@ -161,10 +167,11 @@ public class TrendTools
                 SessionCount = g.Select(x => x.Session.Id).Distinct().Count(),
                 ClosedSessions = g.Where(x => x.Session.Status == CashSessionStatus.Closed || x.Session.Status == CashSessionStatus.Completed).Select(x => x.Session.Id).Distinct().Count(),
                 OpenSessions = g.Where(x => x.Session.Status == CashSessionStatus.Open).Select(x => x.Session.Id).Distinct().Count(),
-                DiscrepancyCount = g.Sum(x => x.Session.Discrepancies.Count),
-                SessionsWithDiscrepancy = g.Where(x => x.Session.Discrepancies.Any()).Select(x => x.Session.Id).Distinct().Count()
+                DiscrepancyCount = g.Sum(x => x.Session.DiscrepancyCount),
+                SessionsWithDiscrepancy = g.Where(x => x.Session.DiscrepancyCount > 0).Select(x => x.Session.Id).Distinct().Count()
             })
             .OrderBy(a => a.Code)
+            .Take(limit)
             .ToList();
 
         var sb = new StringBuilder();
@@ -186,7 +193,7 @@ public class TrendTools
         if (agentStats.Count == 0)
             return "No agent performance data found for the specified period.";
 
-        if (sessions.Count == limit)
+        if (sessions.Count == limit || sessions.Any(s => s.Agents.Count == limit) || agentStats.Count == limit)
             sb.AppendLine($"(Results limited to {limit} rows. Some periods may be incomplete.)");
 
         return sb.ToString();
@@ -194,7 +201,7 @@ public class TrendTools
 
     private static async Task<string> WalletTypeVolume(
         ReadOnlyDbContext db, DateOnly from, DateOnly to,
-        string? agentCode, long? branchId, int limit)
+        string? agentCode, long? branchId, int limit, CancellationToken cancellationToken)
     {
         var fromOffset = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
         var toOffset = new DateTimeOffset(to.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero);
@@ -212,7 +219,7 @@ public class TrendTools
                 t.CashSession != null &&
                 t.CashSession.CashCounts.Any(c => c.Agent != null && c.Agent.Code == agentCode.ToUpper()));
 
-        var transactions = await query.Take(limit).ToListAsync();
+        var transactions = await query.OrderBy(t => t.Id).Take(limit).ToListAsync(cancellationToken);
 
         // Aggregate by wallet type (from both sides of transactions)
         var walletVolumes = new Dictionary<string, (decimal Volume, int Count)>();
@@ -253,11 +260,9 @@ public class TrendTools
 
     private static async Task<string> DiscrepancyRate(
         ReadOnlyDbContext db, DateOnly from, DateOnly to, string groupBy,
-        string? agentCode, long? branchId, int limit)
+        string? agentCode, long? branchId, int limit, CancellationToken cancellationToken)
     {
-        var sessionQuery = db.CashSessions
-            .Include(s => s.Discrepancies)
-            .Where(s => s.SessionDate >= from && s.SessionDate <= to);
+        var sessionQuery = db.CashSessions.Where(s => s.SessionDate >= from && s.SessionDate <= to);
 
         if (branchId.HasValue)
             sessionQuery = sessionQuery.Where(s => s.BranchId == branchId.Value);
@@ -265,7 +270,12 @@ public class TrendTools
         if (!string.IsNullOrWhiteSpace(agentCode))
             sessionQuery = sessionQuery.Where(s => s.CashCounts.Any(c => c.Agent != null && c.Agent.Code == agentCode.ToUpper()));
 
-        var sessions = await sessionQuery.Take(limit).ToListAsync();
+        var sessions = await sessionQuery.OrderBy(s => s.Id).Take(limit)
+            .Select(s => new
+            {
+                s.OpenedAt, DiscrepancyCount = s.Discrepancies.Count,
+                TotalVariance = s.Discrepancies.Sum(d => d.Variance)
+            }).ToListAsync(cancellationToken);
 
         var grouped = sessions
             .GroupBy(s => GroupDate(s.OpenedAt.DateTime, groupBy))
@@ -274,9 +284,9 @@ public class TrendTools
             {
                 Period = g.Key,
                 TotalSessions = g.Count(),
-                SessionsWithDiscrepancy = g.Count(s => s.Discrepancies.Any()),
-                TotalDiscrepancies = g.Sum(s => s.Discrepancies.Count),
-                TotalVariance = g.Sum(s => s.Discrepancies.Sum(d => d.Variance))
+                SessionsWithDiscrepancy = g.Count(s => s.DiscrepancyCount > 0),
+                TotalDiscrepancies = g.Sum(s => s.DiscrepancyCount),
+                TotalVariance = g.Sum(s => s.TotalVariance)
             })
             .ToList();
 
@@ -299,7 +309,7 @@ public class TrendTools
     }
 
     private static async Task<string> VaultFlow(
-        ReadOnlyDbContext db, DateOnly from, DateOnly to, string groupBy, long? branchId, int limit)
+        ReadOnlyDbContext db, DateOnly from, DateOnly to, string groupBy, long? branchId, int limit, CancellationToken cancellationToken)
     {
         var fromOffset = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
         var toOffset = new DateTimeOffset(to.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero);
@@ -313,9 +323,10 @@ public class TrendTools
             query = query.Where(vt => vt.Vault != null && vt.Vault.BranchId == branchId.Value);
 
         var transactions = await query
+            .OrderBy(vt => vt.Id)
             .Select(vt => new { vt.Type, vt.Amount, vt.CreatedAt })
             .Take(limit)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         var grouped = transactions
             .GroupBy(vt => GroupDate(vt.CreatedAt.DateTime, groupBy))

@@ -53,6 +53,11 @@
             <AuthorizeView Roles="Admin,Supervisor">
                 <Authorized Context="adminCtx">
                     <MudNavGroup Title="Administration" Icon="@Icons.Material.Filled.AdminPanelSettings" Expanded="true">
+                        <AuthorizeView Policy="McpTokenManagement">
+                            <Authorized Context="mcpCtx">
+                                <MudNavLink Href="mcp-access" Icon="@Icons.Material.Filled.Key">MCP Access</MudNavLink>
+                            </Authorized>
+                        </AuthorizeView>
                         <MudNavLink Href="agents" Icon="@Icons.Material.Filled.People">
                             Agents
                         </MudNavLink>

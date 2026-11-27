@@ -1,71 +1,117 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Configuration;
-using Microsoft.EntityFrameworkCore;
-using ModelContextProtocol.Server;
+using System.ComponentModel.DataAnnotations;
+using System.Data.Common;
+using System.Security.Claims;
+using System.Threading.RateLimiting;
+using EastSeat.Agenti.Mcp.Authentication;
 using EastSeat.Agenti.Mcp.Configuration;
 using EastSeat.Agenti.Mcp.Data;
+using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Web.Data;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 
-var builder = Host.CreateApplicationBuilder(args);
+namespace EastSeat.Agenti.Mcp;
 
-// Load configuration from appsettings.json and environment variables (AGENTI__*)
-builder.Configuration
-    .AddJsonFile("appsettings.json", optional: true)
-    .AddEnvironmentVariables();
-
-// Send logs to stderr so stdout stays clean for MCP protocol messages
-builder.Logging.AddConsole(options =>
+public sealed class McpProgram
 {
-    options.LogToStandardErrorThreshold = LogLevel.Trace;
-});
-
-// Bind configuration
-var config = new McpServerConfig();
-builder.Configuration.GetSection(McpServerConfig.SectionName).Bind(config);
-builder.Services.AddSingleton(config);
-
-// Validate configuration
-if (string.IsNullOrWhiteSpace(config.ConnectionString))
-{
-    Console.Error.WriteLine("ERROR: Agenti connection string is not configured.");
-    Console.Error.WriteLine("Set AGENTI__ConnectionString environment variable or configure in appsettings.json.");
-    Environment.Exit(1);
-}
-
-// Enforce branch isolation safety model:
-// When the server is not allowed to query all branches, a valid BranchId must be configured.
-if (!config.CanQueryAllBranches && (config.BranchId == null || config.BranchId <= 0))
-{
-    Console.Error.WriteLine("ERROR: Invalid branch configuration for Agenti MCP server.");
-    Console.Error.WriteLine("When CanQueryAllBranches is false, a valid BranchId (> 0) must be configured.");
-    Console.Error.WriteLine("Set AGENTI__McpServer__BranchId (or the appropriate config key) to a positive integer.");
-    Environment.Exit(1);
-}
-// Configure read-only database context with connection string and Npgsql settings
-ReadOnlyDbContext.Configure(config.ConnectionString, config.CommandTimeoutSeconds, maxRetryCount: 2);
-
-// Register read-only database context
-builder.Services.AddDbContext<ReadOnlyDbContext>(options =>
-{
-    options.UseNpgsql(config.ConnectionString, npgsql =>
+    public static async Task Main(string[] args)
     {
-        npgsql.CommandTimeout(config.CommandTimeoutSeconds);
-        npgsql.EnableRetryOnFailure(maxRetryCount: 2);
-    });
-});
-
-// Register MCP server with stdio transport
-builder.Services
-    .AddMcpServer(options =>
-    {
-        options.ServerInfo = new()
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
-            Name = "agenti-mcp",
-            Version = "1.0.0"
-        };
-    })
-    .WithStdioServerTransport()
-    .WithToolsFromAssembly();
+            Args = args, ContentRootPath = AppContext.BaseDirectory
+        });
+        var config = builder.Configuration.GetSection(McpServerConfig.SectionName).Get<McpServerConfig>() ?? new();
+        Validator.ValidateObject(config, new ValidationContext(config), validateAllProperties: true);
+        if (string.IsNullOrWhiteSpace(config.ConnectionString))
+            throw new InvalidOperationException("Set AGENTI__ConnectionString to the dedicated read-only database connection.");
+        var allowedHosts = builder.Configuration["AllowedHosts"];
+        if (string.IsNullOrWhiteSpace(allowedHosts) || allowedHosts.Contains('*'))
+            throw new InvalidOperationException("Configure AllowedHosts with the MCP server's explicit hostnames.");
 
-await builder.Build().RunAsync();
+        builder.Services.AddSingleton(config);
+        builder.Services.AddSingleton(TimeProvider.System);
+        builder.Services.AddHttpContextAccessor();
+        builder.Services.AddScoped(_ => new ReadOnlyDbContext(
+            new DbContextOptionsBuilder<ApplicationDbContext>().UseNpgsql(config.ConnectionString,
+                npgsql => npgsql.CommandTimeout(config.CommandTimeoutSeconds)).Options));
+        builder.Services.AddScoped<McpTokenValidator>();
+        builder.Services.AddScoped(provider =>
+            provider.GetRequiredService<IHttpContextAccessor>().HttpContext?.Items[typeof(McpCaller)] as McpCaller
+                ?? throw new UnauthorizedAccessException("An authenticated MCP caller is required."));
+        builder.Services.AddAuthentication(McpTokenAuthenticationHandler.SchemeName)
+            .AddScheme<AuthenticationSchemeOptions, McpTokenAuthenticationHandler>(McpTokenAuthenticationHandler.SchemeName, _ => { });
+        builder.Services.AddAuthorization(options => options.AddPolicy("McpAccess", policy =>
+            policy.RequireAuthenticatedUser().RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString())
+                .RequireAssertion(context => context.Resource is HttpContext http &&
+                    http.Items[typeof(McpCaller)] is McpCaller caller &&
+                    (caller.Role == UserRole.Admin || caller.BranchId is > 0))));
+        builder.Services.AddRateLimiter(options =>
+        {
+            options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(http =>
+                http.Request.Path.StartsWithSegments("/mcp")
+                    ? RateLimitPartition.GetConcurrencyLimiter("mcp", _ => new ConcurrencyLimiterOptions
+                    {
+                        PermitLimit = config.MaxConcurrentRequests, QueueLimit = 0
+                    })
+                    : RateLimitPartition.GetNoLimiter("health"));
+            options.AddPolicy("mcp-user", http => RateLimitPartition.GetFixedWindowLimiter(
+                http.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? throw new UnauthorizedAccessException(),
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = config.RequestsPerMinute, Window = TimeSpan.FromMinutes(1), QueueLimit = 0
+                }));
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            options.OnRejected = (context, _) =>
+            {
+                context.HttpContext.Response.Headers.RetryAfter = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var delay)
+                    ? Math.Max(1, (int)Math.Ceiling(delay.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : "1";
+                return ValueTask.CompletedTask;
+            };
+        });
+        builder.Services.AddMcpServer(options => options.ServerInfo = new() { Name = "agenti-mcp", Version = "2.0.0" })
+            .WithHttpTransport(options => options.Stateless = true)
+            .WithToolsFromAssembly(typeof(McpProgram).Assembly);
+
+        var app = builder.Build();
+        app.Use(async (http, next) =>
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            if (http.Request.Path.StartsWithSegments("/mcp") && http.Request.Headers.TryGetValue("Origin", out var origins) &&
+                (origins.Count != 1 || !Uri.TryCreate(origins[0], UriKind.Absolute, out var origin) ||
+                 !origin.Authority.Equals(http.Request.Host.Value, StringComparison.OrdinalIgnoreCase) ||
+                 (origin.Scheme != Uri.UriSchemeHttps && !app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Testing"))))
+            {
+                http.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
+            try { await next(); }
+            catch (DbException ex) when (!http.Response.HasStarted)
+            {
+                app.Logger.LogError(ex, "MCP database is unavailable");
+                http.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            }
+        });
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.UseRateLimiter();
+        app.MapMcp("/mcp").RequireAuthorization("McpAccess").RequireRateLimiting("mcp-user");
+        app.MapGet("/health/live", () => Results.Ok()).AllowAnonymous().DisableRateLimiting();
+        app.MapGet("/health/ready", async (ReadOnlyDbContext db, CancellationToken cancellationToken) =>
+        {
+            // Validate schema and SELECT grants without returning operational or credential data.
+            await db.Database.ExecuteSqlRawAsync("""
+                SELECT t.*, b.*, a.*, w.*, wt.*, s.*, c.*, d.*, x.*, v.*, vt.*,
+                       u."Id", u."FirstName", u."LastName", u."SecurityStamp", u."IsActive",
+                       u."IsDeleted", u."Role", u."BranchId", u."LockoutEnabled", u."LockoutEnd"
+                FROM "McpAccessTokens" t, "Branches" b, "Agents" a, "Wallets" w, "WalletTypes" wt,
+                     "CashSessions" s, "CashCounts" c, "Discrepancies" d, "Transactions" x,
+                     "Vaults" v, "VaultTransactions" vt, "AspNetUsers" u
+                WHERE FALSE
+                """, cancellationToken);
+            return Results.Ok();
+        }).AllowAnonymous().DisableRateLimiting();
+        await app.RunAsync();
+    }
+}

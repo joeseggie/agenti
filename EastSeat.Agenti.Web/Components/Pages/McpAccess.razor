@@ -1,0 +1,176 @@
+@page "/mcp-access"
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using EastSeat.Agenti.Shared.Domain.Enums
+@using EastSeat.Agenti.Web.Features.McpAccess
+@attribute [Authorize(Policy = McpAccessService.ManagementPolicy)]
+@implements IDisposable
+@inject IMcpAccessService Service
+@inject AuthenticationStateProvider AuthState
+@inject IDialogService Dialogs
+@inject IJSRuntime JS
+@inject IConfiguration Configuration
+@inject TimeProvider Clock
+@inject ILogger<McpAccess> Logger
+
+<PageTitle>MCP Access - Agenti</PageTitle>
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudText Typo="Typo.h4" HtmlTag="h1">MCP Access</MudText>
+    <MudText Class="mb-4">Connect an approved AI client using a separate read-only token. Never give a client your Agenti password.</MudText>
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <MudAlert Severity="Severity.Error" role="alert" Class="mb-4">@_error</MudAlert>
+    }
+    @if (!string.IsNullOrEmpty(_message))
+    {
+        <MudAlert Severity="Severity.Success" role="status" Class="mb-4">@_message</MudAlert>
+    }
+    @if (_created is not null)
+    {
+        <MudPaper Class="pa-4 mb-4" Outlined="true">
+            <MudText Typo="Typo.h6" HtmlTag="h2">Save your new token</MudText>
+            <MudText>You can copy this secret only now. Store it in your client's protected credentials, not source control.</MudText>
+            <MudTextField T="string" Label="New MCP token" Value="@_created.Secret" ReadOnly="true"
+                          InputType="InputType.Password" Variant="Variant.Outlined" Class="my-3" autocomplete="off" />
+            <MudText>Expires: @_created.ExpiresAt.ToString("u")</MudText>
+            <MudButton OnClick="CopyAsync" Disabled="@_busy" Variant="Variant.Filled" Color="Color.Primary">Copy token</MudButton>
+            <MudButton OnClick="DismissSecret" Disabled="@_busy">Dismiss secret</MudButton>
+        </MudPaper>
+    }
+    <MudPaper Class="pa-4 mb-4" Outlined="true">
+        <MudText Typo="Typo.h6" HtmlTag="h2">Create a token for your account</MudText>
+        <EditForm Model="_form" OnValidSubmit="CreateAsync" FormName="create-mcp-token">
+            <DataAnnotationsValidator />
+            <ValidationSummary role="alert" />
+            <MudTextField @bind-Value="_form.Name" For="@(() => _form.Name)" Label="Client name"
+                          HelperText="For example: Daily reporting agent" MaxLength="100" Disabled="@(!_ready || _busy)" Class="my-3" />
+            <MudNumericField T="int" @bind-Value="_form.LifetimeDays" For="@(() => _form.LifetimeDays)"
+                             Label="Expires in days" Min="1" Max="30" HelperText="7 days by default; maximum 30 days. Replace the token before it expires."
+                             Disabled="@(!_ready || _busy)" Class="mb-3" />
+            <MudButton ButtonType="ButtonType.Submit" Disabled="@(!_ready || _busy)" Variant="Variant.Filled" Color="Color.Primary">
+                Create token
+            </MudButton>
+        </EditForm>
+    </MudPaper>
+    <MudText Typo="Typo.h6" HtmlTag="h2">Tokens</MudText>
+    @if (_isAdmin)
+    {
+        <MudSwitch T="bool" Value="_allUsers" ValueChanged="ChangeViewAsync" Disabled="@(!_ready || _busy)" Label="Show all users' tokens" />
+    }
+    <MudButton OnClick="RefreshAsync" Disabled="@(!_ready || _busy)">Refresh list</MudButton>
+    <MudTable Items="_items" Loading="_busy" Breakpoint="Breakpoint.Sm" Hover="true">
+        <HeaderContent>
+            <MudTh>Client</MudTh><MudTh>Owner</MudTh><MudTh>Status</MudTh><MudTh>Created (UTC)</MudTh><MudTh>Expires (UTC)</MudTh><MudTh>Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Client">@context.Name <small>(#@context.Id)</small></MudTd>
+            <MudTd DataLabel="Owner">@context.OwnerName</MudTd>
+            <MudTd DataLabel="Status">@(context.RevokedAt.HasValue ? "Revoked" : context.ExpiresAt <= Clock.GetUtcNow() ? "Expired" : "Active")</MudTd>
+            <MudTd DataLabel="Created (UTC)">@context.CreatedAt.ToString("u")</MudTd>
+            <MudTd DataLabel="Expires (UTC)">@context.ExpiresAt.ToString("u")</MudTd>
+            <MudTd DataLabel="Actions">
+                <MudButton Disabled="@(!_ready || _busy || context.RevokedAt.HasValue)" Color="Color.Error"
+                           OnClick="@(() => RevokeAsync(context))" aria-label="@($"Revoke {context.Name}")">Revoke</MudButton>
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent><MudText>No tokens in this view.</MudText></NoRecordsContent>
+    </MudTable>
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="my-3">
+        <MudButton Disabled="@(!_ready || _busy || _page == 0)" OnClick="@(() => MovePageAsync(-1))">Previous</MudButton>
+        <MudText>Page @(_page + 1) - @_total tokens</MudText>
+        <MudButton Disabled="@(!_ready || _busy || (_page + 1) * McpAccessService.PageSize >= _total)" OnClick="@(() => MovePageAsync(1))">Next</MudButton>
+    </MudStack>
+    <MudAlert Severity="Severity.Info" Class="mb-4">
+        @if (Uri.TryCreate(Configuration["McpAccess:ServerUrl"], UriKind.Absolute, out var endpoint) && endpoint.Scheme == Uri.UriSchemeHttps)
+        {
+            <div>Server: @endpoint.AbsoluteUri</div>
+        }
+        else
+        {
+            <div>Ask your administrator for the HTTPS MCP endpoint before configuring a client.</div>
+        }
+        <div>Configure HTTP transport and an Authorization header: Bearer &lt;your token&gt;.
+            Supervisors can query only their assigned branch; Admins can query all branches.
+            Password changes invalidate existing tokens. Revocation takes effect on the next request.</div>
+    </MudAlert>
+</MudContainer>
+
+@code {
+    private CreateMcpTokenRequest _form = new();
+    private CreatedMcpToken? _created;
+    private IReadOnlyList<McpTokenListItem> _items = [];
+    private bool _busy, _ready, _isAdmin, _allUsers;
+    private int _page, _total;
+    private string? _error, _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isAdmin = (await AuthState.GetAuthenticationStateAsync()).User.IsInRole(UserRole.Admin.ToString());
+        await RunAsync(LoadAsync);
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender) { _ready = true; StateHasChanged(); }
+    }
+
+    private async Task LoadAsync()
+    {
+        var result = await Service.ListAsync((await AuthState.GetAuthenticationStateAsync()).User, _allUsers, _page);
+        _items = result.Items;
+        _total = result.TotalCount;
+    }
+
+    private Task CreateAsync() => RunAsync(async () =>
+    {
+        _created = null;
+        _created = await Service.CreateAsync((await AuthState.GetAuthenticationStateAsync()).User, _form);
+        _form = new();
+        _message = "Token created. Save the secret before leaving this page.";
+        await LoadAsync();
+    });
+
+    private Task RevokeAsync(McpTokenListItem token) => RunAsync(async () =>
+    {
+        var confirmed = await Dialogs.ShowMessageBox("Revoke MCP token?",
+            $"Clients using {token.Name} (#{token.Id}) will lose access on their next request. This cannot be undone.",
+            yesText: "Revoke token", cancelText: "Cancel");
+        if (confirmed != true) return;
+        await Service.RevokeAsync((await AuthState.GetAuthenticationStateAsync()).User, token.Id);
+        if (_created?.Id == token.Id) _created = null;
+        _message = "Token revoked.";
+        await LoadAsync();
+    });
+
+    private Task CopyAsync() => RunAsync(async () =>
+    {
+        if (_created is not null)
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", _created.Secret);
+            _message = "Token copied. Store it securely and clear your clipboard when finished.";
+        }
+    });
+
+    private void DismissSecret() => _created = null;
+    private Task RefreshAsync() => RunAsync(async () => { _created = null; await LoadAsync(); _form.RequestId = Guid.NewGuid(); });
+    private Task ChangeViewAsync(bool all) => RunAsync(async () => { _allUsers = all; _page = 0; await LoadAsync(); });
+    private Task MovePageAsync(int direction) => RunAsync(async () => { _page += direction; await LoadAsync(); });
+
+    private async Task RunAsync(Func<Task> operation)
+    {
+        if (_busy) return;
+        _busy = true;
+        _error = _message = null;
+        try { await operation(); }
+        catch (ValidationException ex) { _error = ex.Message; }
+        catch (UnauthorizedAccessException ex) { _created = null; _items = []; _error = ex.Message; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "MCP token management failed");
+            _error = "The operation could not be completed. Refresh the token list before trying again. If a token was created without displaying its secret, revoke it and create another.";
+        }
+        finally { _busy = false; }
+    }
+
+    public void Dispose() => _created = null;
+}

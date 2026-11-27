@@ -6,24 +6,9 @@ namespace EastSeat.Agenti.Mcp.Data;
 /// <summary>
 /// Read-only database context for the MCP server.
 /// Inherits all entity configurations from ApplicationDbContext but blocks all write operations.
-/// Uses a static connection string set at startup to avoid internal API usage.
 /// </summary>
 public class ReadOnlyDbContext : ApplicationDbContext
 {
-    private static string _connectionString = string.Empty;
-    private static int _commandTimeout = 30;
-    private static int _maxRetryCount = 2;
-
-    /// <summary>
-    /// Configure the connection parameters once at startup (called from Program.cs).
-    /// </summary>
-    public static void Configure(string connectionString, int commandTimeout = 30, int maxRetryCount = 2)
-    {
-        _connectionString = connectionString;
-        _commandTimeout = commandTimeout;
-        _maxRetryCount = maxRetryCount;
-    }
-
     public ReadOnlyDbContext(DbContextOptions<ApplicationDbContext> options)
         : base(options)
     {

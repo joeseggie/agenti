@@ -4,6 +4,7 @@ using ModelContextProtocol.Server;
 using EastSeat.Agenti.Mcp.Configuration;
 using EastSeat.Agenti.Mcp.Data;
 using EastSeat.Agenti.Shared.Domain.Enums;
+using EastSeat.Agenti.Mcp.Authentication;
 
 namespace EastSeat.Agenti.Mcp.Tools;
 
@@ -16,6 +17,7 @@ public class TransactionTools
     public static async Task<string> QueryTransactions(
         ReadOnlyDbContext db,
         McpServerConfig config,
+        McpCaller caller,
         [Description("Start date (yyyy-MM-dd format, required)")] string dateFrom,
         [Description("End date (yyyy-MM-dd format, defaults to today)")] string? dateTo = null,
         [Description("Filter by transaction type: Deposit, Withdrawal, Transfer, Adjustment, Reversal")]
@@ -23,7 +25,8 @@ public class TransactionTools
         [Description("Filter by agent code (e.g., 'JODO')")] string? agentCode = null,
         [Description("Minimum transaction amount")] decimal? minAmount = null,
         [Description("Maximum transaction amount")] decimal? maxAmount = null,
-        [Description("Filter by branch ID (admin/supervisor only)")] long? branchId = null)
+        [Description("Filter by branch ID (supervisors are restricted to their assigned branch)")] long? branchId = null,
+        CancellationToken cancellationToken = default)
     {
         if (!DateOnly.TryParse(dateFrom, out var from))
             return "Error: Invalid dateFrom format. Use yyyy-MM-dd.";
@@ -46,7 +49,7 @@ public class TransactionTools
             .Where(t => t.CreatedAt >= fromOffset && t.CreatedAt <= toOffset);
 
         // Branch isolation
-        var effectiveBranchId = config.CanQueryAllBranches ? branchId : config.BranchId;
+        var effectiveBranchId = caller.ResolveBranch(branchId);
         if (effectiveBranchId.HasValue)
             query = query.Where(t => t.CashSession != null && t.CashSession.BranchId == effectiveBranchId.Value);
 
@@ -93,7 +96,7 @@ public class TransactionTools
                 CreatedAt = t.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
                 IsReversed = t.ReversedAt.HasValue
             })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         if (transactions.Count == 0)
             return "No transactions found matching the specified filters.";
