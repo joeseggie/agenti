@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using ModelContextProtocol.Server;
 using EastSeat.Agenti.Mcp.Configuration;
 using EastSeat.Agenti.Mcp.Data;
+using EastSeat.Agenti.Mcp.Authentication;
 
 namespace EastSeat.Agenti.Mcp.Tools;
 
@@ -15,12 +16,14 @@ public class VaultTools
     public static async Task<string> QueryVaultBalance(
         ReadOnlyDbContext db,
         McpServerConfig config,
-        [Description("Branch ID (admin/supervisor only, agents use their configured branch)")]
+        McpCaller caller,
+        [Description("Branch ID (supervisors are restricted to their assigned branch)")]
         long? branchId = null,
         [Description("Include last N vault transactions (default: 10, max: 50)")]
-        int? includeHistory = null)
+        int? includeHistory = null,
+        CancellationToken cancellationToken = default)
     {
-        var effectiveBranchId = config.CanQueryAllBranches ? branchId : config.BranchId;
+        var effectiveBranchId = caller.ResolveBranch(branchId);
 
         var vaultQuery = db.Vaults
             .Include(v => v.Branch)
@@ -29,7 +32,7 @@ public class VaultTools
         if (effectiveBranchId.HasValue)
             vaultQuery = vaultQuery.Where(v => v.BranchId == effectiveBranchId.Value);
 
-        var vaults = await vaultQuery.ToListAsync();
+        var vaults = await vaultQuery.OrderBy(v => v.BranchId).Take(config.MaxRows).ToListAsync(cancellationToken);
 
         if (vaults.Count == 0)
             return effectiveBranchId.HasValue
@@ -47,25 +50,22 @@ public class VaultTools
         var vaultIds = vaults.Select(v => v.Id).ToList();
 
         // Batch query: today's transactions for all relevant vaults
-        var allTodayTransactions = await db.VaultTransactions
+        var todayByVault = await db.VaultTransactions
             .Where(vt => vaultIds.Contains(vt.VaultId) &&
                          vt.CreatedAt >= todayStart &&
                          vt.CreatedAt < todayEnd)
-            .ToListAsync();
-
-        var todayByVault = allTodayTransactions
             .GroupBy(vt => vt.VaultId)
-            .ToDictionary(
-                g => g.Key,
-                g =>
-                (
-                    Deposits: g.Where(vt => vt.Type == Shared.Domain.Enums.VaultTransactionType.Closing ||
+            .Select(g => new
+                {
+                    VaultId = g.Key,
+                    Deposits = g.Where(vt => vt.Type == Shared.Domain.Enums.VaultTransactionType.Closing ||
                                             vt.Type == Shared.Domain.Enums.VaultTransactionType.ManualDeposit)
                                 .Sum(vt => vt.Amount),
-                    Withdrawals: g.Where(vt => vt.Type == Shared.Domain.Enums.VaultTransactionType.Opening ||
+                    Withdrawals = g.Where(vt => vt.Type == Shared.Domain.Enums.VaultTransactionType.Opening ||
                                                vt.Type == Shared.Domain.Enums.VaultTransactionType.ManualWithdrawal)
                                   .Sum(vt => vt.Amount)
-                ));
+                })
+            .ToDictionaryAsync(g => g.VaultId, cancellationToken);
 
         // Batch query: pending transaction counts for all relevant vaults
         var pendingCounts = await db.VaultTransactions
@@ -73,18 +73,15 @@ public class VaultTools
                          vt.Status == Shared.Domain.Enums.VaultTransactionStatus.Pending)
             .GroupBy(vt => vt.VaultId)
             .Select(g => new { VaultId = g.Key, Count = g.Count() })
-            .ToDictionaryAsync(x => x.VaultId, x => x.Count);
+            .ToDictionaryAsync(x => x.VaultId, x => x.Count, cancellationToken);
 
         foreach (var vault in vaults)
         {
             // Lookup today's summary for this vault
-            if (!todayByVault.TryGetValue(vault.Id, out var todaySummary))
-            {
-                todaySummary = (Deposits: 0m, Withdrawals: 0m);
-            }
+            todayByVault.TryGetValue(vault.Id, out var todaySummary);
 
-            var todayDeposits = todaySummary.Deposits;
-            var todayWithdrawals = todaySummary.Withdrawals;
+            var todayDeposits = todaySummary?.Deposits ?? 0m;
+            var todayWithdrawals = todaySummary?.Withdrawals ?? 0m;
 
             // Lookup pending count for this vault
             if (!pendingCounts.TryGetValue(vault.Id, out var pendingCount))
@@ -99,7 +96,7 @@ public class VaultTools
             lines.Add($"  Last Updated: {vault.UpdatedAt?.ToString("yyyy-MM-dd HH:mm") ?? "N/A"}");
 
             // Include history if requested
-            var historyCount = Math.Clamp(includeHistory ?? 0, 0, 50);
+            var historyCount = Math.Clamp(includeHistory ?? 0, 0, Math.Min(50, config.MaxRows));
             if (historyCount > 0)
             {
                 var history = await db.VaultTransactions
@@ -116,7 +113,7 @@ public class VaultTools
                         vt.Notes,
                         CreatedAt = vt.CreatedAt.ToString("yyyy-MM-dd HH:mm")
                     })
-                    .ToListAsync();
+                    .ToListAsync(cancellationToken);
 
                 lines.Add("");
                 lines.Add($"  Recent Transactions ({history.Count}):");
@@ -131,6 +128,8 @@ public class VaultTools
             lines.Add("");
         }
 
+        if (vaults.Count == config.MaxRows)
+            lines.Add($"Results limited to {config.MaxRows} vaults.");
         return string.Join("\n", lines);
     }
 }

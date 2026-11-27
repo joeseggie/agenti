@@ -10,5 +10,7 @@ public enum UserAuditAction
     PasswordReset = 5,
     LoginSuccess = 6,
     LoginFailed = 7,
-    PasswordChanged = 8
+    PasswordChanged = 8,
+    McpTokenCreated = 9,
+    McpTokenRevoked = 10
 }

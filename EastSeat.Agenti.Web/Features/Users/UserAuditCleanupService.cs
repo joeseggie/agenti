@@ -20,7 +20,9 @@ public class UserAuditCleanupService(IServiceProvider serviceProvider, ILogger<U
 
                 var cutoff = DateTimeOffset.UtcNow.AddDays(-30);
                 var oldLogs = await db.UserAuditLogs
-                    .Where(l => l.PerformedAt < cutoff)
+                    .Where(l => l.PerformedAt < cutoff &&
+                                l.Action != UserAuditAction.McpTokenCreated &&
+                                l.Action != UserAuditAction.McpTokenRevoked)
                     .ToListAsync(stoppingToken);
 
                 if (oldLogs.Count > 0)

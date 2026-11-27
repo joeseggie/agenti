@@ -165,6 +165,8 @@ builder.Services.AddScoped<ITransactionService, TransactionService>();
 builder.Services.AddScoped<IPendingTransactionService, PendingTransactionService>();
 builder.Services.AddScoped<IBankRunService, BankRunService>();
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddScoped<EastSeat.Agenti.Web.Features.McpAccess.IMcpAccessService,
+    EastSeat.Agenti.Web.Features.McpAccess.McpAccessService>();
 builder.Services.AddScoped<IBusinessClock, BusinessClock>();
 builder.Services.AddScoped<IBankingAccessService, BankingAccessService>();
 builder.Services.AddScoped<ISessionBalanceService, SessionBalanceService>();
@@ -188,6 +190,9 @@ builder.Services.AddHostedService<UserAuditCleanupService>();
 
 // Add authorization policies
 builder.Services.AddAuthorizationBuilder()
+    .AddPolicy(EastSeat.Agenti.Web.Features.McpAccess.McpAccessService.ManagementPolicy, policy =>
+        policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString())
+            .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme))
     .AddPolicy("VaultView", policy =>
         policy.RequireRole(UserRole.Admin.ToString(), UserRole.Supervisor.ToString())
               .AddAuthenticationSchemes(IdentityConstants.ApplicationScheme, JwtBearerDefaults.AuthenticationScheme))

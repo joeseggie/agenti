@@ -60,9 +60,10 @@ rules Copilot must not miss.
 - Apply the existing authorization policies: `VaultView`,
   `VaultAccess`/`VaultAdjust`, `VaultApprove`, and `UserManagement`; check
   `Program.cs` and the feature for the required roles and authentication schemes.
-- `EastSeat.Agenti.Mcp` is read-only. Use `ReadOnlyDbContext`, retain branch
-  isolation unless `CanQueryAllBranches` permits otherwise, and cap results at
-  `McpServerConfig.MaxRows`. Never add write operations.
+- `EastSeat.Agenti.Mcp` is HTTP-only and read-only. Use `ReadOnlyDbContext` and
+  scoped `McpCaller.ResolveBranch`: Admin all branches, Supervisor assigned
+  branch only, Agents denied. Cap lists at `McpServerConfig.MaxRows`. Token
+  issuance/revocation belongs only in the cookie-authenticated Web feature.
 - Never commit credentials, secrets, production data, or real bank statements.
 
 ## Testing and commands

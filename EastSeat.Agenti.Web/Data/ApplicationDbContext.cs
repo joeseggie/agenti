@@ -605,6 +605,7 @@ public partial class ApplicationDbContext(DbContextOptions<ApplicationDbContext>
         });
 
         ConfigureBankingModel(builder);
+        ConfigureMcpAccess(builder);
 
         // Seed default app config
         SeedAppConfig(builder);

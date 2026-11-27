@@ -37,6 +37,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\EastSeat.Agenti.Web\EastSeat.Agenti.Web.csproj" />
+    <ProjectReference Include="..\..\EastSeat.Agenti.Mcp\EastSeat.Agenti.Mcp.csproj" />
+    <None Include="..\..\scripts\azure\mcp-readonly-grants.sql" Link="mcp-readonly-grants.sql" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="..\EastSeat.Agenti.UnitTests\Helpers\BankingScenario.cs" Link="Infrastructure\BankingScenario.cs" />
   </ItemGroup>
 

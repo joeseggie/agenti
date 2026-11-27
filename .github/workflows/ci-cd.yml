@@ -51,6 +51,16 @@ jobs:
           path: ./publish
           retention-days: 1
 
+      - name: Publish MCP application
+        run: dotnet publish EastSeat.Agenti.Mcp/EastSeat.Agenti.Mcp.csproj --configuration Release --no-build --output ./publish-mcp
+
+      - name: Upload MCP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-webapp
+          path: ./publish-mcp
+          retention-days: 1
+
   test-unit:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -168,6 +178,64 @@ jobs:
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           package: ./publish
+
+      - name: Azure logout
+        run: az logout
+        if: always()
+
+  deploy-mcp:
+    name: Deploy authenticated MCP
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.MCP_DEPLOY_ENABLED == 'true'
+    environment:
+      name: production
+    env:
+      AZURE_MCP_WEBAPP_NAME: ${{ vars.AZURE_MCP_WEBAPP_NAME }}
+      AZURE_MCP_PLAN_NAME: agenti-plan
+
+    steps:
+      - name: Download MCP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mcp-webapp
+          path: ./publish-mcp
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify dedicated shared-plan target
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AZURE_MCP_WEBAPP_NAME"
+          test "$AZURE_MCP_WEBAPP_NAME" != "$AZURE_WEBAPP_NAME"
+          plan=$(az appservice plan show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_MCP_PLAN_NAME" --query id -o tsv)
+          actual=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_MCP_WEBAPP_NAME" --query serverFarmId -o tsv)
+          test "${plan,,}" = "${actual,,}"
+          test "$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_MCP_WEBAPP_NAME" --query 'tags."agenti-component"' -o tsv)" = mcp
+          test "$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_MCP_WEBAPP_NAME" --query httpsOnly -o tsv)" = true
+          host=$(az webapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_MCP_WEBAPP_NAME" --query defaultHostName -o tsv)
+          echo "origin=https://$host" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy MCP to App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_MCP_WEBAPP_NAME }}
+          package: ./publish-mcp
+
+      - name: Verify readiness and authentication gate
+        env:
+          MCP_ORIGIN: ${{ steps.target.outputs.origin }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 "$MCP_ORIGIN/health/ready"
+          test "$(curl --request POST --silent --show-error --output /dev/null --write-out '%{http_code}' "$MCP_ORIGIN/mcp")" = 401
 
       - name: Azure logout
         run: az logout
