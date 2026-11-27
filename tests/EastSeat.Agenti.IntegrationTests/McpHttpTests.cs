@@ -257,15 +257,25 @@ public sealed class McpHttpTests(DatabaseFixture database) : IClassFixture<Datab
         });
         using var first = Client(app, (await IssueAsync(scope.Owner, app.Clock)).Secret);
         using var second = Client(app, (await IssueAsync(scope.OtherOwner, app.Clock)).Secret);
+        using var anonymous = app.CreateClient();
         using var cancellation = new CancellationTokenSource();
         var firstCall = SendRpcAsync(first, "tools/call", new { name = "query_agent_wallets", arguments = new { } }, cancellation.Token);
         var secondCall = SendRpcAsync(second, "tools/call", new { name = "query_agent_wallets", arguments = new { } });
+        var probe = anonymous.GetAsync("/health/ready");
         try
         {
             await gate.BothStarted.Task.WaitAsync(TimeSpan.FromSeconds(20));
+            await gate.ProbeStarted.Task.WaitAsync(TimeSpan.FromSeconds(20));
             Assert.Equal(2, gate.Contexts.Count);
-            using (var rejected = await SendRpcAsync(first, "tools/list", new { }))
+            using (var rejected = await SendRpcAsync(anonymous, "tools/list", new { }))
+            {
                 Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+                Assert.NotNull(rejected.Headers.RetryAfter);
+            }
+            using (var overlap = await anonymous.GetAsync("/health/ready"))
+                Assert.Equal(HttpStatusCode.TooManyRequests, overlap.StatusCode);
+            using (var live = await anonymous.GetAsync("/health/live"))
+                Assert.Equal(HttpStatusCode.OK, live.StatusCode);
             cancellation.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => firstCall);
         }
@@ -273,12 +283,40 @@ public sealed class McpHttpTests(DatabaseFixture database) : IClassFixture<Datab
         {
             gate.Release.TrySetResult();
         }
+        using var ready = await probe;
+        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
         using var completed = await secondCall;
         Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
         var result = await ReadResultAsync(completed);
         Assert.Contains(scope.OtherOwner.FirstName, Text(result));
         Assert.DoesNotContain(scope.Owner.FirstName, Text(result));
         await RpcAsync(first, "tools/list", new { });
+    }
+
+    [Fact]
+    public async Task RowCap_AppliesToMatchingWalletsAndParticipatingAgents()
+    {
+        var scope = await SeedAsync();
+        await using var db = database.CreateContext();
+        var first = await db.Agents.SingleAsync(a => a.UserId == scope.Owner.Id);
+        var branchId = Assert.IsType<long>(first.BranchId);
+        var session = await db.CashSessions.SingleAsync(s => s.BranchId == branchId);
+        var bank = new Wallet { AgentId = first.Id, WalletTypeId = 4, Name = "Z-last bank", IsActive = true };
+        var second = new Agent { User = User(UserRole.Agent, branchId), BranchId = branchId,
+            Code = $"B{branchId:D3}", IsActive = true };
+        db.AddRange(bank, new CashCount { Agent = second, CashSession = session, IsOpening = true,
+            CountDate = session.SessionDate, Status = CashCountStatus.Approved });
+        await db.SaveChangesAsync();
+
+        await using var app = new McpApplicationFactory(database.ConnectionString, maxRows: 1);
+        using var client = Client(app, (await IssueAsync(scope.Owner, app.Clock)).Secret);
+        var wallets = Text(await CallAsync(client, "query_agent_wallets", new() { ["agentCode"] = first.Code, ["walletType"] = "bank" }));
+        Assert.Contains(bank.Name, wallets);
+        var args = Arguments("query_trends", "agent_performance");
+        args["agentCode"] = second.Code.ToLowerInvariant();
+        var performance = Text(await CallAsync(client, "query_trends", args));
+        Assert.Contains(second.Code, performance);
+        Assert.DoesNotContain(first.Code, performance);
     }
 
     [Fact]
@@ -422,8 +460,17 @@ public sealed class McpHttpTests(DatabaseFixture database) : IClassFixture<Datab
     private sealed class QueryGate : DbCommandInterceptor
     {
         public TaskCompletionSource BothStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ProbeStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public ConcurrentDictionary<Guid, bool> Contexts { get; } = new();
+
+        public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (ProbeStarted.TrySetResult()) await Release.Task.WaitAsync(cancellationToken);
+            return result;
+        }
 
         public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,

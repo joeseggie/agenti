@@ -48,13 +48,11 @@ public sealed class McpProgram
                     (caller.Role == UserRole.Admin || caller.BranchId is > 0))));
         builder.Services.AddRateLimiter(options =>
         {
-            options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(http =>
-                http.Request.Path.StartsWithSegments("/mcp")
-                    ? RateLimitPartition.GetConcurrencyLimiter("mcp", _ => new ConcurrencyLimiterOptions
-                    {
-                        PermitLimit = config.MaxConcurrentRequests, QueueLimit = 0
-                    })
-                    : RateLimitPartition.GetNoLimiter("health"));
+            options.AddConcurrencyLimiter("readiness", limiter =>
+            {
+                limiter.PermitLimit = 1;
+                limiter.QueueLimit = 0;
+            });
             options.AddPolicy("mcp-user", http => RateLimitPartition.GetFixedWindowLimiter(
                 http.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? throw new UnauthorizedAccessException(),
                 _ => new FixedWindowRateLimiterOptions
@@ -75,15 +73,28 @@ public sealed class McpProgram
             .WithToolsFromAssembly(typeof(McpProgram).Assembly);
 
         var app = builder.Build();
+        using var mcpAdmission = new ConcurrencyLimiter(new()
+        {
+            PermitLimit = config.MaxConcurrentRequests, QueueLimit = 0
+        });
         app.Use(async (http, next) =>
         {
             http.Response.Headers.CacheControl = "no-store";
-            if (http.Request.Path.StartsWithSegments("/mcp") && http.Request.Headers.TryGetValue("Origin", out var origins) &&
+            var isMcp = http.Request.Path.StartsWithSegments("/mcp");
+            if (isMcp && http.Request.Headers.TryGetValue("Origin", out var origins) &&
                 (origins.Count != 1 || !Uri.TryCreate(origins[0], UriKind.Absolute, out var origin) ||
                  !origin.Authority.Equals(http.Request.Host.Value, StringComparison.OrdinalIgnoreCase) ||
                  (origin.Scheme != Uri.UriSchemeHttps && !app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Testing"))))
             {
                 http.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
+            // Hold admission through both the credential lookup and tool execution.
+            using var lease = isMcp ? mcpAdmission.AttemptAcquire() : null;
+            if (lease is { IsAcquired: false })
+            {
+                http.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                http.Response.Headers.RetryAfter = "1";
                 return;
             }
             try { await next(); }
@@ -111,7 +122,7 @@ public sealed class McpProgram
                 WHERE FALSE
                 """, cancellationToken);
             return Results.Ok();
-        }).AllowAnonymous().DisableRateLimiting();
+        }).AllowAnonymous().RequireRateLimiting("readiness");
         await app.RunAsync();
     }
 }

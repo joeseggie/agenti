@@ -46,9 +46,8 @@ if ($apps.Count -eq 0) {
 Invoke-Az @('webapp', 'update', '-g', $ResourceGroupName, '-n', $McpAppName, '--https-only', 'true', '-o', 'none')
 Invoke-Az @('webapp', 'config', 'set', '-g', $ResourceGroupName, '-n', $McpAppName,
     '--always-on', 'true', '--min-tls-version', '1.2', '--ftps-state', 'Disabled',
-    '--linux-fx-version', 'DOTNETCORE|10.0',
     '--startup-file', 'dotnet /home/site/wwwroot/EastSeat.Agenti.Mcp.dll',
-    '--generic-configurations', 'healthCheckPath=/health/ready', '-o', 'none')
+    '--generic-configurations', "@$(Join-Path $PSScriptRoot 'mcp-site-config.json')", '-o', 'none')
 $hostName = Invoke-Az @('webapp', 'show', '-g', $ResourceGroupName, '-n', $McpAppName, '--query', 'defaultHostName', '-o', 'tsv')
 Invoke-Az @('webapp', 'config', 'appsettings', 'set', '-g', $ResourceGroupName, '-n', $McpAppName,
     '--settings', 'ASPNETCORE_ENVIRONMENT=Production', "AllowedHosts=$hostName",

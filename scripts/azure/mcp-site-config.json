@@ -1,0 +1,4 @@
+{
+  "linuxFxVersion": "DOTNETCORE|10.0",
+  "healthCheckPath": "/health/ready"
+}

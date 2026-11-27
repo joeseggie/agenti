@@ -138,14 +138,17 @@ public class TrendTools
         if (branchId.HasValue)
             sessionQuery = sessionQuery.Where(s => s.BranchId == branchId.Value);
 
-        if (!string.IsNullOrWhiteSpace(agentCode))
-            sessionQuery = sessionQuery.Where(s => s.CashCounts.Any(c => c.Agent != null && c.Agent.Code == agentCode.ToUpper()));
+        var requestedAgent = string.IsNullOrWhiteSpace(agentCode) ? null : agentCode.ToUpperInvariant();
+        if (requestedAgent != null)
+            sessionQuery = sessionQuery.Where(s => s.CashCounts.Any(c =>
+                c.IsOpening && c.Agent != null && c.Agent.Code == requestedAgent));
 
         var sessions = await sessionQuery.OrderBy(s => s.Id).Take(limit)
             .Select(s => new
             {
                 s.Id, s.Status, DiscrepancyCount = s.Discrepancies.Count,
-                Agents = s.CashCounts.Where(c => c.IsOpening && c.Agent != null)
+                Agents = s.CashCounts.Where(c => c.IsOpening && c.Agent != null &&
+                        (requestedAgent == null || c.Agent.Code == requestedAgent))
                     .OrderBy(c => c.Id).Take(limit).Select(c => new
                     {
                         c.Agent!.Code,

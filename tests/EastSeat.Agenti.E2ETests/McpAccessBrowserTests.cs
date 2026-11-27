@@ -86,6 +86,8 @@ public sealed class McpAccessBrowserTests(DatabaseFixture database) : IClassFixt
         await Expect(page.GetByText("Supervisor automation", new() { Exact = false })).ToBeVisibleAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Revoke Supervisor automation", Exact = true }).ClickAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Revoke token", Exact = true }).ClickAsync();
+        var supervisorRow = page.GetByRole(AriaRole.Row).Filter(new() { HasText = "Supervisor automation" });
+        await Expect(supervisorRow.GetByText("Revoked", new() { Exact = true })).ToBeVisibleAsync();
         await using (var db = database.CreateContext())
         {
             var revoked = await db.McpAccessTokens.SingleAsync(t => t.UserId == supervisor.Id);

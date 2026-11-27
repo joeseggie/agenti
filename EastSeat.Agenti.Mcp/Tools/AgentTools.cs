@@ -37,6 +37,8 @@ public class AgentTools
         if (!string.IsNullOrWhiteSpace(agentCode))
             query = query.Where(a => a.Code == agentCode.ToUpper());
 
+        WalletTypeEnum? requestedType = Enum.TryParse<WalletTypeEnum>(walletType, ignoreCase: true, out var parsed)
+            ? parsed : null;
         var agents = await query
             .OrderBy(a => a.Code)
             .Take(config.MaxRows)
@@ -45,11 +47,11 @@ public class AgentTools
                 a.Code, a.BranchId, a.IsActive,
                 FullName = a.User == null ? "N/A" : (a.User.FirstName + " " + a.User.LastName).Trim(),
                 Wallets = a.Wallets.Where(w => includeInactive || w.IsActive)
+                    .Where(w => requestedType == null || (w.WalletType != null && w.WalletType.Type == requestedType))
                     .OrderBy(w => w.Name).Take(config.MaxRows)
                     .Select(w => new
                     {
                         w.Name, w.Balance, w.Currency, w.IsActive,
-                        Type = w.WalletType == null ? (WalletTypeEnum?)null : w.WalletType.Type,
                         TypeName = w.WalletType == null ? "Unknown" : w.WalletType.Name
                     }).ToList()
             })
@@ -66,16 +68,7 @@ public class AgentTools
 
         foreach (var agent in agents)
         {
-            var wallets = agent.Wallets
-                .Where(w => includeInactive || w.IsActive)
-                .ToList();
-
-            if (!string.IsNullOrWhiteSpace(walletType))
-            {
-                if (Enum.TryParse<WalletTypeEnum>(walletType, ignoreCase: true, out var parsedType))
-                    wallets = wallets.Where(w => w.Type == parsedType).ToList();
-            }
-
+            var wallets = agent.Wallets;
             var totalBalance = wallets.Sum(w => w.Balance);
 
             lines.Add($"👤 Agent: {agent.Code} | {agent.FullName} | Branch: {agent.BranchId}");

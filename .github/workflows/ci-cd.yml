@@ -235,7 +235,7 @@ jobs:
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 10 "$MCP_ORIGIN/health/ready"
-          test "$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$MCP_ORIGIN/mcp")" = 401
+          test "$(curl --request POST --silent --show-error --output /dev/null --write-out '%{http_code}' "$MCP_ORIGIN/mcp")" = 401
 
       - name: Azure logout
         run: az logout

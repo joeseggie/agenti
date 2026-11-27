@@ -59,8 +59,8 @@ store. Do not add a connection string to checked-in JSON or workflow output.
 | `AGENTI__RequestsPerMinute` | 30 per user, shared across their tokens |
 | `AGENTI__MaxConcurrentRequests` | 2 concurrent MCP HTTP requests per instance, no waiting queue |
 
-The concurrency limit covers metadata/initialization as well as tool requests, so
-at most two tools execute simultaneously. Limits are instance-local, not a
+The concurrency limit applies before bearer-token lookup and covers the entire
+MCP request. The per-user quota applies after authentication. Limits are instance-local, not a
 distributed quota. Clients must handle HTTP 429 and honor `Retry-After`; do not
 automatically retry arbitrary operations without understanding their semantics.
 The existing reporting tools are read-only.
@@ -81,6 +81,7 @@ Do not enable broad CORS. Requests carrying an untrusted browser Origin are deni
 `/health/live` is anonymous and returns no operational data. `/health/ready` checks
 the required tables and SELECT privileges using a zero-row query; database/schema/
 permission failures return a generic failure, without exposing connection details.
+Readiness admits one probe per instance at a time, separately from MCP; overlapping probes receive 429.
 Missing/invalid credentials return 401; authenticated but ineligible roles or
 Supervisors without a branch return 403.
 
